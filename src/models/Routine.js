@@ -14,6 +14,7 @@ const RoutineSchema = new mongoose.Schema(
     _id: { type: String }, // slug/id string
     name: { type: String, required: true },
     description: { type: String, default: '' },
+    branch: { type: String, enum: ['sopocachi', 'miraflores', 'general'], default: 'general' },
     exercises: [RoutineExerciseSchema],
     ownerId: { type: String, default: null },
   },

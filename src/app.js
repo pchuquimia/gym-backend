@@ -10,6 +10,7 @@ import routinesRoutes from './routes/routines.js'
 import sessionsRoutes from './routes/sessions.js'
 import photosRoutes from './routes/photos.js'
 import trainingsRoutes from './routes/trainings.js'
+import preferencesRoutes from './routes/preferences.js'
 import Photo from './models/Photo.js'
 
 const app = express()
@@ -62,6 +63,7 @@ app.use('/api/routines', routinesRoutes)
 app.use('/api/sessions', sessionsRoutes)
 app.use('/api/photos', photosRoutes)
 app.use('/api/trainings', trainingsRoutes)
+app.use('/api/preferences', preferencesRoutes)
 
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
