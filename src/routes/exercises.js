@@ -9,12 +9,18 @@ router.get('/', async (req, res) => {
 })
 
 router.post('/', async (req, res) => {
-  const exercise = await Exercise.create(req.body)
+  const branches = Array.isArray(req.body.branches) && req.body.branches.length ? req.body.branches : ['general']
+  const exercise = await Exercise.create({ ...req.body, branches })
   res.status(201).json(exercise)
 })
 
 router.put('/:id', async (req, res) => {
-  const exercise = await Exercise.findByIdAndUpdate(req.params.id, req.body, { new: true })
+  const branches = Array.isArray(req.body.branches) && req.body.branches.length ? req.body.branches : ['general']
+  const exercise = await Exercise.findByIdAndUpdate(
+    req.params.id,
+    { ...req.body, branches },
+    { new: true, runValidators: true },
+  )
   res.json(exercise)
 })
 
