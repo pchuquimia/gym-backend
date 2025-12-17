@@ -9,7 +9,11 @@ router.get('/', async (_req, res) => {
 })
 
 router.post('/', async (req, res) => {
-  const training = await Training.create({ ...req.body, _id: req.body.id || req.body._id })
+  const payload = { ...req.body }
+  // si viene id, usarlo como _id; si no, dejar que el schema genere uno
+  if (payload.id) payload._id = payload.id
+  delete payload.id
+  const training = await Training.create(payload)
   res.status(201).json(training)
 })
 
