@@ -13,6 +13,20 @@ router.post('/', async (req, res) => {
   // si viene id, usarlo como _id; si no, dejar que el schema genere uno
   if (payload.id) payload._id = payload.id
   delete payload.id
+  // calcular volumen total si vienen sets
+  const totalVolume =
+    Array.isArray(payload.exercises) &&
+    payload.exercises.reduce((acc, ex) => {
+      const sets = Array.isArray(ex.sets) ? ex.sets : []
+      const vol = sets.reduce((s, set) => {
+        const w = Number(set.weightKg || 0)
+        const r = Number(set.reps || 0)
+        return s + w * r
+      }, 0)
+      return acc + vol
+    }, 0)
+  payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0
+
   const training = await Training.create(payload)
   res.status(201).json(training)
 })

@@ -9,9 +9,25 @@ const TrainingSchema = new mongoose.Schema(
     date: { type: String, required: true }, // yyyy-mm-dd
     durationSeconds: { type: Number, default: 0 },
     totalVolume: { type: Number, default: 0 },
+    routineId: { type: String, default: null },
     routineName: { type: String, default: '' },
     ownerId: { type: String, default: null },
-    // se permiten campos adicionales (e.g. ejercicios) via strict: true por defecto, los que no esten en el schema seran ignorados
+    exercises: [
+      {
+        exerciseId: { type: String, default: null },
+        exerciseName: { type: String, default: '' },
+        muscleGroup: { type: String, default: '' },
+        order: { type: Number, default: 0 },
+        sets: [
+          {
+            weightKg: { type: Number, default: null },
+            reps: { type: Number, default: null },
+            done: { type: Boolean, default: false },
+            order: { type: Number, default: 0 },
+          },
+        ],
+      },
+    ],
   },
   { timestamps: true, versionKey: false },
 )
