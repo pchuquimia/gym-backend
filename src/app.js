@@ -14,12 +14,6 @@ import preferencesRoutes from "./routes/preferences.js";
 import Photo from "./models/Photo.js";
 
 const app = express();
-const allowedOrigins = [
-  "https://gym-frontend-t65c.onrender.com", // prod frontend
-  "http://localhost:5173", // local dev
-  "https://localhost:5173", // optional https local
-];
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const uploadsDir = path.join(__dirname, "../uploads");
@@ -39,7 +33,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 const corsOptions = {
-  origin: allowedOrigins,
+  // origin: true permite reflejar el Origin entrante; útil para evitar bloqueos mientras depuras
+  origin: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: false, // pon true solo si usas cookies
