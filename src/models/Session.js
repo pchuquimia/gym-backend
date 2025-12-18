@@ -28,4 +28,8 @@ const SessionSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false },
 )
 
+SessionSchema.index({ exerciseId: 1, date: -1 })
+SessionSchema.index({ routineId: 1, date: -1 })
+SessionSchema.index({ date: -1 })
+
 export default mongoose.model('Session', SessionSchema)

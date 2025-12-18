@@ -11,6 +11,7 @@ const TrainingSchema = new mongoose.Schema(
     totalVolume: { type: Number, default: 0 },
     routineId: { type: String, default: null },
     routineName: { type: String, default: '' },
+    branch: { type: String, default: null },
     ownerId: { type: String, default: null },
     exercises: [
       {
@@ -31,5 +32,10 @@ const TrainingSchema = new mongoose.Schema(
   },
   { timestamps: true, versionKey: false },
 )
+
+TrainingSchema.index({ date: -1 })
+TrainingSchema.index({ routineId: 1, date: -1 })
+TrainingSchema.index({ branch: 1, date: -1 })
+TrainingSchema.index({ 'exercises.exerciseId': 1, date: -1 })
 
 export default mongoose.model('Training', TrainingSchema)

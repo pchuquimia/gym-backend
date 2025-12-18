@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import multer from "multer";
+import compression from "compression";
 import exercisesRoutes from "./routes/exercises.js";
 import routinesRoutes from "./routes/routines.js";
 import sessionsRoutes from "./routes/sessions.js";
@@ -43,6 +44,12 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(200));
+app.use(
+  compression({
+    level: 6,
+    threshold: 1024, // comprime respuestas mayores a 1KB
+  })
+);
 app.use(express.json({ limit: "10mb" }));
 app.use(morgan("dev"));
 app.use("/uploads", express.static(uploadsDir));

@@ -8,11 +8,15 @@ const ExerciseSchema = new mongoose.Schema(
     description: { type: String, default: '' },
     equipment: { type: String, default: '' },
     image: { type: String, default: '' },
+    thumb: { type: String, default: '' },
     branches: { type: [String], default: ['general'] },
     type: { type: String, enum: ['system', 'custom'], default: 'custom' },
     ownerId: { type: String, default: null },
   },
   { timestamps: true, versionKey: false },
 )
+
+ExerciseSchema.index({ name: 1 })
+ExerciseSchema.index({ muscle: 1 })
 
 export default mongoose.model('Exercise', ExerciseSchema)
