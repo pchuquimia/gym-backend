@@ -33,12 +33,20 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+const allowedOrigins = [
+  "https://gym-frontend-t65c.onrender.com",
+  "http://localhost:5173",
+  "http://localhost:4173",
+  "http://localhost:3000",
+];
 const corsOptions = {
-  // origin: true permite reflejar el Origin entrante; útil para evitar bloqueos mientras depuras
-  origin: true,
+  origin: (origin, cb) => {
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false, // pon true solo si usas cookies
+  credentials: false,
   optionsSuccessStatus: 200,
 };
 
@@ -95,3 +103,4 @@ app.use((err, _req, res, _next) => {
 });
 
 export default app;
+
