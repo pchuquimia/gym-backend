@@ -9,6 +9,7 @@ const ExerciseSchema = new mongoose.Schema(
     equipment: { type: String, default: '' },
     image: { type: String, default: '' },
     thumb: { type: String, default: '' },
+    imagePublicId: { type: String, default: '' },
     branches: { type: [String], default: ['general'] },
     type: { type: String, enum: ['system', 'custom'], default: 'custom' },
     ownerId: { type: String, default: null },

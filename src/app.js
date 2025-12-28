@@ -36,12 +36,18 @@ const upload = multer({ storage });
 const allowedOrigins = [
   "https://gym-frontend-t65c.onrender.com",
   "http://localhost:5173",
+  "http://localhost:5175",
   "http://localhost:4173",
   "http://localhost:3000",
 ];
+const localOriginPattern =
+  /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/;
+const isDev = process.env.NODE_ENV !== "production";
 const corsOptions = {
   origin: (origin, cb) => {
-    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (isDev && localOriginPattern.test(origin)) return cb(null, true);
     return cb(new Error("Not allowed by CORS"));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -103,4 +109,3 @@ app.use((err, _req, res, _next) => {
 });
 
 export default app;
-

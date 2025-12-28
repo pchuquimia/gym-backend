@@ -5,7 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "node src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
+    "build:cloudinary-map": "node scripts/buildCloudinaryMap.js",
+    "clear:exercise-images": "node scripts/clearExerciseImages.js",
+    "export:cloudinary-template": "node scripts/exportExerciseIds.js"
   },
   "dependencies": {
     "compression": "^1.7.4",

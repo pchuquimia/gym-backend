@@ -1,0 +1,229 @@
+[
+  {
+    "publicId": "remo_barra_inclinado",
+    "suggestions": [
+      {
+        "id": "press-de-banca-inclinado-con-mancuernas",
+        "score": 1,
+        "name": "Press de banca inclinado con mancuernas",
+        "muscle": "Pecho"
+      },
+      {
+        "id": "press-de-banca-inclinado-con-barra",
+        "score": 1,
+        "name": "Press de banca inclinado con Barra",
+        "muscle": "Pecho"
+      },
+      {
+        "id": "remo-con-barra",
+        "score": 1,
+        "name": "Remo con barra",
+        "muscle": "Espalda"
+      },
+      {
+        "id": "remo-con-mancuernas",
+        "score": 1,
+        "name": "Remo con mancuernas",
+        "muscle": "Espalda"
+      }
+    ]
+  },
+  {
+    "publicId": "laterales_mancuerna_hombro",
+    "suggestions": [
+      {
+        "id": "laterales-con-mancuerna",
+        "score": 1,
+        "name": "Laterales con Mancuerna",
+        "muscle": "Hombros"
+      }
+    ]
+  },
+  {
+    "publicId": "press_hombro_maquina",
+    "suggestions": []
+  },
+  {
+    "publicId": "rompe_coco_barra_tricep",
+    "suggestions": [
+      {
+        "id": "rompe-coco-con-barra",
+        "score": 1,
+        "name": "Rompe coco con barra",
+        "muscle": "Triceps"
+      }
+    ]
+  },
+  {
+    "publicId": "tricep_pushdown",
+    "suggestions": [
+      {
+        "id": "pushdown-con-barra",
+        "score": 1,
+        "name": "Pushdown con barra",
+        "muscle": "Triceps"
+      }
+    ]
+  },
+  {
+    "publicId": "triceo_over_push",
+    "suggestions": []
+  },
+  {
+    "publicId": "curl_predicador_en_maquina",
+    "suggestions": [
+      {
+        "id": "predicador-curl-bicep",
+        "score": 1,
+        "name": "Predicador Curl Bicep",
+        "muscle": "Biceps"
+      }
+    ]
+  },
+  {
+    "publicId": "laterales_en_maquina_hombro",
+    "suggestions": [
+      {
+        "id": "laterales-con-mancuerna",
+        "score": 1,
+        "name": "Laterales con Mancuerna",
+        "muscle": "Hombros"
+      }
+    ]
+  },
+  {
+    "publicId": "curl_predicador_en_maquina_web_optimized",
+    "suggestions": []
+  },
+  {
+    "publicId": "laterales_en_maquina_hombro_web_optimized",
+    "suggestions": []
+  },
+  {
+    "publicId": "curl_predicador_en_maquina_web_hd",
+    "suggestions": []
+  },
+  {
+    "publicId": "laterales_en_maquina_hombro_web_hd",
+    "suggestions": []
+  },
+  {
+    "publicId": "lateral_hombro_polea_960x540",
+    "suggestions": [
+      {
+        "id": "elevacion-lateral-con-cable",
+        "score": 1,
+        "name": "Elevacion lateral con cable",
+        "muscle": "Hombros"
+      }
+    ]
+  },
+  {
+    "publicId": "curl_predicador_960x540",
+    "suggestions": [
+      {
+        "id": "predicador-curl-bicep",
+        "score": 1,
+        "name": "Predicador Curl Bicep",
+        "muscle": "Biceps"
+      }
+    ]
+  },
+  {
+    "publicId": "curl_predicador_960x540_1",
+    "suggestions": []
+  },
+  {
+    "publicId": "extencion_pierna",
+    "suggestions": []
+  },
+  {
+    "publicId": "isquiotibiales_sentado",
+    "suggestions": [
+      {
+        "id": "femorales-sentado",
+        "score": 1,
+        "name": "femorales sentado",
+        "muscle": "Femoral"
+      },
+      {
+        "id": "press-militar-con-barra-sentado",
+        "score": 1,
+        "name": "Press militar con barra sentado",
+        "muscle": "Hombros"
+      }
+    ]
+  },
+  {
+    "publicId": "isquitibiales_acostado",
+    "suggestions": []
+  },
+  {
+    "publicId": "curl_a_una_mano",
+    "suggestions": [
+      {
+        "id": "contraccion-de-biceps-con-una-mano-en-polea",
+        "score": 1,
+        "name": "Contracción de Bíceps con una mano en polea",
+        "muscle": "Biceps"
+      }
+    ]
+  },
+  {
+    "publicId": "polea_maquina",
+    "suggestions": []
+  },
+  {
+    "publicId": "press_inclinado_con_mancuernas",
+    "suggestions": [
+      {
+        "id": "press-de-banca-inclinado-con-mancuernas",
+        "score": 1,
+        "name": "Press de banca inclinado con mancuernas",
+        "muscle": "Pecho"
+      },
+      {
+        "id": "press-de-banca-inclinado-con-barra",
+        "score": 1,
+        "name": "Press de banca inclinado con Barra",
+        "muscle": "Pecho"
+      }
+    ]
+  },
+  {
+    "publicId": "press_inclinado_con_barra",
+    "suggestions": [
+      {
+        "id": "press-de-banca-inclinado-con-mancuernas",
+        "score": 1,
+        "name": "Press de banca inclinado con mancuernas",
+        "muscle": "Pecho"
+      },
+      {
+        "id": "press-de-banca-inclinado-con-barra",
+        "score": 1,
+        "name": "Press de banca inclinado con Barra",
+        "muscle": "Pecho"
+      }
+    ]
+  },
+  {
+    "publicId": "press_plano_con_barra",
+    "suggestions": []
+  },
+  {
+    "publicId": "vuelo_cruzado_en_maquina",
+    "suggestions": []
+  },
+  {
+    "publicId": "jalon_espalda",
+    "suggestions": [
+      {
+        "id": "dominada-en-maquina",
+        "score": 1,
+        "name": "Jalon con barra",
+        "muscle": "Espalda"
+      }
+    ]
+  }
+]
