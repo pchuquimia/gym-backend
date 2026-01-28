@@ -4,6 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import { fileURLToPath } from 'url'
 import Photo from '../models/Photo.js'
+import { uploadPhotoToCloudinary, removeLocalFile, isCloudinaryReady } from '../utils/photoUpload.js'
 
 const router = Router()
 
@@ -37,20 +38,38 @@ router.post('/', async (req, res) => {
   res.status(201).json(photo)
 })
 
-router.post('/upload', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
-  const { date, label, type, sessionId, ownerId } = req.body
-  const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`
-  const url = `${baseUrl}/uploads/${req.file.filename}`
-  const photo = await Photo.create({
-    date: date || new Date().toISOString().slice(0, 10),
-    label: label || '',
-    type: type || 'gym',
-    sessionId: sessionId || null,
-    ownerId: ownerId || null,
-    url,
-  })
-  res.status(201).json(photo)
+router.post('/upload', upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+    const { date, label, type, sessionId, ownerId } = req.body
+    const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get('host')}`
+    let uploaded = null
+
+    if (isCloudinaryReady) {
+      try {
+        uploaded = await uploadPhotoToCloudinary(req.file.path)
+      } catch (err) {
+        console.error('Cloudinary upload failed', err)
+        return res.status(500).json({ error: 'Cloudinary upload failed' })
+      }
+    }
+
+    if (uploaded) await removeLocalFile(req.file.path)
+
+    const url = uploaded?.url || `${baseUrl}/uploads/${req.file.filename}`
+    const photo = await Photo.create({
+      date: date || new Date().toISOString().slice(0, 10),
+      label: label || '',
+      type: type || 'gym',
+      sessionId: sessionId || null,
+      ownerId: ownerId || null,
+      url,
+      publicId: uploaded?.publicId || '',
+    })
+    res.status(201).json(photo)
+  } catch (err) {
+    next(err)
+  }
 })
 
 router.put('/:id', async (req, res) => {

@@ -13,6 +13,11 @@ import photosRoutes from "./routes/photos.js";
 import trainingsRoutes from "./routes/trainings.js";
 import preferencesRoutes from "./routes/preferences.js";
 import Photo from "./models/Photo.js";
+import {
+  uploadPhotoToCloudinary,
+  removeLocalFile,
+  isCloudinaryReady,
+} from "./utils/photoUpload.js";
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
@@ -78,7 +83,17 @@ app.post(
       const { date, label, type, sessionId, ownerId } = req.body;
       const baseUrl =
         process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-      const url = `${baseUrl}/uploads/${req.file.filename}`;
+      let uploaded = null;
+      if (isCloudinaryReady) {
+        try {
+          uploaded = await uploadPhotoToCloudinary(req.file.path);
+        } catch (err) {
+          console.error("Cloudinary upload failed", err);
+          return res.status(500).json({ error: "Cloudinary upload failed" });
+        }
+      }
+      if (uploaded) await removeLocalFile(req.file.path);
+      const url = uploaded?.url || `${baseUrl}/uploads/${req.file.filename}`;
       const photo = await Photo.create({
         date: date || new Date().toISOString().slice(0, 10),
         label: label || "",
@@ -86,6 +101,7 @@ app.post(
         sessionId: sessionId || null,
         ownerId: ownerId || null,
         url,
+        publicId: uploaded?.publicId || "",
       });
       res.status(201).json(photo);
     } catch (err) {
