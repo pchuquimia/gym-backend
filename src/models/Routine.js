@@ -5,6 +5,7 @@ const RoutineExerciseSchema = new mongoose.Schema(
     exerciseId: { type: String, required: true },
     name: { type: String, required: true },
     sets: { type: Number, default: 3 },
+    isExtra: { type: Boolean, default: false },
   },
   { _id: false },
 )

@@ -34,6 +34,20 @@ const toIsoWeek = (iso) => {
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, '0')}`
 }
 
+const getEntryVolume = (entry) => {
+  if (!entry) return 0
+  const weight = Number(entry.weightKg ?? entry.weight ?? entry.kg ?? 0)
+  const reps = Number(entry.reps ?? 0)
+  return weight * reps
+}
+
+const getSetVolume = (set) => {
+  if (!set) return 0
+  const entries = Array.isArray(set.entries) && set.entries.length ? set.entries : null
+  if (entries) return entries.reduce((acc, entry) => acc + getEntryVolume(entry), 0)
+  return getEntryVolume(set)
+}
+
 // GET /api/trainings/summary?from=&to=&routineId=
 router.get('/summary', async (req, res, next) => {
   try {
@@ -63,7 +77,7 @@ router.get('/summary', async (req, res, next) => {
           ? t.totalVolume
           : (t.exercises || []).reduce((acc, ex) => {
               const sets = Array.isArray(ex.sets) ? ex.sets : []
-              const v = sets.reduce((s, set) => s + Number(set.weightKg || 0) * Number(set.reps || 0), 0)
+              const v = sets.reduce((s, set) => s + getSetVolume(set), 0)
               return acc + v
             }, 0)
       totalVolume += vol
@@ -185,11 +199,7 @@ router.post('/', async (req, res) => {
     Array.isArray(payload.exercises) &&
     payload.exercises.reduce((acc, ex) => {
       const sets = Array.isArray(ex.sets) ? ex.sets : []
-      const vol = sets.reduce((s, set) => {
-        const w = Number(set.weightKg || 0)
-        const r = Number(set.reps || 0)
-        return s + w * r
-      }, 0)
+      const vol = sets.reduce((s, set) => s + getSetVolume(set), 0)
       return acc + vol
     }, 0)
   payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0
@@ -210,11 +220,7 @@ router.put('/:id', async (req, res, next) => {
       Array.isArray(payload.exercises) &&
       payload.exercises.reduce((acc, ex) => {
         const sets = Array.isArray(ex.sets) ? ex.sets : []
-        const vol = sets.reduce((s, set) => {
-          const w = Number(set.weightKg || 0)
-          const r = Number(set.reps || 0)
-          return s + w * r
-        }, 0)
+        const vol = sets.reduce((s, set) => s + getSetVolume(set), 0)
         return acc + vol
       }, 0)
     payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0
