@@ -6,6 +6,18 @@ const RoutineExerciseSchema = new mongoose.Schema(
     name: { type: String, required: true },
     sets: { type: Number, default: 3 },
     isExtra: { type: Boolean, default: false },
+    muscle: { type: String, default: "" },
+    image: { type: String, default: "" },
+    imagePublicId: { type: String, default: "" },
+    alternatives: [
+      {
+        exerciseId: { type: String, required: true },
+        name: { type: String, required: true },
+        muscle: { type: String, default: "" },
+        image: { type: String, default: "" },
+        imagePublicId: { type: String, default: "" },
+      },
+    ],
   },
   { _id: false },
 )
