@@ -2,19 +2,21 @@ import { Router } from 'express'
 import Preference from '../models/Preference.js'
 
 const router = Router()
+const normalizeBranch = (value) =>
+  value === 'miraflores' || value === 'sopocachi' ? value : 'sopocachi'
 
 router.get('/', async (req, res) => {
   const userId = req.query.userId || 'default'
   const pref = await Preference.findOne({ userId }).lean()
   res.set('Cache-Control', 'no-store')
-  res.json(pref || { userId, branch: 'general', goals: {} })
+  res.json(pref || { userId, branch: 'sopocachi', goals: {} })
 })
 
 router.post('/', async (req, res) => {
   const userId = req.body.userId || 'default'
   const update = {}
   if (Object.prototype.hasOwnProperty.call(req.body, 'branch')) {
-    update.branch = req.body.branch || 'general'
+    update.branch = normalizeBranch(req.body.branch)
   }
   if (Object.prototype.hasOwnProperty.call(req.body, 'goals')) {
     update.goals = req.body.goals || {}

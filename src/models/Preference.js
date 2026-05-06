@@ -3,7 +3,7 @@ import mongoose from 'mongoose'
 const PreferenceSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, unique: true },
-    branch: { type: String, enum: ['sopocachi', 'miraflores', 'general'], default: 'general' },
+    branch: { type: String, enum: ['sopocachi', 'miraflores'], default: 'sopocachi' },
     goals: { type: Object, default: {} },
   },
   { timestamps: true, versionKey: false },

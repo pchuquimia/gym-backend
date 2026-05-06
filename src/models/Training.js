@@ -33,6 +33,11 @@ const ExerciseSchema = new mongoose.Schema(
     exerciseName: { type: String, default: '' },
     muscleGroup: { type: String, default: '' },
     order: { type: Number, default: 0 },
+    movementMode: {
+      type: String,
+      enum: ['bilateral', 'unilateral'],
+      default: 'bilateral',
+    },
     seriesType: {
       type: String,
       enum: ['serie', 'biserie', 'triserie'],
