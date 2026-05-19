@@ -22,6 +22,12 @@ const RoutineExerciseSchema = new mongoose.Schema(
         muscle: { type: String, default: "" },
         image: { type: String, default: "" },
         imagePublicId: { type: String, default: "" },
+        supportsUnilateral: { type: Boolean, default: false },
+        movementMode: {
+          type: String,
+          enum: ['bilateral', 'unilateral'],
+          default: 'bilateral',
+        },
       },
     ],
   },
