@@ -33,6 +33,13 @@ const ExerciseSchema = new mongoose.Schema(
     exerciseName: { type: String, default: '' },
     muscleGroup: { type: String, default: '' },
     order: { type: Number, default: 0 },
+    plannedOrder: { type: Number, default: 0 },
+    actualOrder: { type: Number, default: 0 },
+    orderContext: {
+      type: String,
+      enum: ['normal', 'first', 'early', 'fatigued', 'extra'],
+      default: 'normal',
+    },
     movementMode: {
       type: String,
       enum: ['bilateral', 'unilateral'],
@@ -48,6 +55,33 @@ const ExerciseSchema = new mongoose.Schema(
   { _id: false },
 )
 
+const TimeEventSchema = new mongoose.Schema(
+  {
+    type: {
+      type: String,
+      enum: [
+        'session_start',
+        'session_pause',
+        'session_resume',
+        'session_end',
+        'exercise_start',
+      ],
+      required: true,
+    },
+    at: { type: String, required: true },
+    exerciseId: { type: String, default: null },
+  },
+  { _id: false },
+)
+
+const ExerciseDurationSchema = new mongoose.Schema(
+  {
+    exerciseId: { type: String, required: true },
+    durationSeconds: { type: Number, default: 0 },
+  },
+  { _id: false },
+)
+
 const TrainingSchema = new mongoose.Schema(
   {
     _id: {
@@ -56,6 +90,8 @@ const TrainingSchema = new mongoose.Schema(
     },
     date: { type: String, required: true }, // yyyy-mm-dd
     durationSeconds: { type: Number, default: 0 },
+    timeEvents: [TimeEventSchema],
+    exerciseDurations: [ExerciseDurationSchema],
     totalVolume: { type: Number, default: 0 },
     routineId: { type: String, default: null },
     routineName: { type: String, default: '' },

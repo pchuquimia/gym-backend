@@ -48,6 +48,93 @@ const getSetVolume = (set) => {
   return getEntryVolume(set)
 }
 
+const getOrderContext = (plannedOrder, actualOrder, isExtra = false) => {
+  if (isExtra) return 'extra'
+  if (!plannedOrder || !actualOrder) return 'normal'
+  if (actualOrder === 1) return plannedOrder === 1 ? 'first' : 'early'
+  if (actualOrder === plannedOrder) return 'normal'
+  if (actualOrder < plannedOrder) return 'early'
+  return 'fatigued'
+}
+
+const normalizeExerciseOrders = (exercises = []) =>
+  Array.isArray(exercises)
+    ? exercises.map((ex, idx) => {
+        const actualOrder = Number(ex.actualOrder ?? ex.order ?? idx + 1) || idx + 1
+        const plannedOrder = Number(ex.plannedOrder ?? actualOrder) || actualOrder
+        return {
+          ...ex,
+          order: actualOrder,
+          actualOrder,
+          plannedOrder,
+          orderContext: ex.orderContext || getOrderContext(plannedOrder, actualOrder, Boolean(ex.isExtra)),
+        }
+      })
+    : []
+
+const parseEventTime = (value) => {
+  const ts = Date.parse(value)
+  return Number.isNaN(ts) ? null : ts
+}
+
+const normalizeTimeEvents = (events = []) =>
+  Array.isArray(events)
+    ? events
+        .filter((event) => event?.type && event?.at && parseEventTime(event.at) != null)
+        .map((event) => ({
+          type: event.type,
+          at: new Date(parseEventTime(event.at)).toISOString(),
+          exerciseId: event.exerciseId || null,
+        }))
+        .sort((a, b) => parseEventTime(a.at) - parseEventTime(b.at))
+    : []
+
+const calculateTimingSummary = (events = []) => {
+  let running = false
+  let activeExerciseId = null
+  let lastAt = null
+  let durationSeconds = 0
+  const exerciseMap = new Map()
+
+  const accrue = (nextAt) => {
+    if (!running || lastAt == null || nextAt <= lastAt) return
+    const delta = Math.floor((nextAt - lastAt) / 1000)
+    if (delta <= 0) return
+    durationSeconds += delta
+    if (activeExerciseId) {
+      exerciseMap.set(activeExerciseId, (exerciseMap.get(activeExerciseId) || 0) + delta)
+    }
+  }
+
+  normalizeTimeEvents(events).forEach((event) => {
+    const at = parseEventTime(event.at)
+    accrue(at)
+    if (event.type === 'session_start' || event.type === 'session_resume') {
+      running = true
+      lastAt = at
+      return
+    }
+    if (event.type === 'session_pause' || event.type === 'session_end') {
+      running = false
+      lastAt = at
+      return
+    }
+    if (event.type === 'exercise_start') {
+      if (!running) running = true
+      activeExerciseId = event.exerciseId || null
+      lastAt = at
+    }
+  })
+
+  return {
+    durationSeconds,
+    exerciseDurations: Array.from(exerciseMap.entries()).map(([exerciseId, seconds]) => ({
+      exerciseId,
+      durationSeconds: seconds,
+    })),
+  }
+}
+
 // GET /api/trainings/summary?from=&to=&routineId=
 router.get('/summary', async (req, res, next) => {
   try {
@@ -194,6 +281,13 @@ router.post('/', async (req, res) => {
   // normalizar fecha a string local yyyy-mm-dd para evitar corrimientos por zona horaria
   const normalizedDate = toLocalISODate(payload.date)
   payload.date = normalizedDate || toLocalISODate(new Date()) || payload.date
+  payload.exercises = normalizeExerciseOrders(payload.exercises)
+  payload.timeEvents = normalizeTimeEvents(payload.timeEvents)
+  const timingSummary = calculateTimingSummary(payload.timeEvents)
+  if (timingSummary.durationSeconds > 0) {
+    payload.durationSeconds = timingSummary.durationSeconds
+    payload.exerciseDurations = timingSummary.exerciseDurations
+  }
   // calcular volumen total si vienen sets
   const totalVolume =
     Array.isArray(payload.exercises) &&
@@ -216,6 +310,13 @@ router.put('/:id', async (req, res, next) => {
     delete payload.id
     const normalizedDate = toLocalISODate(payload.date)
     payload.date = normalizedDate || payload.date
+    payload.exercises = normalizeExerciseOrders(payload.exercises)
+    payload.timeEvents = normalizeTimeEvents(payload.timeEvents)
+    const timingSummary = calculateTimingSummary(payload.timeEvents)
+    if (timingSummary.durationSeconds > 0) {
+      payload.durationSeconds = timingSummary.durationSeconds
+      payload.exerciseDurations = timingSummary.exerciseDurations
+    }
     const totalVolume =
       Array.isArray(payload.exercises) &&
       payload.exercises.reduce((acc, ex) => {
