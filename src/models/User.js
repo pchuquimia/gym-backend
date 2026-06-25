@@ -51,6 +51,44 @@ const UserSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+    profile: {
+      birthDate: { type: String, default: "" },
+      weight: { type: Number, default: 82.5 },
+      height: { type: Number, default: 181 },
+      goal: {
+        type: String,
+        enum: ["volumen", "mantenimiento", "definicion"],
+        default: "mantenimiento",
+      },
+      calories: { type: Number, default: 2500 },
+      units: { type: String, enum: ["metric", "imperial"], default: "metric" },
+      privacy: { type: String, enum: ["público", "privado"], default: "público" },
+      notifications: {
+        workoutReminders: { type: Boolean, default: true },
+        achievements: { type: Boolean, default: true },
+        community: { type: Boolean, default: false },
+      },
+    },
+    security: {
+      biometricEnabled: { type: Boolean, default: true },
+      twoFactorEnabled: { type: Boolean, default: false },
+    },
+    passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
+    activeSessions: [
+      {
+        sessionId: { type: String, required: true },
+        device: { type: String, default: "Dispositivo" },
+        browser: { type: String, default: "Navegador" },
+        os: { type: String, default: "" },
+        ip: { type: String, default: "" },
+        userAgent: { type: String, default: "" },
+        createdAt: { type: Date, default: Date.now },
+        lastSeenAt: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true, versionKey: false },
 );
@@ -73,6 +111,9 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     role: this.role,
     isActive: this.isActive,
     lastLoginAt: this.lastLoginAt,
+    profile: this.profile,
+    security: this.security,
+    passwordChangedAt: this.passwordChangedAt,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

@@ -28,6 +28,16 @@ export const protect = async (req, _res, next) => {
       err.statusCode = 401;
       return next(err);
     }
+    if (decoded.sid) {
+      const hasSession = (user.activeSessions || []).some(
+        (session) => session.sessionId === decoded.sid,
+      );
+      if (!hasSession) {
+        const err = new Error("No autenticado");
+        err.statusCode = 401;
+        return next(err);
+      }
+    }
 
     req.user = {
       id: user._id.toString(),
@@ -36,6 +46,7 @@ export const protect = async (req, _res, next) => {
       role: user.role,
       isActive: user.isActive,
       assignedTrainerId: user.assignedTrainerId || null,
+      sessionId: decoded.sid || null,
     };
     next();
   } catch (_err) {
