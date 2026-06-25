@@ -10,8 +10,8 @@ import User from "../src/models/User.js";
 
 const ADMIN = {
   name: "Administrador Gym",
-  email: "admin@gym",
-  password: "7O79963i9*",
+  email: "admin@gym.com",
+  password: "Admin#2026Gym!",
 };
 
 const missingOwnerFilter = {
