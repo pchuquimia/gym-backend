@@ -16,18 +16,26 @@ const parseBooleanEnv = (value, fallback) => {
   return ["true", "1", "yes"].includes(String(value).toLowerCase());
 };
 
-export const getCookieOptions = () => ({
-  httpOnly: true,
-  secure: parseBooleanEnv(
-    process.env.COOKIE_SECURE,
-    process.env.NODE_ENV === "production",
-  ),
-  sameSite:
+export const getCookieOptions = () => {
+  const sameSite =
     process.env.COOKIE_SAMESITE ||
-    (process.env.NODE_ENV === "production" ? "none" : "lax"),
-  maxAge: parseCookieExpiresMs(),
-  path: "/",
-});
+    (process.env.NODE_ENV === "production" ? "none" : "lax");
+  const secure =
+    String(sameSite).toLowerCase() === "none"
+      ? true
+      : parseBooleanEnv(
+          process.env.COOKIE_SECURE,
+          process.env.NODE_ENV === "production",
+        );
+
+  return {
+    httpOnly: true,
+    secure,
+    sameSite,
+    maxAge: parseCookieExpiresMs(),
+    path: "/",
+  };
+};
 
 export const setAuthCookie = (res, token) => {
   res.cookie("jwt", token, getCookieOptions());

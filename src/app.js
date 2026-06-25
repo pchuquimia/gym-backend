@@ -46,8 +46,15 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+const parseOrigins = (value = "") =>
+  value
+    .split(",")
+    .map((origin) => origin.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+
 const allowedOrigins = [
-  process.env.CLIENT_URL,
+  ...parseOrigins(process.env.CLIENT_URL),
+  ...parseOrigins(process.env.CLIENT_URLS),
   "https://gym-frontend-t65c.onrender.com",
   "http://localhost:5173",
   "http://localhost:5175",
@@ -60,7 +67,8 @@ const isDev = process.env.NODE_ENV !== "production";
 const corsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    if (allowedOrigins.includes(origin)) return cb(null, true);
+    const normalizedOrigin = origin.replace(/\/$/, "");
+    if (allowedOrigins.includes(normalizedOrigin)) return cb(null, true);
     if (isDev && localOriginPattern.test(origin)) return cb(null, true);
     return cb(new Error("Not allowed by CORS"));
   },
