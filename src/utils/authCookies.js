@@ -11,10 +11,20 @@ const parseCookieExpiresMs = () => {
   return value * 24 * 60 * 60 * 1000;
 };
 
+const parseBooleanEnv = (value, fallback) => {
+  if (value === undefined || value === null || value === "") return fallback;
+  return ["true", "1", "yes"].includes(String(value).toLowerCase());
+};
+
 export const getCookieOptions = () => ({
   httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  secure: parseBooleanEnv(
+    process.env.COOKIE_SECURE,
+    process.env.NODE_ENV === "production",
+  ),
+  sameSite:
+    process.env.COOKIE_SAMESITE ||
+    (process.env.NODE_ENV === "production" ? "none" : "lax"),
   maxAge: parseCookieExpiresMs(),
   path: "/",
 });
@@ -24,10 +34,11 @@ export const setAuthCookie = (res, token) => {
 };
 
 export const clearAuthCookie = (res) => {
+  const options = getCookieOptions();
   res.clearCookie("jwt", {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    secure: options.secure,
+    sameSite: options.sameSite,
     path: "/",
   });
 };
