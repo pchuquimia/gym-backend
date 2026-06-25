@@ -18,6 +18,17 @@ const signToken = (user) =>
 const sanitizeUser = (user) =>
   typeof user.toSafeJSON === "function" ? user.toSafeJSON() : user;
 
+const shouldExposeToken = () =>
+  ["true", "1", "yes"].includes(
+    String(process.env.AUTH_EXPOSE_TOKEN || "").toLowerCase(),
+  );
+
+const authResponse = (user, token) => {
+  const payload = { user: sanitizeUser(user) };
+  if (shouldExposeToken()) payload.token = token;
+  return payload;
+};
+
 const invalidCredentials = () => {
   const err = new Error("Credenciales inválidas");
   err.statusCode = 401;
@@ -49,7 +60,7 @@ const register = asyncHandler(async (req, res) => {
 
   const token = signToken(user);
   setAuthCookie(res, token);
-  res.status(201).json({ user: sanitizeUser(user) });
+  res.status(201).json(authResponse(user, token));
 });
 
 const login = asyncHandler(async (req, res) => {
@@ -77,7 +88,7 @@ const login = asyncHandler(async (req, res) => {
 
   const token = signToken(user);
   setAuthCookie(res, token);
-  res.json({ user: sanitizeUser(user) });
+  res.json(authResponse(user, token));
 });
 
 const logout = asyncHandler(async (_req, res) => {

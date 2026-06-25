@@ -1,7 +1,16 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
 
-const getTokenFromRequest = (req) => req.cookies?.jwt || null;
+const getTokenFromRequest = (req) => {
+  if (req.cookies?.jwt) return req.cookies.jwt;
+
+  const authorization = req.headers.authorization || "";
+  if (authorization.toLowerCase().startsWith("bearer ")) {
+    return authorization.slice(7).trim();
+  }
+
+  return null;
+};
 
 export const protect = async (req, _res, next) => {
   try {
