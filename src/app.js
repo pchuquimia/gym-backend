@@ -55,7 +55,7 @@ const parseOrigins = (value = "") =>
 const allowedOrigins = [
   ...parseOrigins(process.env.CLIENT_URL),
   ...parseOrigins(process.env.CLIENT_URLS),
-  "https://gym-frontend-t65c.onrender.com",
+  "https://gym-backend-1fod.onrender.com",
   "http://localhost:5173",
   "http://localhost:5175",
   "http://localhost:4173",
