@@ -28,13 +28,19 @@ export const getCookieOptions = () => {
           process.env.NODE_ENV === "production",
         );
 
-  return {
+  const options = {
     httpOnly: true,
     secure,
     sameSite,
     maxAge: parseCookieExpiresMs(),
     path: "/",
   };
+
+  if (process.env.COOKIE_DOMAIN) {
+    options.domain = process.env.COOKIE_DOMAIN;
+  }
+
+  return options;
 };
 
 export const setAuthCookie = (res, token) => {
@@ -47,6 +53,7 @@ export const clearAuthCookie = (res) => {
     httpOnly: true,
     secure: options.secure,
     sameSite: options.sameSite,
+    domain: options.domain,
     path: "/",
   });
 };
