@@ -1,4 +1,4 @@
-import mongoose from 'mongoose'
+import mongoose from "mongoose";
 
 const EntrySchema = new mongoose.Schema(
   {
@@ -6,10 +6,10 @@ const EntrySchema = new mongoose.Schema(
     reps: { type: Number, default: null },
     done: { type: Boolean, default: false },
     order: { type: Number, default: 0 },
-    previousText: { type: String, default: '' },
+    previousText: { type: String, default: "" },
   },
   { _id: false },
-)
+);
 
 const SetSchema = new mongoose.Schema(
   {
@@ -19,52 +19,52 @@ const SetSchema = new mongoose.Schema(
     order: { type: Number, default: 0 },
     seriesType: {
       type: String,
-      enum: ['serie', 'biserie', 'triserie'],
-      default: 'serie',
+      enum: ["serie", "biserie", "triserie"],
+      default: "serie",
     },
     entries: [EntrySchema],
   },
   { _id: false },
-)
+);
 
 const ExerciseSchema = new mongoose.Schema(
   {
     exerciseId: { type: String, default: null },
-    exerciseName: { type: String, default: '' },
-    muscleGroup: { type: String, default: '' },
+    exerciseName: { type: String, default: "" },
+    muscleGroup: { type: String, default: "" },
     order: { type: Number, default: 0 },
     plannedOrder: { type: Number, default: 0 },
     actualOrder: { type: Number, default: 0 },
     orderContext: {
       type: String,
-      enum: ['normal', 'first', 'early', 'fatigued', 'extra'],
-      default: 'normal',
+      enum: ["normal", "first", "early", "fatigued", "extra"],
+      default: "normal",
     },
     movementMode: {
       type: String,
-      enum: ['bilateral', 'unilateral'],
-      default: 'bilateral',
+      enum: ["bilateral", "unilateral"],
+      default: "bilateral",
     },
     seriesType: {
       type: String,
-      enum: ['serie', 'biserie', 'triserie'],
-      default: 'serie',
+      enum: ["serie", "biserie", "triserie"],
+      default: "serie",
     },
     sets: [SetSchema],
   },
   { _id: false },
-)
+);
 
 const TimeEventSchema = new mongoose.Schema(
   {
     type: {
       type: String,
       enum: [
-        'session_start',
-        'session_pause',
-        'session_resume',
-        'session_end',
-        'exercise_start',
+        "session_start",
+        "session_pause",
+        "session_resume",
+        "session_end",
+        "exercise_start",
       ],
       required: true,
     },
@@ -72,7 +72,7 @@ const TimeEventSchema = new mongoose.Schema(
     exerciseId: { type: String, default: null },
   },
   { _id: false },
-)
+);
 
 const ExerciseDurationSchema = new mongoose.Schema(
   {
@@ -80,7 +80,7 @@ const ExerciseDurationSchema = new mongoose.Schema(
     durationSeconds: { type: Number, default: 0 },
   },
   { _id: false },
-)
+);
 
 const TrainingSchema = new mongoose.Schema(
   {
@@ -94,17 +94,17 @@ const TrainingSchema = new mongoose.Schema(
     exerciseDurations: [ExerciseDurationSchema],
     totalVolume: { type: Number, default: 0 },
     routineId: { type: String, default: null },
-    routineName: { type: String, default: '' },
+    routineName: { type: String, default: "" },
     branch: { type: String, default: null },
     ownerId: { type: String, default: null },
     exercises: [ExerciseSchema],
   },
   { timestamps: true, versionKey: false },
-)
+);
 
-TrainingSchema.index({ date: -1 })
-TrainingSchema.index({ routineId: 1, date: -1 })
-TrainingSchema.index({ branch: 1, date: -1 })
-TrainingSchema.index({ 'exercises.exerciseId': 1, date: -1 })
+TrainingSchema.index({ date: -1 });
+TrainingSchema.index({ routineId: 1, date: -1 });
+TrainingSchema.index({ branch: 1, date: -1 });
+TrainingSchema.index({ "exercises.exerciseId": 1, date: -1 });
 
-export default mongoose.model('Training', TrainingSchema)
+export default mongoose.model("Training", TrainingSchema);

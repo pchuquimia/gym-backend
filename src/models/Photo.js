@@ -1,16 +1,16 @@
-import mongoose from 'mongoose'
+import mongoose from "mongoose";
 
 const PhotoSchema = new mongoose.Schema(
   {
     date: { type: String, required: true }, // yyyy-mm-dd
-    label: { type: String, default: '' },
+    label: { type: String, default: "" },
     url: { type: String, required: true },
-    publicId: { type: String, default: '' },
-    type: { type: String, enum: ['gym', 'home'], default: 'gym' },
+    publicId: { type: String, default: "" },
+    type: { type: String, enum: ["gym", "home"], default: "gym" },
     sessionId: { type: String, default: null },
     ownerId: { type: String, default: null },
   },
   { timestamps: true, versionKey: false },
-)
+);
 
-export default mongoose.model('Photo', PhotoSchema)
+export default mongoose.model("Photo", PhotoSchema);

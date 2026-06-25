@@ -1,5 +1,8 @@
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import express from "express";
+import rateLimit from "express-rate-limit";
+import helmet from "helmet";
 import morgan from "morgan";
 import path from "path";
 import fs from "fs";
@@ -12,7 +15,11 @@ import sessionsRoutes from "./routes/sessions.js";
 import photosRoutes from "./routes/photos.js";
 import trainingsRoutes from "./routes/trainings.js";
 import preferencesRoutes from "./routes/preferences.js";
+import authRoutes from "./routes/auth.js";
+import usersRoutes from "./routes/users.js";
 import Photo from "./models/Photo.js";
+import { protect } from "./middleware/authMiddleware.js";
+import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import {
   uploadPhotoToCloudinary,
   removeLocalFile,
@@ -31,7 +38,7 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
   filename: (_req, file, cb) => {
     const unique = `${Date.now()}-${Math.round(
-      Math.random() * 1e9
+      Math.random() * 1e9,
     )}${path.extname(file.originalname)}`;
     cb(null, unique);
   },
@@ -39,6 +46,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 const allowedOrigins = [
+  process.env.CLIENT_URL,
   "https://gym-frontend-t65c.onrender.com",
   "http://localhost:5173",
   "http://localhost:5175",
@@ -57,30 +65,45 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
-  credentials: false,
+  credentials: true,
   optionsSuccessStatus: 200,
 };
 
+app.use(
+  helmet({
+    crossOriginResourcePolicy: false,
+  }),
+);
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions), (_req, res) => res.sendStatus(200));
+app.use(
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 500,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
 app.use(
   compression({
     level: 6,
     threshold: 1024, // comprime respuestas mayores a 1KB
-  })
+  }),
 );
 app.use(express.json({ limit: "10mb" }));
+app.use(cookieParser());
 app.use(morgan("dev"));
 app.use("/uploads", express.static(uploadsDir));
 
 // Upload endpoint (multipart) to ensure availability even if router is cached old version
 app.post(
   "/api/photos/upload",
+  protect,
   upload.single("file"),
   async (req, res, next) => {
     try {
       if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-      const { date, label, type, sessionId, ownerId } = req.body;
+      const { date, label, type, sessionId } = req.body;
       const baseUrl =
         process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
       let uploaded = null;
@@ -99,7 +122,7 @@ app.post(
         label: label || "",
         type: type || "gym",
         sessionId: sessionId || null,
-        ownerId: ownerId || null,
+        ownerId: req.user.id,
         url,
         publicId: uploaded?.publicId || "",
       });
@@ -107,10 +130,12 @@ app.post(
     } catch (err) {
       next(err);
     }
-  }
+  },
 );
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.use("/api/auth", authRoutes);
+app.use("/api/users", usersRoutes);
 app.use("/api/exercises", exercisesRoutes);
 app.use("/api/routines", routinesRoutes);
 app.use("/api/sessions", sessionsRoutes);
@@ -118,10 +143,7 @@ app.use("/api/photos", photosRoutes);
 app.use("/api/trainings", trainingsRoutes);
 app.use("/api/preferences", preferencesRoutes);
 
-// eslint-disable-next-line no-unused-vars
-app.use((err, _req, res, _next) => {
-  console.error(err);
-  res.status(500).json({ error: "Internal Server Error" });
-});
+app.use(notFound);
+app.use(errorHandler);
 
 export default app;

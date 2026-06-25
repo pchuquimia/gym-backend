@@ -1,12 +1,16 @@
-import mongoose from 'mongoose'
+import mongoose from "mongoose";
 
 const PreferenceSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, unique: true },
-    branch: { type: String, enum: ['sopocachi', 'miraflores'], default: 'sopocachi' },
+    branch: {
+      type: String,
+      enum: ["sopocachi", "miraflores"],
+      default: "sopocachi",
+    },
     goals: { type: Object, default: {} },
   },
   { timestamps: true, versionKey: false },
-)
+);
 
-export default mongoose.model('Preference', PreferenceSchema)
+export default mongoose.model("Preference", PreferenceSchema);
