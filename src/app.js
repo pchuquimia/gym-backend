@@ -55,6 +55,7 @@ const parseOrigins = (value = "") =>
 const allowedOrigins = [
   ...parseOrigins(process.env.CLIENT_URL),
   ...parseOrigins(process.env.CLIENT_URLS),
+  "https://gym-frontend-t65c.onrender.com",
   "https://gym-backend-1fod.onrender.com",
   "http://localhost:5173",
   "http://localhost:5175",
@@ -69,8 +70,8 @@ const corsOptions = {
     if (!origin) return cb(null, true);
     const normalizedOrigin = origin.replace(/\/$/, "");
     if (allowedOrigins.includes(normalizedOrigin)) return cb(null, true);
-    if (isDev && localOriginPattern.test(origin)) return cb(null, true);
-    return cb(new Error("Not allowed by CORS"));
+    if (isDev && localOriginPattern.test(normalizedOrigin)) return cb(null, true);
+    return cb(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
