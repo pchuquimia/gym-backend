@@ -5,6 +5,7 @@ const EntrySchema = new mongoose.Schema(
     weightKg: { type: Number, default: null },
     reps: { type: Number, default: null },
     done: { type: Boolean, default: false },
+    completedAt: { type: String, default: null },
     order: { type: Number, default: 0 },
     previousText: { type: String, default: "" },
   },
