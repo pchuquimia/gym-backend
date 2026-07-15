@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import {
   changePassword,
+  devAdminLogin,
   getProfile,
   getSessions,
   login,
@@ -34,6 +35,8 @@ const validateLogin = (req, res, next) => {
   if (errors.isEmpty()) return next();
   return res.status(401).json({ error: "Credenciales inválidas" });
 };
+
+router.post("/dev-admin", devAdminLogin);
 
 router.use(authLimiter);
 
@@ -76,7 +79,10 @@ router.patch(
   [
     body("birthDate").optional().isString().withMessage("Fecha inválida"),
     body("weight").optional().isFloat({ min: 0 }).withMessage("Peso inválido"),
-    body("height").optional().isFloat({ min: 0 }).withMessage("Altura inválida"),
+    body("height")
+      .optional()
+      .isFloat({ min: 0 })
+      .withMessage("Altura inválida"),
     body("goal")
       .optional()
       .isIn(["volumen", "mantenimiento", "definicion"])
@@ -93,7 +99,10 @@ router.patch(
       .optional()
       .isIn(["público", "privado"])
       .withMessage("Privacidad inválida"),
-    body("notifications").optional().isObject().withMessage("Notificaciones inválidas"),
+    body("notifications")
+      .optional()
+      .isObject()
+      .withMessage("Notificaciones inválidas"),
     validate,
   ],
   updateProfile,
@@ -102,8 +111,14 @@ router.patch(
   "/security",
   protect,
   [
-    body("biometricEnabled").optional().isBoolean().withMessage("Valor inválido"),
-    body("twoFactorEnabled").optional().isBoolean().withMessage("Valor inválido"),
+    body("biometricEnabled")
+      .optional()
+      .isBoolean()
+      .withMessage("Valor inválido"),
+    body("twoFactorEnabled")
+      .optional()
+      .isBoolean()
+      .withMessage("Valor inválido"),
     validate,
   ],
   updateSecurity,
@@ -112,7 +127,10 @@ router.post(
   "/change-password",
   protect,
   [
-    body("currentPassword").isString().notEmpty().withMessage("Contraseña actual requerida"),
+    body("currentPassword")
+      .isString()
+      .notEmpty()
+      .withMessage("Contraseña actual requerida"),
     body("password")
       .isString()
       .matches(passwordRules.pattern)

@@ -9,6 +9,7 @@
     "admin:init": "node scripts/createAdminAndAssignData.js",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
+    "import:exercises-excel": "node scripts/importExercisesFromExcel.js",
     "build:cloudinary-map": "node scripts/buildCloudinaryMap.js",
     "clear:exercise-images": "node scripts/clearExerciseImages.js",
     "export:cloudinary-template": "node scripts/exportExerciseIds.js"

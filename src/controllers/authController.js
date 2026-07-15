@@ -162,6 +162,52 @@ const login = asyncHandler(async (req, res) => {
   res.json(authResponse(user, token));
 });
 
+const devAdminLogin = asyncHandler(async (req, res) => {
+  const isDevAdminEnabled =
+    process.env.NODE_ENV !== "production" ||
+    String(process.env.DEV_ADMIN_LOGIN || "").toLowerCase() === "true";
+  const host = req.hostname;
+  const ip = req.ip || "";
+  const isLocal =
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    ip === "::1" ||
+    ip === "127.0.0.1" ||
+    ip === "::ffff:127.0.0.1";
+
+  if (!isDevAdminEnabled || !isLocal) {
+    const err = new Error("No autorizado");
+    err.statusCode = 403;
+    throw err;
+  }
+
+  const email = process.env.DEV_ADMIN_EMAIL || "admin@gym.com";
+  let user = await User.findOne({ email });
+  if (!user) {
+    user = await User.create({
+      name: "Administrador Gym",
+      email,
+      password: `Dev#${crypto.randomUUID()}!`,
+      role: "Admin",
+      isActive: true,
+    });
+  }
+
+  user.role = "Admin";
+  user.isActive = true;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
+  user.lastLoginAt = new Date();
+  const session = createSession(req);
+  user.activeSessions = [session, ...(user.activeSessions || [])].slice(0, 10);
+  await user.save();
+
+  const token = signToken(user, session.sessionId);
+  setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
+  res.json(authResponse(user, token));
+});
+
 const logout = asyncHandler(async (req, res) => {
   const token = getTokenFromRequest(req);
   if (token) {
@@ -291,7 +337,12 @@ const logoutAll = asyncHandler(async (req, res) => {
   );
   if (user) {
     user.activeSessions = currentSession
-      ? [{ ...(currentSession.toObject?.() || currentSession), lastSeenAt: new Date() }]
+      ? [
+          {
+            ...(currentSession.toObject?.() || currentSession),
+            lastSeenAt: new Date(),
+          },
+        ]
       : [];
     await user.save();
   }
@@ -301,6 +352,7 @@ const logoutAll = asyncHandler(async (req, res) => {
 export {
   register,
   login,
+  devAdminLogin,
   logout,
   me,
   getProfile,

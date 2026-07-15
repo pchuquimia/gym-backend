@@ -72,7 +72,12 @@ const cloudinaryPublicIdFromUrl = (url) => {
 };
 
 const toArray = (value) => {
-  if (Array.isArray(value)) return value.filter(Boolean);
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((item) => toArray(item))
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
   if (typeof value === "string") {
     return value
       .split(",")
@@ -82,10 +87,65 @@ const toArray = (value) => {
   return [];
 };
 
+const firstNonEmpty = (...values) =>
+  values.find((value) => typeof value === "string" && value.trim())?.trim() ||
+  "";
+
+const includesNormalized = (value, token) =>
+  value
+    ?.toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .includes(token);
+
+const mergeMechanics = (incoming, current, fallback = {}) => {
+  const currentValue =
+    current && typeof current === "object" && !Array.isArray(current)
+      ? current
+      : {};
+  if (incoming && typeof incoming === "object" && !Array.isArray(incoming)) {
+    return { ...currentValue, ...incoming };
+  }
+  return {
+    ...currentValue,
+    forceType: firstNonEmpty(fallback.forceType, currentValue.forceType),
+    contraction: firstNonEmpty(fallback.contraction, currentValue.contraction),
+  };
+};
+
+const getExerciseMediaStructure = (exercise = {}) => ({
+  category:
+    exercise.category ||
+    (Array.isArray(exercise.categories) ? exercise.categories[0] : "") ||
+    "",
+  bodyRegion: exercise.bodyRegion || "",
+  primaryMuscleGroup:
+    exercise.primaryMuscleGroup ||
+    exercise.primaryMuscle ||
+    exercise.muscle ||
+    "",
+  movementPattern:
+    exercise.movementPattern ||
+    (Array.isArray(exercise.movementPatterns)
+      ? exercise.movementPatterns[0]
+      : "") ||
+    "",
+});
+
 const normalizePayload = (body, req, current = null) => {
   const payload = { ...body };
+  const hasField = (field) => Object.prototype.hasOwnProperty.call(body, field);
+  const arrayOrCurrent = (field, fallback) =>
+    hasField(field) ? toArray(payload[field]) : toArray(fallback);
   const slug = slugify(
-    payload.slug || payload.id || payload._id || payload.name,
+    payload.slug ||
+      payload.id ||
+      payload._id ||
+      payload.name ||
+      current?.slug ||
+      current?._id ||
+      current?.name,
   );
   const requestedType = payload.type === "system" ? "system" : "custom";
   const type = req.user.role === "Admin" ? requestedType : "custom";
@@ -102,14 +162,87 @@ const normalizePayload = (body, req, current = null) => {
         ? payload.ownerId
         : current?.ownerId || req.user.id;
 
-  payload.muscle =
-    payload.muscle || payload.primaryMuscle || current?.muscle || "";
-  payload.primaryMuscle =
-    payload.primaryMuscle || payload.muscle || current?.primaryMuscle || "";
-  payload.secondaryMuscles = toArray(payload.secondaryMuscles);
-  payload.instructions = toArray(payload.instructions);
-  payload.commonMistakes = toArray(payload.commonMistakes);
-  payload.tags = toArray(payload.tags);
+  payload.aliases = arrayOrCurrent("aliases", current?.aliases);
+  payload.categories =
+    hasField("categories") && toArray(payload.categories).length
+      ? toArray(payload.categories)
+      : hasField("category") && toArray(payload.category).length
+        ? toArray(payload.category)
+        : toArray(current?.categories);
+  payload.category = firstNonEmpty(
+    payload.category,
+    payload.categories[0],
+    current?.category,
+  );
+  payload.bodyRegion = firstNonEmpty(payload.bodyRegion, current?.bodyRegion);
+  payload.navigationRegion = firstNonEmpty(
+    payload.navigationRegion,
+    current?.navigationRegion,
+  );
+
+  const primaryMuscleGroup = firstNonEmpty(
+    payload.primaryMuscleGroup,
+    payload.primaryMuscle,
+    payload.muscle,
+    current?.primaryMuscleGroup,
+    current?.primaryMuscle,
+    current?.muscle,
+  );
+  payload.primaryMuscleGroup = primaryMuscleGroup;
+  payload.muscle = primaryMuscleGroup;
+  payload.primaryMuscle = primaryMuscleGroup;
+  payload.primaryMuscles = arrayOrCurrent(
+    "primaryMuscles",
+    current?.primaryMuscles,
+  );
+  payload.secondaryMuscles = arrayOrCurrent(
+    "secondaryMuscles",
+    current?.secondaryMuscles,
+  );
+  payload.stabilizerMuscles = arrayOrCurrent(
+    "stabilizerMuscles",
+    current?.stabilizerMuscles,
+  );
+  payload.instructions = arrayOrCurrent("instructions", current?.instructions);
+  payload.commonMistakes = arrayOrCurrent(
+    "commonMistakes",
+    current?.commonMistakes,
+  );
+  payload.tags = arrayOrCurrent("tags", current?.tags);
+  payload.movementPatterns =
+    hasField("movementPatterns") && toArray(payload.movementPatterns).length
+      ? toArray(payload.movementPatterns)
+      : hasField("movementPattern") && toArray(payload.movementPattern).length
+        ? toArray(payload.movementPattern)
+        : toArray(current?.movementPatterns);
+  payload.movementPattern = firstNonEmpty(
+    payload.movementPattern,
+    payload.movementPatterns[0],
+    current?.movementPattern,
+  );
+  payload.equipment = arrayOrCurrent("equipment", current?.equipment);
+  payload.goals = arrayOrCurrent("goals", current?.goals);
+  payload.precautions = arrayOrCurrent("precautions", current?.precautions);
+  payload.exerciseType = firstNonEmpty(
+    payload.exerciseType,
+    current?.exerciseType,
+  );
+  payload.laterality = firstNonEmpty(payload.laterality, current?.laterality);
+  payload.kineticChain = firstNonEmpty(
+    payload.kineticChain,
+    current?.kineticChain,
+  );
+  payload.executionType = firstNonEmpty(
+    payload.executionType,
+    current?.executionType,
+  );
+  payload.stability = firstNonEmpty(payload.stability, current?.stability);
+  payload.position = firstNonEmpty(payload.position, current?.position);
+  payload.difficulty = firstNonEmpty(payload.difficulty, current?.difficulty);
+  payload.mechanics = mergeMechanics(payload.mechanics, current?.mechanics, {
+    forceType: payload.force,
+    contraction: payload.executionType,
+  });
   payload.branches =
     Array.isArray(payload.branches) && payload.branches.length
       ? payload.branches
@@ -118,9 +251,19 @@ const normalizePayload = (body, req, current = null) => {
         : current?.branches?.length
           ? current.branches
           : ["general"];
-  payload.supportsUnilateral = Boolean(payload.supportsUnilateral);
+  const isUnilateral =
+    payload.movementMode === "unilateral" ||
+    includesNormalized(payload.laterality, "unilateral");
+  const supportsUnilateral = hasField("supportsUnilateral")
+    ? Boolean(payload.supportsUnilateral)
+    : Boolean(current?.supportsUnilateral);
+  payload.supportsUnilateral = Boolean(supportsUnilateral || isUnilateral);
   payload.movementMode =
-    payload.movementMode === "unilateral" ? "unilateral" : "bilateral";
+    hasField("movementMode") || hasField("laterality") || !current
+      ? isUnilateral
+        ? "unilateral"
+        : "bilateral"
+      : current?.movementMode || "bilateral";
   payload.isActive =
     typeof payload.isActive === "boolean"
       ? payload.isActive
@@ -170,6 +313,7 @@ router.post("/:id/media", upload.single("file"), async (req, res, next) => {
       type: exercise.type,
       ownerId: exercise.ownerId,
       slug: exercise.slug || exercise._id,
+      ...getExerciseMediaStructure(exercise),
       kind,
     });
     const baseUrl =
@@ -220,11 +364,11 @@ router.get("/", async (req, res, next) => {
     const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
     const limit = Math.min(
       Math.max(parseInt(req.query.limit, 10) || 50, 1),
-      200,
+      1000,
     );
     const fields = req.query.fields
       ? req.query.fields.split(",").join(" ")
-      : "name slug muscle primaryMuscle secondaryMuscles equipment branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode isActive updatedAt createdAt";
+      : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
     if (req.user.role !== "Admin") {
@@ -242,8 +386,67 @@ router.get("/", async (req, res, next) => {
         $or: [
           { muscle: req.query.muscle },
           { primaryMuscle: req.query.muscle },
+          { primaryMuscleGroup: req.query.muscle },
         ],
       });
+    }
+    if (req.query.category) {
+      andFilters.push({
+        $or: [
+          { category: req.query.category },
+          { categories: req.query.category },
+        ],
+      });
+    }
+    if (req.query.bodyRegion) {
+      filter.bodyRegion = req.query.bodyRegion;
+    }
+    if (req.query.navigationRegion) {
+      filter.navigationRegion = req.query.navigationRegion;
+    }
+    if (req.query.primaryMuscleGroup) {
+      andFilters.push({
+        $or: [
+          { primaryMuscleGroup: req.query.primaryMuscleGroup },
+          { primaryMuscle: req.query.primaryMuscleGroup },
+          { muscle: req.query.primaryMuscleGroup },
+        ],
+      });
+    }
+    if (req.query.movementPattern) {
+      andFilters.push({
+        $or: [
+          { movementPattern: req.query.movementPattern },
+          { movementPatterns: req.query.movementPattern },
+        ],
+      });
+    }
+    if (req.query.equipment) {
+      filter.equipment = req.query.equipment;
+    }
+    if (req.query.exerciseType) {
+      filter.exerciseType = req.query.exerciseType;
+    }
+    if (req.query.laterality) {
+      filter.laterality = req.query.laterality;
+    }
+    if (req.query.kineticChain) {
+      filter.kineticChain = req.query.kineticChain;
+    }
+    if (req.query.executionType) {
+      filter.executionType = req.query.executionType;
+    }
+    if (req.query.stability) {
+      filter.stability = req.query.stability;
+    }
+    if (req.query.position) {
+      filter.position = req.query.position;
+    }
+    if (req.query.difficulty) {
+      filter.difficulty = req.query.difficulty;
+    }
+    if (req.query.goal) {
+      filter.goals = req.query.goal;
     }
     if (req.query.branch && req.query.branch !== "todos") {
       filter.branches = { $in: [req.query.branch, "general"] };
@@ -253,6 +456,17 @@ router.get("/", async (req, res, next) => {
       andFilters.push({
         $or: [
           { name: { $regex: q, $options: "i" } },
+          { aliases: { $regex: q, $options: "i" } },
+          { categories: { $regex: q, $options: "i" } },
+          { bodyRegion: { $regex: q, $options: "i" } },
+          { navigationRegion: { $regex: q, $options: "i" } },
+          { primaryMuscleGroup: { $regex: q, $options: "i" } },
+          { primaryMuscles: { $regex: q, $options: "i" } },
+          { secondaryMuscles: { $regex: q, $options: "i" } },
+          { stabilizerMuscles: { $regex: q, $options: "i" } },
+          { movementPatterns: { $regex: q, $options: "i" } },
+          { equipment: { $regex: q, $options: "i" } },
+          { goals: { $regex: q, $options: "i" } },
           { tags: { $regex: q, $options: "i" } },
           { muscle: { $regex: q, $options: "i" } },
           { primaryMuscle: { $regex: q, $options: "i" } },

@@ -18,14 +18,26 @@ export const buildExercisePublicId = ({
   type = "custom",
   ownerId = null,
   slug,
+  category = "",
+  bodyRegion = "",
+  primaryMuscleGroup = "",
+  movementPattern = "",
   kind = "main",
 }) => {
   const safeSlug = slugify(slug);
   const safeKind = slugify(kind) || "main";
+  const structure = [
+    slugify(category) || "sin-categoria",
+    slugify(bodyRegion) || "sin-region",
+    slugify(primaryMuscleGroup) || "sin-grupo",
+    slugify(movementPattern) || "sin-patron",
+    safeSlug || "sin-nombre",
+  ].join("/");
+
   if (type === "system") {
-    return `${EXERCISE_FOLDER}/system/${safeSlug}/${safeKind}`;
+    return `${EXERCISE_FOLDER}/system/${structure}/${safeKind}`;
   }
-  return `${EXERCISE_FOLDER}/custom/${ownerId || "unassigned"}/${safeSlug}/${safeKind}`;
+  return `${EXERCISE_FOLDER}/custom/${slugify(ownerId) || "unassigned"}/${structure}/${safeKind}`;
 };
 
 export const uploadExerciseMedia = async (filePath, options = {}) => {
