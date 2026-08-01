@@ -46,8 +46,18 @@ const RoutineSchema = new mongoose.Schema(
     },
     exercises: [RoutineExerciseSchema],
     ownerId: { type: String, default: null },
+    progressScopeId: { type: String, default: "" },
+    progressMode: {
+      type: String,
+      enum: ["fresh", "inherit"],
+      default: "fresh",
+    },
+    sourceRoutineId: { type: String, default: null },
   },
   { timestamps: true, versionKey: false },
 );
+
+RoutineSchema.index({ progressScopeId: 1 });
+RoutineSchema.index({ ownerId: 1, progressScopeId: 1 });
 
 export default mongoose.model("Routine", RoutineSchema);

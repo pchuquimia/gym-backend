@@ -6,6 +6,7 @@ import {
 } from "../middleware/authMiddleware.js";
 import Training from "../models/Training.js";
 import Preference from "../models/Preference.js";
+import Routine from "../models/Routine.js";
 
 const router = Router();
 
@@ -68,22 +69,49 @@ const getOrderContext = (plannedOrder, actualOrder, isExtra = false) => {
 
 const normalizeExerciseOrders = (exercises = []) =>
   Array.isArray(exercises)
-    ? exercises.map((ex, idx) => {
-        const actualOrder =
-          Number(ex.actualOrder ?? ex.order ?? idx + 1) || idx + 1;
-        const plannedOrder =
-          Number(ex.plannedOrder ?? actualOrder) || actualOrder;
-        return {
-          ...ex,
-          order: actualOrder,
-          actualOrder,
-          plannedOrder,
-          orderContext:
-            ex.orderContext ||
-            getOrderContext(plannedOrder, actualOrder, Boolean(ex.isExtra)),
-        };
-      })
+    ? exercises
+        .map((ex, idx) => {
+          const actualOrder =
+            Number(ex.actualOrder ?? ex.order ?? idx + 1) || idx + 1;
+          const plannedOrder =
+            Number(ex.plannedOrder ?? actualOrder) || actualOrder;
+          return {
+            ...ex,
+            order: actualOrder,
+            actualOrder,
+            plannedOrder,
+            orderContext:
+              ex.orderContext ||
+              getOrderContext(plannedOrder, actualOrder, Boolean(ex.isExtra)),
+          };
+        })
+        .sort(
+          (a, b) =>
+            a.actualOrder - b.actualOrder || a.plannedOrder - b.plannedOrder,
+        )
     : [];
+
+const buildOrderSignature = (exercises = []) =>
+  (Array.isArray(exercises) ? exercises : [])
+    .map((exercise) => exercise.exerciseId || "")
+    .filter(Boolean)
+    .join("|");
+
+const resolveTrainingProgressScope = async (req, payload, current = null) => {
+  if (payload.progressScopeId) return payload.progressScopeId;
+  if (current?.progressScopeId) return current.progressScopeId;
+  if (!payload.routineId) return "";
+
+  const routine = await Routine.findById(
+    payload.routineId,
+    "ownerId progressScopeId",
+  ).lean();
+  if (!routine?.progressScopeId) return "";
+  if (!(await ensureCanAccessOwner(req, routine.ownerId || payload.ownerId))) {
+    return "";
+  }
+  return routine.progressScopeId;
+};
 
 const parseEventTime = (value) => {
   const ts = Date.parse(value);
@@ -259,6 +287,8 @@ router.get("/", async (req, res, next) => {
       ? req.query.fields.split(",").join(" ")
       : null; // null = all fields
     const routineId = req.query.routineId;
+    const progressScopeId = req.query.progressScopeId;
+    const excludeProgressScopeId = req.query.excludeProgressScopeId;
 
     const filter = await getAccessibleOwnerFilter(req);
     if (from || to) {
@@ -268,6 +298,12 @@ router.get("/", async (req, res, next) => {
     }
     if (routineId) {
       filter.routineId = routineId;
+    }
+    if (progressScopeId || excludeProgressScopeId) {
+      filter.progressScopeId = {};
+      if (progressScopeId) filter.progressScopeId.$eq = progressScopeId;
+      if (excludeProgressScopeId)
+        filter.progressScopeId.$ne = excludeProgressScopeId;
     }
 
     const trainings = await Training.find(filter, fields || undefined)
@@ -321,7 +357,11 @@ router.post("/", async (req, res, next) => {
     // normalizar fecha a string local yyyy-mm-dd para evitar corrimientos por zona horaria
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || toLocalISODate(new Date()) || payload.date;
+    payload.progressScopeId = await resolveTrainingProgressScope(req, payload);
     payload.exercises = normalizeExerciseOrders(payload.exercises);
+    payload.orderSignature =
+      String(payload.orderSignature || "").trim() ||
+      buildOrderSignature(payload.exercises);
     payload.timeEvents = normalizeTimeEvents(payload.timeEvents);
     const timingSummary = calculateTimingSummary(payload.timeEvents);
     if (timingSummary.durationSeconds > 0) {
@@ -362,7 +402,15 @@ router.put("/:id", async (req, res, next) => {
     }
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || payload.date;
+    payload.progressScopeId = await resolveTrainingProgressScope(
+      req,
+      payload,
+      current,
+    );
     payload.exercises = normalizeExerciseOrders(payload.exercises);
+    payload.orderSignature =
+      String(payload.orderSignature || "").trim() ||
+      buildOrderSignature(payload.exercises);
     payload.timeEvents = normalizeTimeEvents(payload.timeEvents);
     const timingSummary = calculateTimingSummary(payload.timeEvents);
     if (timingSummary.durationSeconds > 0) {

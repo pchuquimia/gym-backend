@@ -1,4 +1,5 @@
 import { Router } from "express";
+import crypto from "crypto";
 import {
   ensureCanAccessOwner,
   getAccessibleOwnerFilter,
@@ -9,6 +10,26 @@ import Routine from "../models/Routine.js";
 const router = Router();
 
 router.use(protect);
+
+const createProgressScopeId = () => `scope_${crypto.randomUUID()}`;
+
+const resolveProgressScope = async (req, payload, ownerId) => {
+  if (payload.progressScopeId) return payload.progressScopeId;
+  if (payload.progressMode === "inherit" && payload.sourceRoutineId) {
+    const source = await Routine.findById(
+      payload.sourceRoutineId,
+      "ownerId progressScopeId",
+    ).lean();
+    if (
+      source &&
+      (await ensureCanAccessOwner(req, source.ownerId || ownerId)) &&
+      source.progressScopeId
+    ) {
+      return source.progressScopeId;
+    }
+  }
+  return createProgressScopeId();
+};
 
 router.get("/", async (req, res, next) => {
   try {
@@ -26,7 +47,11 @@ router.post("/", async (req, res, next) => {
     if (!(await ensureCanAccessOwner(req, ownerId))) {
       return res.status(403).json({ error: "No autorizado" });
     }
-    const routine = await Routine.create({ ...req.body, ownerId });
+    const payload = { ...req.body, ownerId };
+    payload.progressMode =
+      payload.progressMode === "inherit" ? "inherit" : "fresh";
+    payload.progressScopeId = await resolveProgressScope(req, payload, ownerId);
+    const routine = await Routine.create(payload);
     res.status(201).json(routine);
   } catch (err) {
     next(err);
@@ -43,6 +68,13 @@ router.put("/:id", async (req, res, next) => {
     const payload = { ...req.body, ownerId: current.ownerId || req.user.id };
     if (req.body.ownerId && req.user.role === "Admin") {
       payload.ownerId = req.body.ownerId;
+    }
+    payload.progressMode =
+      payload.progressMode === "inherit" ? "inherit" : "fresh";
+    if (!payload.progressScopeId) {
+      payload.progressScopeId =
+        current.progressScopeId ||
+        (await resolveProgressScope(req, payload, payload.ownerId));
     }
     const routine = await Routine.findByIdAndUpdate(req.params.id, payload, {
       new: true,
