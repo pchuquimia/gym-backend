@@ -8,6 +8,16 @@ const PreferenceSchema = new mongoose.Schema(
       enum: ["sopocachi", "miraflores"],
       default: "sopocachi",
     },
+    locationMode: {
+      type: String,
+      enum: ["single", "multiple", "disabled"],
+      default: "single",
+    },
+    allowedBranches: {
+      type: [String],
+      enum: ["sopocachi", "miraflores"],
+      default: ["sopocachi"],
+    },
     goals: { type: Object, default: {} },
   },
   { timestamps: true, versionKey: false },

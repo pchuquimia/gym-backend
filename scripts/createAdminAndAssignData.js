@@ -72,6 +72,10 @@ async function main() {
       {
         $set: {
           branch: defaultPreference.branch || "sopocachi",
+          locationMode: defaultPreference.locationMode || "single",
+          allowedBranches: defaultPreference.allowedBranches?.length
+            ? defaultPreference.allowedBranches
+            : [defaultPreference.branch || "sopocachi"],
           goals: defaultPreference.goals || {},
         },
       },

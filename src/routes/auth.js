@@ -11,8 +11,11 @@ import {
   logoutAll,
   me,
   register,
+  requestPasswordReset,
+  resetPassword,
   updateProfile,
   updateSecurity,
+  verifyEmail,
 } from "../controllers/authController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { passwordRules, validate } from "../middleware/validate.js";
@@ -68,6 +71,31 @@ router.post(
     validateLogin,
   ],
   login,
+);
+router.post(
+  "/verify-email",
+  [
+    body("token").isString().notEmpty().withMessage("Token requerido"),
+    validate,
+  ],
+  verifyEmail,
+);
+
+router.post("/forgot-password", [emailRule(), validate], requestPasswordReset);
+router.post(
+  "/reset-password",
+  [
+    body("token").isString().notEmpty().withMessage("Token requerido"),
+    body("password")
+      .isString()
+      .matches(passwordRules.pattern)
+      .withMessage(passwordRules.message),
+    body("confirmPassword")
+      .custom((value, { req }) => value === req.body.password)
+      .withMessage("Las contraseñas no coinciden"),
+    validate,
+  ],
+  resetPassword,
 );
 
 router.post("/logout", logout);

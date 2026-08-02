@@ -62,7 +62,11 @@ const UserSchema = new mongoose.Schema(
       },
       calories: { type: Number, default: 2500 },
       units: { type: String, enum: ["metric", "imperial"], default: "metric" },
-      privacy: { type: String, enum: ["público", "privado"], default: "público" },
+      privacy: {
+        type: String,
+        enum: ["público", "privado"],
+        default: "público",
+      },
       notifications: {
         workoutReminders: { type: Boolean, default: true },
         achievements: { type: Boolean, default: true },
@@ -74,6 +78,34 @@ const UserSchema = new mongoose.Schema(
       twoFactorEnabled: { type: Boolean, default: false },
     },
     passwordChangedAt: {
+      type: Date,
+      default: null,
+    },
+    passwordResetToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    passwordResetExpiresAt: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    emailVerificationToken: {
+      type: String,
+      default: null,
+      select: false,
+    },
+    emailVerificationExpiresAt: {
+      type: Date,
+      default: null,
+      select: false,
+    },
+    emailVerificationRequired: {
+      type: Boolean,
+      default: false,
+    },
+    emailVerifiedAt: {
       type: Date,
       default: null,
     },
@@ -114,6 +146,8 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     profile: this.profile,
     security: this.security,
     passwordChangedAt: this.passwordChangedAt,
+    emailVerificationRequired: this.emailVerificationRequired,
+    emailVerifiedAt: this.emailVerifiedAt,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

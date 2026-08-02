@@ -3,6 +3,11 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { clearAuthCookie, setAuthCookie } from "../utils/authCookies.js";
+import {
+  isEmailConfigured,
+  sendPasswordResetEmail,
+  sendVerificationEmail,
+} from "../utils/email.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -106,6 +111,89 @@ const lockedError = () => {
   return err;
 };
 
+const getClientUrl = () =>
+  String(process.env.CLIENT_URL || "http://localhost:5173")
+    .split(",")[0]
+    .trim()
+    .replace(/\/$/, "");
+
+const requestPasswordReset = asyncHandler(async (req, res) => {
+  if (!isEmailConfigured()) {
+    const err = new Error(
+      "La recuperación por correo no está configurada temporalmente.",
+    );
+    err.statusCode = 503;
+    throw err;
+  }
+
+  const user = await User.findOne({ email: req.body.email }).select(
+    "+passwordResetToken +passwordResetExpiresAt",
+  );
+
+  if (!user) {
+    return res.json({ ok: true });
+  }
+
+  const token = crypto.randomBytes(32).toString("hex");
+  user.passwordResetToken = crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
+  user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  await user.save({ validateBeforeSave: false });
+
+  const resetUrl = `${getClientUrl()}/restablecer-contrasena?token=${token}`;
+
+  try {
+    await sendPasswordResetEmail({
+      email: user.email,
+      name: user.name,
+      resetUrl,
+    });
+  } catch (err) {
+    user.passwordResetToken = null;
+    user.passwordResetExpiresAt = null;
+    await user.save({ validateBeforeSave: false });
+    console.error("No se pudo enviar el correo de recuperación", err);
+    return res.json({ ok: true });
+  }
+
+  const payload = { ok: true };
+  if (process.env.NODE_ENV !== "production" && isEmailConfigured()) {
+    payload.previewUrl = resetUrl;
+  }
+  res.json(payload);
+});
+
+const resetPassword = asyncHandler(async (req, res) => {
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(req.body.token)
+    .digest("hex");
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpiresAt: { $gt: new Date() },
+  }).select("+password +passwordResetToken +passwordResetExpiresAt");
+
+  if (!user) {
+    const err = new Error("El enlace es inválido o ha vencido.");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  user.password = req.body.password;
+  user.passwordChangedAt = new Date();
+  user.passwordResetToken = null;
+  user.passwordResetExpiresAt = null;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
+  user.activeSessions = [];
+  await user.save();
+
+  clearAuthCookie(res);
+  res.json({ ok: true });
+});
+
 const register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
 
@@ -116,12 +204,44 @@ const register = asyncHandler(async (req, res) => {
     throw err;
   }
 
+  const verificationRequired =
+    isEmailConfigured() &&
+    String(process.env.EMAIL_VERIFICATION_REQUIRED || "true").toLowerCase() !==
+      "false";
+  const verificationToken = verificationRequired
+    ? crypto.randomBytes(32).toString("hex")
+    : "";
   const user = await User.create({
     name,
     email,
     password,
     role: "Cliente",
+    emailVerificationRequired: verificationRequired,
+    emailVerificationToken: verificationRequired
+      ? crypto.createHash("sha256").update(verificationToken).digest("hex")
+      : null,
+    emailVerificationExpiresAt: verificationRequired
+      ? new Date(Date.now() + 24 * 60 * 60 * 1000)
+      : null,
   });
+
+  if (verificationRequired) {
+    const verifyUrl = `${getClientUrl()}/verificar-correo?token=${verificationToken}`;
+    try {
+      await sendVerificationEmail({
+        email: user.email,
+        name: user.name,
+        verifyUrl,
+      });
+    } catch (err) {
+      await User.deleteOne({ _id: user._id });
+      throw err;
+    }
+    return res.status(201).json({
+      verificationRequired: true,
+      email: user.email,
+    });
+  }
 
   const session = createSession(req);
   user.activeSessions = [session];
@@ -150,12 +270,50 @@ const login = asyncHandler(async (req, res) => {
     throw invalidCredentials();
   }
 
+  if (user.emailVerificationRequired) {
+    const err = new Error("Debes verificar tu correo antes de iniciar sesión.");
+    err.statusCode = 403;
+    throw err;
+  }
+
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
   user.lastLoginAt = new Date();
   const session = createSession(req);
   user.activeSessions = [session, ...(user.activeSessions || [])].slice(0, 10);
   await user.save();
+
+  const token = signToken(user, session.sessionId);
+  setAuthCookie(res, token);
+  res.json(authResponse(user, token));
+});
+
+const verifyEmail = asyncHandler(async (req, res) => {
+  const hashedToken = crypto
+    .createHash("sha256")
+    .update(req.body.token)
+    .digest("hex");
+  const user = await User.findOne({
+    emailVerificationToken: hashedToken,
+    emailVerificationExpiresAt: { $gt: new Date() },
+    emailVerificationRequired: true,
+  }).select("+emailVerificationToken +emailVerificationExpiresAt");
+
+  if (!user) {
+    const err = new Error(
+      "El enlace de verificación es inválido o ha vencido.",
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  user.emailVerificationRequired = false;
+  user.emailVerificationToken = null;
+  user.emailVerificationExpiresAt = null;
+  user.emailVerifiedAt = new Date();
+  const session = createSession(req);
+  user.activeSessions = [session, ...(user.activeSessions || [])].slice(0, 10);
+  await user.save({ validateBeforeSave: false });
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
@@ -352,6 +510,9 @@ const logoutAll = asyncHandler(async (req, res) => {
 export {
   register,
   login,
+  verifyEmail,
+  requestPasswordReset,
+  resetPassword,
   devAdminLogin,
   logout,
   me,
