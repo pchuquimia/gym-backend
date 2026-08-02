@@ -35,6 +35,7 @@ router.get("/", async (req, res, next) => {
   try {
     const filter = await getAccessibleOwnerFilter(req);
     const routines = await Routine.find(filter).lean();
+    res.set("Cache-Control", "private, no-store");
     res.json(routines);
   } catch (err) {
     next(err);
@@ -48,6 +49,8 @@ router.post("/", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     const payload = { ...req.body, ownerId };
+    if (payload.id && !payload._id) payload._id = payload.id;
+    delete payload.id;
     payload.progressMode =
       payload.progressMode === "inherit" ? "inherit" : "fresh";
     payload.progressScopeId = await resolveProgressScope(req, payload, ownerId);
@@ -66,9 +69,6 @@ router.put("/:id", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     const payload = { ...req.body, ownerId: current.ownerId || req.user.id };
-    if (req.body.ownerId && req.user.role === "Admin") {
-      payload.ownerId = req.body.ownerId;
-    }
     payload.progressMode =
       payload.progressMode === "inherit" ? "inherit" : "fresh";
     if (!payload.progressScopeId) {

@@ -5,6 +5,7 @@ import {
   changePassword,
   devAdminLogin,
   getProfile,
+  getProfileSummary,
   getSessions,
   login,
   logout,
@@ -14,6 +15,7 @@ import {
   requestPasswordReset,
   resetPassword,
   updateProfile,
+  updateAccount,
   updateSecurity,
   verifyEmail,
 } from "../controllers/authController.js";
@@ -41,10 +43,9 @@ const validateLogin = (req, res, next) => {
 
 router.post("/dev-admin", devAdminLogin);
 
-router.use(authLimiter);
-
 router.post(
   "/register",
+  authLimiter,
   [
     body("name")
       .trim()
@@ -65,6 +66,7 @@ router.post(
 
 router.post(
   "/login",
+  authLimiter,
   [
     emailRule(),
     body("password").isString().notEmpty().withMessage("Contrasena requerida"),
@@ -74,6 +76,7 @@ router.post(
 );
 router.post(
   "/verify-email",
+  authLimiter,
   [
     body("token").isString().notEmpty().withMessage("Token requerido"),
     validate,
@@ -81,9 +84,15 @@ router.post(
   verifyEmail,
 );
 
-router.post("/forgot-password", [emailRule(), validate], requestPasswordReset);
+router.post(
+  "/forgot-password",
+  authLimiter,
+  [emailRule(), validate],
+  requestPasswordReset,
+);
 router.post(
   "/reset-password",
+  authLimiter,
   [
     body("token").isString().notEmpty().withMessage("Token requerido"),
     body("password")
@@ -101,14 +110,50 @@ router.post(
 router.post("/logout", logout);
 router.get("/me", protect, me);
 router.get("/profile", protect, getProfile);
+router.get("/profile-summary", protect, getProfileSummary);
+router.patch(
+  "/account",
+  protect,
+  [
+    body("name")
+      .optional()
+      .trim()
+      .isLength({ min: 2, max: 80 })
+      .withMessage("Nombre inválido"),
+    body("email")
+      .optional()
+      .trim()
+      .isEmail()
+      .withMessage("Email inválido")
+      .normalizeEmail(),
+    body("birthDate").optional().isString().withMessage("Fecha inválida"),
+    body("weight")
+      .optional({ nullable: true })
+      .isFloat({ min: 20, max: 500 })
+      .withMessage("Peso inválido"),
+    body("height")
+      .optional({ nullable: true })
+      .isFloat({ min: 80, max: 250 })
+      .withMessage("Altura inválida"),
+    body("avatarPhotoId")
+      .optional()
+      .isString()
+      .withMessage("Foto de perfil inválida"),
+    validate,
+  ],
+  updateAccount,
+);
 router.patch(
   "/profile",
   protect,
   [
     body("birthDate").optional().isString().withMessage("Fecha inválida"),
-    body("weight").optional().isFloat({ min: 0 }).withMessage("Peso inválido"),
+    body("weight")
+      .optional({ nullable: true })
+      .isFloat({ min: 0 })
+      .withMessage("Peso inválido"),
     body("height")
-      .optional()
+      .optional({ nullable: true })
       .isFloat({ min: 0 })
       .withMessage("Altura inválida"),
     body("goal")
@@ -131,6 +176,10 @@ router.patch(
       .optional()
       .isObject()
       .withMessage("Notificaciones inválidas"),
+    body("avatarPhotoId")
+      .optional()
+      .isString()
+      .withMessage("Foto de perfil inválida"),
     validate,
   ],
   updateProfile,

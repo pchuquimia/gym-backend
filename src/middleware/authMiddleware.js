@@ -69,55 +69,27 @@ export const authorizeRoles =
 
 export const canAccessOwner = (user, ownerId) => {
   if (!user) return false;
-  if (user.role === "Admin") return true;
   if (!ownerId) return false;
-  if (user.role === "Cliente") return String(ownerId) === user.id;
-  if (user.role === "Entrenador") return String(ownerId) === user.id;
-  return false;
+  return String(ownerId) === user.id;
 };
 
 export const scopedOwnerFilter = (req, baseFilter = {}) => {
-  if (req.user?.role === "Admin") return { ...baseFilter };
   return { ...baseFilter, ownerId: req.user.id };
 };
 
 export const getAccessibleOwnerFilter = async (req, baseFilter = {}) => {
-  if (req.user?.role === "Admin") return { ...baseFilter };
-  if (req.user?.role === "Entrenador") {
-    const clients = await User.find(
-      { assignedTrainerId: req.user.id, isActive: true },
-      "_id",
-    ).lean();
-    const ownerIds = [
-      req.user.id,
-      ...clients.map((client) => client._id.toString()),
-    ];
-    return { ...baseFilter, ownerId: { $in: ownerIds } };
-  }
   return { ...baseFilter, ownerId: req.user.id };
 };
 
 export const ensureCanAccessOwner = async (req, ownerId) => {
-  if (req.user?.role === "Admin") return true;
   if (!ownerId) return false;
-  if (req.user?.role === "Cliente") return String(ownerId) === req.user.id;
-  if (req.user?.role === "Entrenador") {
-    if (String(ownerId) === req.user.id) return true;
-    const client = await User.exists({
-      _id: ownerId,
-      assignedTrainerId: req.user.id,
-      isActive: true,
-    });
-    return Boolean(client);
-  }
-  return false;
+  return String(ownerId) === req.user?.id;
 };
 
 export const checkOwnership =
   (Model, { ownerField = "ownerId", param = "id" } = {}) =>
   async (req, _res, next) => {
     try {
-      if (req.user?.role === "Admin") return next();
       const doc = await Model.findById(req.params[param], ownerField).lean();
       if (!doc) {
         const err = new Error("No encontrado");

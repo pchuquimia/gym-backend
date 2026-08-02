@@ -14,6 +14,7 @@ router.get("/", async (req, res, next) => {
   try {
     const filter = await getAccessibleOwnerFilter(req);
     const sessions = await Session.find(filter).lean();
+    res.set("Cache-Control", "private, no-store");
     res.json(sessions);
   } catch (err) {
     next(err);

@@ -7,7 +7,6 @@ import morgan from "morgan";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import multer from "multer";
 import compression from "compression";
 import exercisesRoutes from "./routes/exercises.js";
 import routinesRoutes from "./routes/routines.js";
@@ -17,14 +16,7 @@ import trainingsRoutes from "./routes/trainings.js";
 import preferencesRoutes from "./routes/preferences.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
-import Photo from "./models/Photo.js";
-import { protect } from "./middleware/authMiddleware.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
-import {
-  uploadPhotoToCloudinary,
-  removeLocalFile,
-  isCloudinaryReady,
-} from "./utils/photoUpload.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -34,17 +26,6 @@ const uploadsDir = path.join(__dirname, "../uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(
-      Math.random() * 1e9,
-    )}${path.extname(file.originalname)}`;
-    cb(null, unique);
-  },
-});
-const upload = multer({ storage });
 
 const parseOrigins = (value = "") =>
   value
@@ -104,44 +85,6 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(morgan("dev"));
 app.use("/uploads", express.static(uploadsDir));
-
-// Upload endpoint (multipart) to ensure availability even if router is cached old version
-app.post(
-  "/api/photos/upload",
-  protect,
-  upload.single("file"),
-  async (req, res, next) => {
-    try {
-      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-      const { date, label, type, sessionId } = req.body;
-      const baseUrl =
-        process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-      let uploaded = null;
-      if (isCloudinaryReady) {
-        try {
-          uploaded = await uploadPhotoToCloudinary(req.file.path);
-        } catch (err) {
-          console.error("Cloudinary upload failed", err);
-          return res.status(500).json({ error: "Cloudinary upload failed" });
-        }
-      }
-      if (uploaded) await removeLocalFile(req.file.path);
-      const url = uploaded?.url || `${baseUrl}/uploads/${req.file.filename}`;
-      const photo = await Photo.create({
-        date: date || new Date().toISOString().slice(0, 10),
-        label: label || "",
-        type: type || "gym",
-        sessionId: sessionId || null,
-        ownerId: req.user.id,
-        url,
-        publicId: uploaded?.publicId || "",
-      });
-      res.status(201).json(photo);
-    } catch (err) {
-      next(err);
-    }
-  },
-);
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);

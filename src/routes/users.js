@@ -5,12 +5,15 @@ import { validate } from "../middleware/validate.js";
 import User, { USER_ROLES } from "../models/User.js";
 
 const router = Router();
+const ADMIN_USER_FIELDS =
+  "name email role isActive assignedTrainerId createdAt updatedAt";
+const CLIENT_DIRECTORY_FIELDS = "name role isActive assignedTrainerId";
 
 router.use(protect);
 
 router.get("/", authorizeRoles("Admin"), async (_req, res, next) => {
   try {
-    const users = await User.find({}, "-password")
+    const users = await User.find({}, ADMIN_USER_FIELDS)
       .sort({ createdAt: -1 })
       .lean();
     res.set("Cache-Control", "no-store");
@@ -29,7 +32,7 @@ router.get(
         req.user.role === "Admin"
           ? { role: "Cliente" }
           : { role: "Cliente", assignedTrainerId: req.user.id, isActive: true };
-      const users = await User.find(filter, "-password")
+      const users = await User.find(filter, CLIENT_DIRECTORY_FIELDS)
         .sort({ name: 1 })
         .lean();
       res.set("Cache-Control", "no-store");
@@ -80,7 +83,7 @@ router.patch(
       const user = await User.findByIdAndUpdate(req.params.id, payload, {
         new: true,
         runValidators: true,
-      }).select("-password");
+      }).select(ADMIN_USER_FIELDS);
       if (!user) return res.status(404).json({ error: "Not found" });
       res.json(user);
     } catch (err) {

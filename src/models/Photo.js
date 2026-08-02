@@ -6,7 +6,11 @@ const PhotoSchema = new mongoose.Schema(
     label: { type: String, default: "" },
     url: { type: String, required: true },
     publicId: { type: String, default: "" },
-    type: { type: String, enum: ["gym", "home"], default: "gym" },
+    type: {
+      type: String,
+      enum: ["gym", "home", "profile"],
+      default: "gym",
+    },
     sessionId: { type: String, default: null },
     ownerId: { type: String, default: null },
   },

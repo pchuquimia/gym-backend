@@ -260,7 +260,7 @@ router.get("/summary", async (req, res, next) => {
       durationSeconds: t.durationSeconds,
     }));
 
-    res.set("Cache-Control", "public, max-age=120");
+    res.set("Cache-Control", "private, no-store");
     res.json({
       chart,
       totalVolume,
@@ -337,7 +337,7 @@ router.get("/:id", async (req, res, next) => {
     if (!(await ensureCanAccessOwner(req, training.ownerId))) {
       return res.status(403).json({ error: "No autorizado" });
     }
-    res.set("Cache-Control", "public, max-age=120");
+    res.set("Cache-Control", "private, no-store");
     res.json(training);
   } catch (err) {
     next(err);
@@ -402,12 +402,16 @@ router.patch(
           error: "La duración debe estar entre 0 y 86400 segundos",
         });
       }
+      const current = await Training.findById(req.params.id, "ownerId").lean();
+      if (!current) return res.status(404).json({ error: "Not found" });
+      if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+        return res.status(403).json({ error: "No autorizado" });
+      }
       const training = await Training.findByIdAndUpdate(
         req.params.id,
         { durationSeconds, durationOverrideSeconds: durationSeconds },
         { new: true, runValidators: true },
       );
-      if (!training) return res.status(404).json({ error: "Not found" });
       res.json(training);
     } catch (err) {
       next(err);
@@ -428,9 +432,6 @@ router.put("/:id", async (req, res, next) => {
     delete payload.id;
     delete payload.durationOverrideSeconds;
     payload.ownerId = current.ownerId || req.user.id;
-    if (req.body.ownerId && req.user.role === "Admin") {
-      payload.ownerId = req.body.ownerId;
-    }
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || payload.date;
     payload.progressScopeId = await resolveTrainingProgressScope(

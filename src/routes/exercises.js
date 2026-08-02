@@ -158,9 +158,7 @@ const normalizePayload = (body, req, current = null) => {
   payload.ownerId =
     type === "system"
       ? null
-      : req.user.role === "Admin" && payload.ownerId
-        ? payload.ownerId
-        : current?.ownerId || req.user.id;
+      : current?.ownerId || req.user.id;
 
   payload.aliases = arrayOrCurrent("aliases", current?.aliases);
   payload.categories =
@@ -371,11 +369,9 @@ router.get("/", async (req, res, next) => {
       : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
-    if (req.user.role !== "Admin") {
-      andFilters.push({
-        $or: [{ ownerId: req.user.id }, { ownerId: null }, { type: "system" }],
-      });
-    }
+    andFilters.push({
+      $or: [{ ownerId: req.user.id }, { ownerId: null }, { type: "system" }],
+    });
 
     if (req.query.active !== "false") filter.isActive = { $ne: false };
     if (req.query.type && ["system", "custom"].includes(req.query.type)) {

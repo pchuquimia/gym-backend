@@ -1,6 +1,8 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import User from "../models/User.js";
+import Photo from "../models/Photo.js";
+import Training from "../models/Training.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { clearAuthCookie, setAuthCookie } from "../utils/authCookies.js";
 import {
@@ -407,7 +409,105 @@ const getProfile = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user.id).select("profile security");
   if (!user) return res.status(404).json({ error: "No encontrado" });
   res.set("Cache-Control", "no-store");
-  res.json({ profile: user.profile, security: user.security });
+  res.json({
+    profile: user.profile,
+    security: user.security,
+    capabilities: { emailChange: isEmailConfigured() },
+  });
+});
+
+const getProfileSummary = asyncHandler(async (req, res) => {
+  const ownerId = req.user.id;
+  const [workouts, trainingDates] = await Promise.all([
+    Training.countDocuments({ ownerId }),
+    Training.distinct("date", { ownerId }),
+  ]);
+  res.set("Cache-Control", "no-store");
+  res.json({
+    workouts,
+    trainingDates: trainingDates.filter(Boolean),
+  });
+});
+
+const updateAccount = asyncHandler(async (req, res) => {
+  const currentUser = await User.findById(req.user.id).select(
+    "+emailVerificationToken +emailVerificationExpiresAt",
+  );
+  if (!currentUser) return res.status(404).json({ error: "No encontrado" });
+  const payload = {};
+  if (Object.prototype.hasOwnProperty.call(req.body, "name")) {
+    payload.name = req.body.name;
+  }
+  const emailChanged =
+    Object.prototype.hasOwnProperty.call(req.body, "email") &&
+    req.body.email !== currentUser.email;
+  let verificationToken = "";
+  if (emailChanged) {
+    if (!isEmailConfigured()) {
+      const err = new Error(
+        "El cambio de correo requiere configurar el servicio de email.",
+      );
+      err.statusCode = 503;
+      throw err;
+    }
+    verificationToken = crypto.randomBytes(32).toString("hex");
+    payload.email = req.body.email;
+    payload.emailVerificationRequired = true;
+    payload.emailVerificationToken = crypto
+      .createHash("sha256")
+      .update(verificationToken)
+      .digest("hex");
+    payload.emailVerificationExpiresAt = new Date(
+      Date.now() + 24 * 60 * 60 * 1000,
+    );
+  }
+  const profileFields = ["birthDate", "weight", "height", "avatarPhotoId"];
+  if (req.body.avatarPhotoId) {
+    const photo = await Photo.exists({
+      _id: req.body.avatarPhotoId,
+      ownerId: req.user.id,
+    });
+    if (!photo) {
+      const err = new Error("La foto seleccionada no pertenece a tu cuenta");
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+  profileFields.forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+      payload[`profile.${field}`] = req.body[field];
+    }
+  });
+  const user = await User.findByIdAndUpdate(req.user.id, payload, {
+    new: true,
+    runValidators: true,
+  });
+  if (!user) return res.status(404).json({ error: "No encontrado" });
+  if (emailChanged) {
+    const verifyUrl = `${getClientUrl()}/verificar-correo?token=${verificationToken}`;
+    try {
+      await sendVerificationEmail({
+        email: user.email,
+        name: user.name,
+        verifyUrl,
+      });
+    } catch (err) {
+      await User.findByIdAndUpdate(req.user.id, {
+        email: currentUser.email,
+        emailVerificationRequired: currentUser.emailVerificationRequired,
+        emailVerificationToken: currentUser.emailVerificationToken || null,
+        emailVerificationExpiresAt:
+          currentUser.emailVerificationExpiresAt || null,
+      });
+      throw err;
+    }
+  }
+  res.json({
+    user: sanitizeUser(user),
+    profile: user.profile,
+    security: user.security,
+    emailVerificationRequired: emailChanged,
+  });
 });
 
 const updateProfile = asyncHandler(async (req, res) => {
@@ -420,8 +520,20 @@ const updateProfile = asyncHandler(async (req, res) => {
     "units",
     "privacy",
     "notifications",
+    "avatarPhotoId",
   ];
   const payload = {};
+  if (req.body.avatarPhotoId) {
+    const photo = await Photo.exists({
+      _id: req.body.avatarPhotoId,
+      ownerId: req.user.id,
+    });
+    if (!photo) {
+      const err = new Error("La foto seleccionada no pertenece a tu cuenta");
+      err.statusCode = 400;
+      throw err;
+    }
+  }
   allowed.forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(req.body, key)) {
       payload[`profile.${key}`] = req.body[key];
@@ -518,6 +630,8 @@ export {
   me,
   getProfile,
   updateProfile,
+  getProfileSummary,
+  updateAccount,
   updateSecurity,
   changePassword,
   getSessions,

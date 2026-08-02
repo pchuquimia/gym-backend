@@ -72,6 +72,7 @@ const UserSchema = new mongoose.Schema(
         achievements: { type: Boolean, default: true },
         community: { type: Boolean, default: false },
       },
+      avatarPhotoId: { type: String, default: "" },
     },
     security: {
       biometricEnabled: { type: Boolean, default: true },

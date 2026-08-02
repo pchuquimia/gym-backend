@@ -28,12 +28,39 @@ if (!fs.existsSync(uploadsDir)) {
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
   filename: (_req, file, cb) => {
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname)}`;
+    const extensions = {
+      "image/jpeg": ".jpg",
+      "image/png": ".png",
+      "image/webp": ".webp",
+    };
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}${extensions[file.mimetype] || ""}`;
     cb(null, unique);
   },
 });
 
-const upload = multer({ storage });
+const allowedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (allowedImageTypes.has(file.mimetype)) return cb(null, true);
+    const error = new Error("Solo se permiten imagenes JPG, PNG o WebP");
+    error.code = "INVALID_IMAGE_TYPE";
+    return cb(error);
+  },
+});
+
+const receivePhoto = (req, res, next) => {
+  upload.single("file")(req, res, (error) => {
+    if (!error) return next();
+    if (error.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({ error: "La imagen no puede superar 5 MB" });
+    }
+    return res.status(400).json({
+      error: error.message || "No se pudo procesar la imagen",
+    });
+  });
+};
 
 router.use(protect);
 
@@ -42,6 +69,7 @@ router.get("/", async (req, res, next) => {
     const { type } = req.query;
     const filter = await getAccessibleOwnerFilter(req, type ? { type } : {});
     const photos = await Photo.find(filter).lean();
+    res.set("Cache-Control", "private, no-store");
     res.json(photos);
   } catch (err) {
     next(err);
@@ -61,10 +89,11 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.post("/upload", upload.single("file"), async (req, res, next) => {
+router.post("/upload", receivePhoto, async (req, res, next) => {
   try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    if (!req.file) return res.status(400).json({ error: "Selecciona una imagen" });
     const { date, label, type, sessionId } = req.body;
+    const photoType = ["gym", "home", "profile"].includes(type) ? type : "gym";
     const baseUrl =
       process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
     let uploaded = null;
@@ -74,7 +103,8 @@ router.post("/upload", upload.single("file"), async (req, res, next) => {
         uploaded = await uploadPhotoToCloudinary(req.file.path);
       } catch (err) {
         console.error("Cloudinary upload failed", err);
-        return res.status(500).json({ error: "Cloudinary upload failed" });
+        await removeLocalFile(req.file.path);
+        return res.status(500).json({ error: "No se pudo subir la imagen" });
       }
     }
 
@@ -84,7 +114,7 @@ router.post("/upload", upload.single("file"), async (req, res, next) => {
     const photo = await Photo.create({
       date: date || new Date().toISOString().slice(0, 10),
       label: label || "",
-      type: type || "gym",
+      type: photoType,
       sessionId: sessionId || null,
       ownerId: req.user.id,
       url,
@@ -92,6 +122,7 @@ router.post("/upload", upload.single("file"), async (req, res, next) => {
     });
     res.status(201).json(photo);
   } catch (err) {
+    await removeLocalFile(req.file?.path);
     next(err);
   }
 });
@@ -104,9 +135,6 @@ router.put("/:id", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     const payload = { ...req.body, ownerId: current.ownerId || req.user.id };
-    if (req.body.ownerId && req.user.role === "Admin") {
-      payload.ownerId = req.body.ownerId;
-    }
     const photo = await Photo.findByIdAndUpdate(req.params.id, payload, {
       new: true,
     });
