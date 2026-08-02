@@ -51,6 +51,7 @@ const ExerciseSchema = new mongoose.Schema(
       enum: ["serie", "biserie", "triserie"],
       default: "serie",
     },
+    setupNote: { type: String, trim: true, maxlength: 240, default: "" },
     sets: [SetSchema],
   },
   { _id: false },
