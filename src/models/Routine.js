@@ -53,6 +53,8 @@ const RoutineSchema = new mongoose.Schema(
       default: "fresh",
     },
     sourceRoutineId: { type: String, default: null },
+    assignedByCoachId: { type: String, default: null, index: true },
+    assignedAt: { type: Date, default: null },
   },
   { timestamps: true, versionKey: false },
 );

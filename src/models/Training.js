@@ -102,6 +102,13 @@ const TrainingSchema = new mongoose.Schema(
     orderSignature: { type: String, default: "" },
     branch: { type: String, default: null },
     ownerId: { type: String, default: null },
+    sessionType: {
+      type: String,
+      enum: ["personal", "supervised"],
+      default: "personal",
+    },
+    startedBy: { type: String, default: null },
+    supervisedBy: { type: String, default: null, index: true },
     exercises: [ExerciseSchema],
   },
   { timestamps: true, versionKey: false },

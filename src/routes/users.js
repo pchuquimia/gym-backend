@@ -2,12 +2,19 @@ import { Router } from "express";
 import { body } from "express-validator";
 import { authorizeRoles, protect } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
-import User, { USER_ROLES } from "../models/User.js";
+import User, { TRAINING_MODES, USER_ROLES } from "../models/User.js";
+import Exercise from "../models/Exercise.js";
+import Photo from "../models/Photo.js";
+import Preference from "../models/Preference.js";
+import Routine from "../models/Routine.js";
+import Session from "../models/Session.js";
+import Training from "../models/Training.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId createdAt updatedAt";
-const CLIENT_DIRECTORY_FIELDS = "name role isActive assignedTrainerId";
+  "name email role isActive assignedTrainerId trainingMode createdAt updatedAt";
+const CLIENT_DIRECTORY_FIELDS =
+  "name role isActive assignedTrainerId trainingMode";
 
 router.use(protect);
 
@@ -64,32 +71,128 @@ router.patch(
       .optional({ nullable: true })
       .isString()
       .withMessage("Entrenador inválido"),
+    body("trainingMode")
+      .optional()
+      .isIn(TRAINING_MODES)
+      .withMessage("Tipo de usuario inválido"),
     validate,
   ],
   async (req, res, next) => {
     try {
+      if (req.body.assignedTrainerId) {
+        const trainerExists = await User.exists({
+          _id: req.body.assignedTrainerId,
+          role: "Entrenador",
+          isActive: true,
+        });
+        if (!trainerExists) {
+          return res.status(400).json({ error: "Entrenador inválido" });
+        }
+      }
       const allowed = [
         "name",
         "email",
         "role",
         "isActive",
         "assignedTrainerId",
+        "trainingMode",
       ];
       const payload = {};
       allowed.forEach((key) => {
         if (Object.prototype.hasOwnProperty.call(req.body, key))
           payload[key] = req.body[key];
       });
+      const current = await User.findById(
+        req.params.id,
+        "role assignedTrainerId trainingMode",
+      ).lean();
+      if (!current) return res.status(404).json({ error: "Not found" });
+      const nextRole = payload.role || current.role;
+      const nextTrainerId = Object.prototype.hasOwnProperty.call(
+        payload,
+        "assignedTrainerId",
+      )
+        ? payload.assignedTrainerId
+        : current.assignedTrainerId;
+      if (nextRole !== "Cliente") {
+        payload.trainingMode = "independent";
+        payload.assignedTrainerId = null;
+      } else if (nextTrainerId) {
+        payload.trainingMode = "coach_managed";
+      } else {
+        payload.trainingMode = "independent";
+      }
       const user = await User.findByIdAndUpdate(req.params.id, payload, {
         new: true,
         runValidators: true,
       }).select(ADMIN_USER_FIELDS);
       if (!user) return res.status(404).json({ error: "Not found" });
+      if (req.body.role && req.body.role !== "Entrenador") {
+        await User.updateMany(
+          { assignedTrainerId: req.params.id },
+          {
+            $set: {
+              assignedTrainerId: null,
+              trainingMode: "independent",
+            },
+          },
+        );
+      }
       res.json(user);
     } catch (err) {
       next(err);
     }
   },
 );
+
+router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: "No puedes eliminar tu cuenta" });
+    }
+    const user = await User.findById(req.params.id, "role").lean();
+    if (!user) return res.status(404).json({ error: "Usuario no encontrado" });
+    if (user.role === "Admin") {
+      return res.status(403).json({
+        error: "Las cuentas administrativas no se eliminan desde aquí",
+      });
+    }
+
+    const ownerId = user._id.toString();
+    const [routines, trainings, sessions, photos, preferences, exercises] =
+      await Promise.all([
+        Routine.deleteMany({ ownerId }),
+        Training.deleteMany({ ownerId }),
+        Session.deleteMany({ ownerId }),
+        Photo.deleteMany({ ownerId }),
+        Preference.deleteMany({ userId: ownerId }),
+        Exercise.deleteMany({ ownerId, type: "custom" }),
+        User.updateMany(
+          { assignedTrainerId: ownerId },
+          {
+            $set: {
+              assignedTrainerId: null,
+              trainingMode: "independent",
+            },
+          },
+        ),
+      ]);
+
+    await User.findByIdAndDelete(ownerId);
+    res.json({
+      ok: true,
+      deleted: {
+        routines: routines.deletedCount,
+        trainings: trainings.deletedCount,
+        sessions: sessions.deletedCount,
+        photos: photos.deletedCount,
+        preferences: preferences.deletedCount,
+        exercises: exercises.deletedCount,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 export default router;

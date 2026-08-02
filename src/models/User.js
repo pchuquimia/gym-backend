@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import mongoose from "mongoose";
 
 export const USER_ROLES = ["Admin", "Entrenador", "Cliente"];
+export const TRAINING_MODES = ["independent", "coach_managed"];
 
 const UserSchema = new mongoose.Schema(
   {
@@ -49,6 +50,12 @@ const UserSchema = new mongoose.Schema(
     assignedTrainerId: {
       type: String,
       default: null,
+      index: true,
+    },
+    trainingMode: {
+      type: String,
+      enum: TRAINING_MODES,
+      default: "independent",
       index: true,
     },
     profile: {
@@ -142,6 +149,11 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     name: this.name,
     email: this.email,
     role: this.role,
+    trainingMode:
+      this.role === "Cliente" && this.assignedTrainerId
+        ? "coach_managed"
+        : this.trainingMode || "independent",
+    assignedTrainerId: this.assignedTrainerId || null,
     isActive: this.isActive,
     lastLoginAt: this.lastLoginAt,
     profile: this.profile,

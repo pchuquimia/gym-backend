@@ -155,10 +155,7 @@ const normalizePayload = (body, req, current = null) => {
   delete payload.id;
 
   payload.type = type;
-  payload.ownerId =
-    type === "system"
-      ? null
-      : current?.ownerId || req.user.id;
+  payload.ownerId = type === "system" ? null : current?.ownerId || req.user.id;
 
   payload.aliases = arrayOrCurrent("aliases", current?.aliases);
   payload.categories =
@@ -297,51 +294,69 @@ const assertCanManageExercise = async (req, exercise) => {
 
 router.use(protect);
 
-router.post("/:id/media", upload.single("file"), async (req, res, next) => {
-  try {
-    const exercise = await Exercise.findById(req.params.id);
-    if (!exercise) return res.status(404).json({ error: "Exercise not found" });
-    if (!(await assertCanManageExercise(req, exercise))) {
-      return res.status(403).json({ error: "No autorizado" });
-    }
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-    const kind = req.body.kind || "main";
-    const uploaded = await uploadExerciseMedia(req.file.path, {
-      type: exercise.type,
-      ownerId: exercise.ownerId,
-      slug: exercise.slug || exercise._id,
-      ...getExerciseMediaStructure(exercise),
-      kind,
+const blockManagedAthleteWrites = (req, res, next) => {
+  if (
+    req.user.role === "Cliente" &&
+    req.user.trainingMode === "coach_managed"
+  ) {
+    return res.status(403).json({
+      error: "Tu coach administra los ejercicios y la planificación",
     });
-    const baseUrl =
-      process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-    const fallback = {
-      url: `${baseUrl}/uploads/${req.file.filename}`,
-      publicId: "",
-      width: null,
-      height: null,
-      format: "",
-      bytes: req.file.size || null,
-    };
-    const asset = uploaded || fallback;
-    if (uploaded) await removeLocalFile(req.file.path);
-
-    const media = {
-      ...(exercise.media?.toObject?.() || exercise.media || {}),
-      image: asset,
-    };
-    exercise.media = media;
-    exercise.image = asset.url;
-    exercise.imagePublicId = asset.publicId;
-    exercise.updatedBy = req.user.id;
-    await exercise.save();
-
-    res.json(exercise);
-  } catch (err) {
-    next(err);
   }
-});
+  next();
+};
+
+router.post(
+  "/:id/media",
+  blockManagedAthleteWrites,
+  upload.single("file"),
+  async (req, res, next) => {
+    try {
+      const exercise = await Exercise.findById(req.params.id);
+      if (!exercise)
+        return res.status(404).json({ error: "Exercise not found" });
+      if (!(await assertCanManageExercise(req, exercise))) {
+        return res.status(403).json({ error: "No autorizado" });
+      }
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+      const kind = req.body.kind || "main";
+      const uploaded = await uploadExerciseMedia(req.file.path, {
+        type: exercise.type,
+        ownerId: exercise.ownerId,
+        slug: exercise.slug || exercise._id,
+        ...getExerciseMediaStructure(exercise),
+        kind,
+      });
+      const baseUrl =
+        process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+      const fallback = {
+        url: `${baseUrl}/uploads/${req.file.filename}`,
+        publicId: "",
+        width: null,
+        height: null,
+        format: "",
+        bytes: req.file.size || null,
+      };
+      const asset = uploaded || fallback;
+      if (uploaded) await removeLocalFile(req.file.path);
+
+      const media = {
+        ...(exercise.media?.toObject?.() || exercise.media || {}),
+        image: asset,
+      };
+      exercise.media = media;
+      exercise.image = asset.url;
+      exercise.imagePublicId = asset.publicId;
+      exercise.updatedBy = req.user.id;
+      await exercise.save();
+
+      res.json(exercise);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.get("/:id", async (req, res, next) => {
   try {
@@ -497,7 +512,7 @@ router.get("/", async (req, res, next) => {
   }
 });
 
-router.post("/", async (req, res, next) => {
+router.post("/", blockManagedAthleteWrites, async (req, res, next) => {
   try {
     const payload = normalizePayload(req.body, req);
     if (payload.type === "system" && req.user.role !== "Admin") {
@@ -523,7 +538,7 @@ router.post("/", async (req, res, next) => {
   }
 });
 
-router.put("/:id", async (req, res, next) => {
+router.put("/:id", blockManagedAthleteWrites, async (req, res, next) => {
   try {
     const current = await Exercise.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Exercise not found" });
@@ -544,7 +559,7 @@ router.put("/:id", async (req, res, next) => {
   }
 });
 
-router.delete("/:id", async (req, res, next) => {
+router.delete("/:id", blockManagedAthleteWrites, async (req, res, next) => {
   try {
     const current = await Exercise.findById(req.params.id);
     if (!current) return res.status(404).json({ error: "Exercise not found" });

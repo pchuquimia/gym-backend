@@ -352,6 +352,10 @@ router.post("/", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     payload.ownerId = ownerId;
+    const isSupervised = ownerId !== req.user.id;
+    payload.sessionType = isSupervised ? "supervised" : "personal";
+    payload.startedBy = req.user.id;
+    payload.supervisedBy = isSupervised ? req.user.id : null;
     // si viene id, usarlo como _id; si no, dejar que el schema genere uno
     if (payload.id) payload._id = payload.id;
     delete payload.id;
@@ -432,6 +436,9 @@ router.put("/:id", async (req, res, next) => {
     delete payload.id;
     delete payload.durationOverrideSeconds;
     payload.ownerId = current.ownerId || req.user.id;
+    payload.sessionType = current.sessionType || "personal";
+    payload.startedBy = current.startedBy || current.ownerId || req.user.id;
+    payload.supervisedBy = current.supervisedBy || null;
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || payload.date;
     payload.progressScopeId = await resolveTrainingProgressScope(

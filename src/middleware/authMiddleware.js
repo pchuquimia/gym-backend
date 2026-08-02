@@ -46,6 +46,10 @@ export const protect = async (req, _res, next) => {
       role: user.role,
       isActive: user.isActive,
       assignedTrainerId: user.assignedTrainerId || null,
+      trainingMode:
+        user.role === "Cliente" && user.assignedTrainerId
+          ? "coach_managed"
+          : user.trainingMode || "independent",
       sessionId: decoded.sid || null,
     };
     next();
@@ -73,17 +77,35 @@ export const canAccessOwner = (user, ownerId) => {
   return String(ownerId) === user.id;
 };
 
+const getRequestedAthleteId = (req) =>
+  String(req.query?.athleteId || req.body?.ownerId || "").trim();
+
 export const scopedOwnerFilter = (req, baseFilter = {}) => {
   return { ...baseFilter, ownerId: req.user.id };
 };
 
 export const getAccessibleOwnerFilter = async (req, baseFilter = {}) => {
-  return { ...baseFilter, ownerId: req.user.id };
+  const requestedOwnerId = getRequestedAthleteId(req);
+  if (!requestedOwnerId) return { ...baseFilter, ownerId: req.user.id };
+  if (!(await ensureCanAccessOwner(req, requestedOwnerId))) {
+    const err = new Error("No autorizado para acceder a este atleta");
+    err.statusCode = 403;
+    throw err;
+  }
+  return { ...baseFilter, ownerId: requestedOwnerId };
 };
 
 export const ensureCanAccessOwner = async (req, ownerId) => {
   if (!ownerId) return false;
-  return String(ownerId) === req.user?.id;
+  if (String(ownerId) === req.user?.id) return true;
+  if (req.user?.role !== "Entrenador") return false;
+  const athlete = await User.exists({
+    _id: ownerId,
+    role: "Cliente",
+    assignedTrainerId: req.user.id,
+    isActive: true,
+  });
+  return Boolean(athlete);
 };
 
 export const checkOwnership =

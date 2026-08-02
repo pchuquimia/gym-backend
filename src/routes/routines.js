@@ -13,6 +13,15 @@ router.use(protect);
 
 const createProgressScopeId = () => `scope_${crypto.randomUUID()}`;
 
+const canManagePlanning = async (req, ownerId) => {
+  const isManagedSelf =
+    req.user.role === "Cliente" &&
+    req.user.trainingMode === "coach_managed" &&
+    String(ownerId) === req.user.id;
+  if (isManagedSelf) return false;
+  return ensureCanAccessOwner(req, ownerId);
+};
+
 const resolveProgressScope = async (req, payload, ownerId) => {
   if (payload.progressScopeId) return payload.progressScopeId;
   if (payload.progressMode === "inherit" && payload.sourceRoutineId) {
@@ -45,8 +54,10 @@ router.get("/", async (req, res, next) => {
 router.post("/", async (req, res, next) => {
   try {
     const ownerId = req.body.ownerId || req.user.id;
-    if (!(await ensureCanAccessOwner(req, ownerId))) {
-      return res.status(403).json({ error: "No autorizado" });
+    if (!(await canManagePlanning(req, ownerId))) {
+      return res.status(403).json({
+        error: "Tu coach administra la planificación de tus rutinas",
+      });
     }
     const payload = { ...req.body, ownerId };
     if (payload.id && !payload._id) payload._id = payload.id;
@@ -65,8 +76,10 @@ router.put("/:id", async (req, res, next) => {
   try {
     const current = await Routine.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
-      return res.status(403).json({ error: "No autorizado" });
+    if (!(await canManagePlanning(req, current.ownerId))) {
+      return res.status(403).json({
+        error: "Tu coach administra la planificación de tus rutinas",
+      });
     }
     const payload = { ...req.body, ownerId: current.ownerId || req.user.id };
     payload.progressMode =
@@ -89,8 +102,10 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Routine.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
-      return res.status(403).json({ error: "No autorizado" });
+    if (!(await canManagePlanning(req, current.ownerId))) {
+      return res.status(403).json({
+        error: "Tu coach administra la planificación de tus rutinas",
+      });
     }
     await Routine.findByIdAndDelete(req.params.id);
     res.json({ ok: true });
