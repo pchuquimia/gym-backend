@@ -1,5 +1,6 @@
 import { Router } from "express";
 import {
+  authorizeRoles,
   ensureCanAccessOwner,
   getAccessibleOwnerFilter,
   protect,
@@ -354,6 +355,7 @@ router.post("/", async (req, res, next) => {
     // si viene id, usarlo como _id; si no, dejar que el schema genere uno
     if (payload.id) payload._id = payload.id;
     delete payload.id;
+    delete payload.durationOverrideSeconds;
     // normalizar fecha a string local yyyy-mm-dd para evitar corrimientos por zona horaria
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || toLocalISODate(new Date()) || payload.date;
@@ -385,6 +387,34 @@ router.post("/", async (req, res, next) => {
   }
 });
 
+router.patch(
+  "/:id/duration",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const durationSeconds = Number(req.body.durationSeconds);
+      if (
+        !Number.isInteger(durationSeconds) ||
+        durationSeconds < 0 ||
+        durationSeconds > 86400
+      ) {
+        return res.status(400).json({
+          error: "La duración debe estar entre 0 y 86400 segundos",
+        });
+      }
+      const training = await Training.findByIdAndUpdate(
+        req.params.id,
+        { durationSeconds, durationOverrideSeconds: durationSeconds },
+        { new: true, runValidators: true },
+      );
+      if (!training) return res.status(404).json({ error: "Not found" });
+      res.json(training);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // PUT /api/trainings/:id
 router.put("/:id", async (req, res, next) => {
   try {
@@ -396,6 +426,7 @@ router.put("/:id", async (req, res, next) => {
     }
     delete payload._id;
     delete payload.id;
+    delete payload.durationOverrideSeconds;
     payload.ownerId = current.ownerId || req.user.id;
     if (req.body.ownerId && req.user.role === "Admin") {
       payload.ownerId = req.body.ownerId;
@@ -413,7 +444,10 @@ router.put("/:id", async (req, res, next) => {
       buildOrderSignature(payload.exercises);
     payload.timeEvents = normalizeTimeEvents(payload.timeEvents);
     const timingSummary = calculateTimingSummary(payload.timeEvents);
-    if (timingSummary.durationSeconds > 0) {
+    if (current.durationOverrideSeconds != null) {
+      payload.durationOverrideSeconds = current.durationOverrideSeconds;
+      payload.durationSeconds = current.durationOverrideSeconds;
+    } else if (timingSummary.durationSeconds > 0) {
       payload.durationSeconds = timingSummary.durationSeconds;
       payload.exerciseDurations = timingSummary.exerciseDurations;
     }

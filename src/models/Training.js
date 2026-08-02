@@ -80,6 +80,7 @@ const ExerciseDurationSchema = new mongoose.Schema(
   {
     exerciseId: { type: String, required: true },
     durationSeconds: { type: Number, default: 0 },
+    durationOverrideSeconds: { type: Number, default: null },
   },
   { _id: false },
 );
