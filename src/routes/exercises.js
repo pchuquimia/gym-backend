@@ -49,6 +49,37 @@ const slugify = (text = "") =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
 
+const escapeRegex = (value = "") =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const SEARCH_SYNONYMS = new Map([
+  ["press banca", "bench press"],
+  ["press de banca", "bench press"],
+  ["jalon", "pulldown"],
+  ["dominada", "pull-up"],
+  ["dominadas", "pull-up"],
+  ["remo", "row"],
+  ["sentadilla", "squat"],
+  ["peso muerto", "deadlift"],
+  ["zancada", "lunge"],
+  ["flexiones", "push-up"],
+  ["flexion", "push-up"],
+  ["elevacion lateral", "lateral raise"],
+  ["curl de biceps", "biceps curl"],
+]);
+
+const expandSearchTerms = (value = "") => {
+  const term = String(value).trim();
+  if (!term) return [];
+  const normalized = term
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return Array.from(
+    new Set([term, SEARCH_SYNONYMS.get(normalized)].filter(Boolean)),
+  );
+};
+
 const cloudinaryPublicIdFromUrl = (url) => {
   if (!url || typeof url !== "string") return "";
   try {
@@ -138,6 +169,8 @@ const normalizePayload = (body, req, current = null) => {
   const hasField = (field) => Object.prototype.hasOwnProperty.call(body, field);
   const arrayOrCurrent = (field, fallback) =>
     hasField(field) ? toArray(payload[field]) : toArray(fallback);
+  const stringOrCurrent = (field, fallback) =>
+    hasField(field) ? String(payload[field] || "").trim() : fallback || "";
   const slug = slugify(
     payload.slug ||
       payload.id ||
@@ -204,36 +237,27 @@ const normalizePayload = (body, req, current = null) => {
     current?.commonMistakes,
   );
   payload.tags = arrayOrCurrent("tags", current?.tags);
-  payload.movementPatterns =
-    hasField("movementPatterns") && toArray(payload.movementPatterns).length
-      ? toArray(payload.movementPatterns)
-      : hasField("movementPattern") && toArray(payload.movementPattern).length
-        ? toArray(payload.movementPattern)
-        : toArray(current?.movementPatterns);
-  payload.movementPattern = firstNonEmpty(
-    payload.movementPattern,
-    payload.movementPatterns[0],
-    current?.movementPattern,
-  );
+  payload.movementPatterns = hasField("movementPatterns")
+    ? toArray(payload.movementPatterns)
+    : hasField("movementPattern")
+      ? toArray(payload.movementPattern)
+      : toArray(current?.movementPatterns);
+  payload.movementPattern = hasField("movementPattern")
+    ? firstNonEmpty(payload.movementPattern, payload.movementPatterns[0])
+    : firstNonEmpty(payload.movementPatterns[0], current?.movementPattern);
   payload.equipment = arrayOrCurrent("equipment", current?.equipment);
   payload.goals = arrayOrCurrent("goals", current?.goals);
   payload.precautions = arrayOrCurrent("precautions", current?.precautions);
-  payload.exerciseType = firstNonEmpty(
-    payload.exerciseType,
-    current?.exerciseType,
-  );
-  payload.laterality = firstNonEmpty(payload.laterality, current?.laterality);
-  payload.kineticChain = firstNonEmpty(
-    payload.kineticChain,
-    current?.kineticChain,
-  );
-  payload.executionType = firstNonEmpty(
-    payload.executionType,
+  payload.exerciseType = stringOrCurrent("exerciseType", current?.exerciseType);
+  payload.laterality = stringOrCurrent("laterality", current?.laterality);
+  payload.kineticChain = stringOrCurrent("kineticChain", current?.kineticChain);
+  payload.executionType = stringOrCurrent(
+    "executionType",
     current?.executionType,
   );
-  payload.stability = firstNonEmpty(payload.stability, current?.stability);
-  payload.position = firstNonEmpty(payload.position, current?.position);
-  payload.difficulty = firstNonEmpty(payload.difficulty, current?.difficulty);
+  payload.stability = stringOrCurrent("stability", current?.stability);
+  payload.position = stringOrCurrent("position", current?.position);
+  payload.difficulty = stringOrCurrent("difficulty", current?.difficulty);
   payload.mechanics = mergeMechanics(payload.mechanics, current?.mechanics, {
     forceType: payload.force,
     contraction: payload.executionType,
@@ -366,6 +390,93 @@ router.post(
   },
 );
 
+router.get("/facets", async (req, res, next) => {
+  try {
+    const filter = {
+      isActive: { $ne: false },
+      $or: [{ ownerId: req.user.id }, { ownerId: null }, { type: "system" }],
+    };
+    const exercises = await Exercise.find(
+      filter,
+      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals",
+    )
+      .maxTimeMS(10000)
+      .lean();
+
+    const counts = (values) =>
+      Object.entries(
+        values.reduce((result, value) => {
+          if (value) result[value] = (result[value] || 0) + 1;
+          return result;
+        }, {}),
+      )
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => a.value.localeCompare(b.value, "es"));
+    const flat = (value) =>
+      (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
+    const primaryGroup = (exercise) =>
+      exercise.primaryMuscleGroup ||
+      exercise.primaryMuscle ||
+      exercise.muscle ||
+      "";
+    const groupsByRegion = exercises.reduce((result, exercise) => {
+      const region = exercise.bodyRegion || "";
+      const group = primaryGroup(exercise);
+      if (!region || !group) return result;
+      result[region] ||= [];
+      result[region].push(group);
+      return result;
+    }, {});
+    Object.keys(groupsByRegion).forEach((region) => {
+      groupsByRegion[region] = counts(groupsByRegion[region]);
+    });
+
+    const isCardio = (exercise) =>
+      flat(exercise.categories).includes("Cardio") ||
+      exercise.category === "Cardio";
+    const entryCounts = {
+      upper: exercises.filter((item) => item.bodyRegion === "Tren superior")
+        .length,
+      lower: exercises.filter((item) => item.bodyRegion === "Tren inferior")
+        .length,
+      core: exercises.filter((item) => item.bodyRegion === "Zona media").length,
+      fullBody: exercises.filter(
+        (item) => item.bodyRegion === "Cuerpo completo" && !isCardio(item),
+      ).length,
+      cardio: exercises.filter(isCardio).length,
+    };
+
+    res.set("Cache-Control", "private, max-age=300");
+    res.json({
+      total: exercises.length,
+      categories: counts(
+        exercises.flatMap((item) =>
+          flat(item.categories).length
+            ? flat(item.categories)
+            : flat(item.category),
+        ),
+      ),
+      bodyRegions: counts(exercises.map((item) => item.bodyRegion)),
+      groupsByRegion,
+      equipment: counts(exercises.flatMap((item) => flat(item.equipment))),
+      movementPatterns: counts(
+        exercises.flatMap((item) =>
+          flat(item.movementPatterns).length
+            ? flat(item.movementPatterns)
+            : flat(item.movementPattern),
+        ),
+      ),
+      difficulties: counts(exercises.map((item) => item.difficulty)),
+      exerciseTypes: counts(exercises.map((item) => item.exerciseType)),
+      positions: counts(exercises.map((item) => item.position)),
+      goals: counts(exercises.flatMap((item) => flat(item.goals))),
+      entryCounts,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/:id", async (req, res, next) => {
   try {
     const exercise = await Exercise.findById(req.params.id).lean();
@@ -414,6 +525,14 @@ router.get("/", async (req, res, next) => {
         $or: [
           { category: req.query.category },
           { categories: req.query.category },
+        ],
+      });
+    }
+    if (req.query.excludeCategory) {
+      andFilters.push({
+        $nor: [
+          { category: req.query.excludeCategory },
+          { categories: req.query.excludeCategory },
         ],
       });
     }
@@ -471,25 +590,30 @@ router.get("/", async (req, res, next) => {
       filter.branches = { $in: [req.query.branch, "general"] };
     }
     if (req.query.q) {
-      const q = String(req.query.q).trim();
+      const terms = expandSearchTerms(req.query.q).map(escapeRegex);
+      const searchableFields = [
+        "name",
+        "aliases",
+        "categories",
+        "bodyRegion",
+        "navigationRegion",
+        "primaryMuscleGroup",
+        "primaryMuscles",
+        "secondaryMuscles",
+        "stabilizerMuscles",
+        "movementPatterns",
+        "equipment",
+        "goals",
+        "tags",
+        "muscle",
+        "primaryMuscle",
+      ];
       andFilters.push({
-        $or: [
-          { name: { $regex: q, $options: "i" } },
-          { aliases: { $regex: q, $options: "i" } },
-          { categories: { $regex: q, $options: "i" } },
-          { bodyRegion: { $regex: q, $options: "i" } },
-          { navigationRegion: { $regex: q, $options: "i" } },
-          { primaryMuscleGroup: { $regex: q, $options: "i" } },
-          { primaryMuscles: { $regex: q, $options: "i" } },
-          { secondaryMuscles: { $regex: q, $options: "i" } },
-          { stabilizerMuscles: { $regex: q, $options: "i" } },
-          { movementPatterns: { $regex: q, $options: "i" } },
-          { equipment: { $regex: q, $options: "i" } },
-          { goals: { $regex: q, $options: "i" } },
-          { tags: { $regex: q, $options: "i" } },
-          { muscle: { $regex: q, $options: "i" } },
-          { primaryMuscle: { $regex: q, $options: "i" } },
-        ],
+        $or: terms.flatMap((term) =>
+          searchableFields.map((field) => ({
+            [field]: { $regex: term, $options: "i" },
+          })),
+        ),
       });
     }
     if (andFilters.length) filter.$and = andFilters;
