@@ -56,12 +56,14 @@ const RoutineSchema = new mongoose.Schema(
     assignedByCoachId: { type: String, default: null, index: true },
     assignedAt: { type: Date, default: null },
     trainingPlanId: { type: String, default: null, index: true },
+    trainingPlanSlotId: { type: String, default: null, index: true },
     assignmentType: {
       type: String,
       enum: ["personal", "plan", "extra"],
       default: "personal",
     },
     isArchived: { type: Boolean, default: false, index: true },
+    isAvailableForTraining: { type: Boolean, default: true, index: true },
   },
   { timestamps: true, versionKey: false },
 );

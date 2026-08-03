@@ -5,15 +5,13 @@ import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import Training from "../models/Training.js";
 import User from "../models/User.js";
+import {
+  isFuturePlan,
+  syncTrainingPlanLifecycle,
+} from "../utils/trainingPlanLifecycle.js";
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
-const PROGRESSION_STRATEGIES = [
-  "double_progression",
-  "linear",
-  "rpe",
-  "custom",
-];
 
 router.use(protect, authorizeRoles("Entrenador"));
 
@@ -30,23 +28,39 @@ const getAthlete = async (coachId, athleteId) =>
     "name email role profile.goal profile.weight profile.height profile.avatarPhotoId",
   ).lean();
 
-const normalizeSchedule = (value) => {
-  if (!Array.isArray(value) || value.length !== 7) return null;
-  const days = value.map((day) => ({
-    dayIndex: Number(day.dayIndex),
-    type: ["training", "rest", "recovery"].includes(day.type)
+const normalizeSchedule = (value, scheduleMode = "fixed") => {
+  const sequential = scheduleMode !== "fixed";
+  if (
+    !Array.isArray(value) ||
+    (sequential ? value.length < 2 || value.length > 28 : value.length !== 7)
+  )
+    return null;
+  let trainingOrder = 0;
+  const days = value.map((day, index) => {
+    const type = ["training", "rest", "recovery"].includes(day.type)
       ? day.type
-      : "training",
-    focus: String(day.focus || "").trim(),
-    sourceRoutineId:
-      day.type === "training" && day.sourceRoutineId
-        ? String(day.sourceRoutineId).trim()
-        : null,
-  }));
+      : "training";
+    if (type === "training") trainingOrder += 1;
+    return {
+      slotId: String(day.slotId || `slot_${Number(day.dayIndex) || index + 1}`),
+      order: type === "training" ? trainingOrder : index + 1,
+      dayIndex: Number(day.dayIndex),
+      type,
+      focus: String(day.focus || "").trim(),
+      sourceRoutineId:
+        type === "training" && day.sourceRoutineId
+          ? String(day.sourceRoutineId).trim()
+          : null,
+      routineId:
+        type === "training" && day.routineId
+          ? String(day.routineId).trim()
+          : null,
+    };
+  });
   const indexes = new Set(days.map((day) => day.dayIndex));
   if (
-    indexes.size !== 7 ||
-    [...indexes].some((index) => index < 1 || index > 7)
+    indexes.size !== days.length ||
+    [...indexes].some((index) => index < 1 || index > days.length)
   ) {
     return null;
   }
@@ -103,11 +117,30 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       return res.status(404).json({ error: "Atleta no encontrado" });
     }
     const ownerId = athlete._id.toString();
-    const [routines, recentTrainings, plans] = await Promise.all([
-      Routine.find({ ownerId, isArchived: { $ne: true } })
+    await syncTrainingPlanLifecycle(ownerId);
+    const plans = await TrainingPlan.find({
+      athleteId: ownerId,
+      coachId: req.user.id,
+    })
+      .sort({ updatedAt: -1 })
+      .limit(12)
+      .lean();
+    const editablePlanIds = plans
+      .filter((plan) =>
+        ["draft", "scheduled", "active", "paused"].includes(plan.status),
+      )
+      .map((plan) => String(plan._id));
+    const [routines, recentTrainings] = await Promise.all([
+      Routine.find({
+        ownerId,
+        $or: [
+          { isArchived: { $ne: true } },
+          { trainingPlanId: { $in: editablePlanIds } },
+        ],
+      })
         .sort({ updatedAt: -1 })
         .select(
-          "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType updatedAt",
+          "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
         )
         .lean(),
       Training.find({ ownerId })
@@ -116,10 +149,6 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
         .select(
           "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
         )
-        .lean(),
-      TrainingPlan.find({ athleteId: ownerId, coachId: req.user.id })
-        .sort({ updatedAt: -1 })
-        .limit(12)
         .lean(),
     ]);
 
@@ -148,30 +177,29 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
   const createdRoutineIds = [];
   let createdPlanId = null;
   let previousPlanIds = [];
-  let previousRoutineIds = [];
   try {
     const athlete = await getAthlete(req.user.id, req.params.athleteId);
     if (!athlete) {
       return res.status(404).json({ error: "Atleta no encontrado" });
     }
 
-    const schedule = normalizeSchedule(req.body.weeklySchedule);
+    const scheduleMode = [
+      "fixed",
+      "flexible_guided",
+      "sequential_cycle",
+    ].includes(req.body.scheduleMode)
+      ? req.body.scheduleMode
+      : "fixed";
+    const schedule = normalizeSchedule(req.body.weeklySchedule, scheduleMode);
     if (!schedule) {
       return res
         .status(400)
-        .json({ error: "La semana debe contener 7 dias validos" });
+        .json({ error: "Configura una semana o ciclo valido" });
     }
     if (!schedule.some((day) => day.type === "training")) {
       return res
         .status(400)
         .json({ error: "El plan necesita al menos un dia de entrenamiento" });
-    }
-    if (
-      schedule.some((day) => day.type === "training" && !day.sourceRoutineId)
-    ) {
-      return res.status(400).json({
-        error: "Asigna una rutina a cada dia de entrenamiento",
-      });
     }
     const durationWeeks = Number(req.body.durationWeeks) || 8;
     if (
@@ -190,22 +218,18 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     const level = PLAN_LEVELS.includes(req.body.level)
       ? req.body.level
       : "beginner";
-    const strategy = PROGRESSION_STRATEGIES.includes(
-      req.body.progression?.strategy,
-    )
-      ? req.body.progression.strategy
-      : "double_progression";
-    const deloadEveryWeeks =
-      Number(req.body.progression?.deloadEveryWeeks) || 0;
-    if (deloadEveryWeeks < 0 || deloadEveryWeeks > 12) {
-      return res
-        .status(400)
-        .json({ error: "La descarga programada no es valida" });
-    }
     const startDate = req.body.startDate ? new Date(req.body.startDate) : null;
-    if (startDate && Number.isNaN(startDate.getTime())) {
-      return res.status(400).json({ error: "La fecha de inicio no es valida" });
+    if (!startDate || Number.isNaN(startDate.getTime())) {
+      return res.status(400).json({ error: "Selecciona una fecha de inicio" });
     }
+    const hasCompleteRoutines = schedule
+      .filter((day) => day.type === "training")
+      .every((day) => day.sourceRoutineId);
+    const nextStatus = hasCompleteRoutines
+      ? isFuturePlan({ startDate })
+        ? "scheduled"
+        : "active"
+      : "draft";
 
     const sourceIds = [
       ...new Set(schedule.map((day) => day.sourceRoutineId).filter(Boolean)),
@@ -223,28 +247,29 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         .json({ error: "Una de las plantillas no esta disponible" });
     }
 
-    const previousPlans = await TrainingPlan.find(
-      {
-        athleteId: athlete._id.toString(),
-        status: "active",
-      },
-      "weeklySchedule.routineId",
-    ).lean();
+    const previousPlans =
+      nextStatus === "active"
+        ? await TrainingPlan.find(
+            {
+              athleteId: athlete._id.toString(),
+              status: "active",
+            },
+            "weeklySchedule.routineId",
+          ).lean()
+        : [];
     previousPlanIds = previousPlans.map((plan) => String(plan._id));
-    previousRoutineIds = previousPlans.flatMap((plan) =>
-      (plan.weeklySchedule || []).map((day) => day.routineId).filter(Boolean),
-    );
 
     const plan = new TrainingPlan({
       name: planName,
       coachId: req.user.id,
+      createdById: req.user.id,
       athleteId: athlete._id.toString(),
       level,
       goal: req.body.goal,
       durationWeeks,
       startDate,
-      status: "active",
-      progression: { strategy, deloadEveryWeeks },
+      scheduleMode,
+      status: nextStatus,
       notes: req.body.notes,
       weeklySchedule: [],
     });
@@ -267,7 +292,8 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         assignedAt: new Date(),
         trainingPlanId: String(plan._id),
         assignmentType: "plan",
-        isArchived: false,
+        isArchived: nextStatus !== "active",
+        isAvailableForTraining: nextStatus === "active",
       });
       createdRoutineIds.push(routineId);
       assignedRoutineBySource.set(String(source._id), assignedRoutine._id);
@@ -283,24 +309,32 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     }));
     await plan.save();
 
-    await TrainingPlan.updateMany(
-      {
-        _id: { $ne: plan._id },
-        athleteId: athlete._id.toString(),
-        status: "active",
-      },
-      { $set: { status: "paused" } },
-    );
-    if (previousPlanIds.length || previousRoutineIds.length) {
+    if (nextStatus === "active") {
+      await TrainingPlan.updateMany(
+        {
+          _id: { $ne: plan._id },
+          athleteId: athlete._id.toString(),
+          status: "active",
+        },
+        { $set: { status: "paused" } },
+      );
+    }
+    if (nextStatus === "active" && previousPlanIds.length) {
       await Routine.updateMany(
         {
           ownerId: athlete._id.toString(),
-          $or: [
-            { trainingPlanId: { $in: previousPlanIds } },
-            { _id: { $in: previousRoutineIds } },
-          ],
+          trainingPlanId: { $in: previousPlanIds },
         },
-        { $set: { isArchived: true } },
+        { $set: { isArchived: true, isAvailableForTraining: false } },
+      );
+    } else if (nextStatus === "scheduled") {
+      await TrainingPlan.updateMany(
+        {
+          _id: { $ne: plan._id },
+          athleteId: athlete._id.toString(),
+          status: "scheduled",
+        },
+        { $set: { status: "paused" } },
       );
     }
 
@@ -322,12 +356,9 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
       await Routine.updateMany(
         {
           ownerId: req.params.athleteId,
-          $or: [
-            { trainingPlanId: { $in: previousPlanIds } },
-            { _id: { $in: previousRoutineIds } },
-          ],
+          trainingPlanId: { $in: previousPlanIds },
         },
-        { $set: { isArchived: false } },
+        { $set: { isArchived: false, isAvailableForTraining: true } },
       ).catch(() => {});
     }
     next(err);
@@ -342,8 +373,8 @@ router.patch(
       if (!athlete) {
         return res.status(404).json({ error: "Atleta no encontrado" });
       }
-      const status = String(req.body.status || "");
-      if (!["active", "paused", "completed"].includes(status)) {
+      const requestedStatus = String(req.body.status || "");
+      if (!["active", "paused", "completed"].includes(requestedStatus)) {
         return res.status(400).json({ error: "Estado de plan no valido" });
       }
       const plan = await TrainingPlan.findOne({
@@ -352,7 +383,49 @@ router.patch(
         coachId: req.user.id,
       });
       if (!plan) return res.status(404).json({ error: "Plan no encontrado" });
+      if (["completed", "cancelled"].includes(plan.status)) {
+        return res
+          .status(409)
+          .json({ error: "Un plan finalizado no puede cambiar de estado" });
+      }
 
+      const allowedTransitions = {
+        draft: ["active", "paused"],
+        scheduled: ["active", "paused", "completed"],
+        active: ["paused", "completed"],
+        paused: ["active", "completed"],
+      };
+      if (!allowedTransitions[plan.status]?.includes(requestedStatus)) {
+        return res.status(409).json({ error: "Cambio de estado no permitido" });
+      }
+      const status =
+        requestedStatus === "active" && isFuturePlan(plan)
+          ? "scheduled"
+          : requestedStatus;
+
+      if (["active", "scheduled"].includes(status)) {
+        const incompleteDays = (plan.weeklySchedule || []).filter(
+          (day) => day.type === "training" && !day.routineId,
+        );
+        if (incompleteDays.length) {
+          return res.status(409).json({
+            error: `Completa las rutinas de ${incompleteDays.length} ${incompleteDays.length === 1 ? "dia" : "dias"} antes de activar el plan`,
+          });
+        }
+        const routineIds = (plan.weeklySchedule || [])
+          .filter((day) => day.type === "training")
+          .map((day) => day.routineId);
+        const routineCount = await Routine.countDocuments({
+          _id: { $in: routineIds },
+          ownerId: athlete._id.toString(),
+          trainingPlanId: String(plan._id),
+        });
+        if (routineCount !== new Set(routineIds.map(String)).size) {
+          return res.status(409).json({
+            error: "Una de las rutinas del plan ya no esta disponible",
+          });
+        }
+      }
       if (status === "active") {
         const otherPlans = await TrainingPlan.find(
           {
@@ -363,43 +436,43 @@ router.patch(
           "weeklySchedule.routineId",
         ).lean();
         const otherPlanIds = otherPlans.map((item) => String(item._id));
-        const otherRoutineIds = otherPlans.flatMap((item) =>
-          (item.weeklySchedule || [])
-            .map((day) => day.routineId)
-            .filter(Boolean),
-        );
         await TrainingPlan.updateMany(
           { _id: { $in: otherPlanIds } },
           { $set: { status: "paused" } },
         );
-        if (otherPlanIds.length || otherRoutineIds.length) {
+        if (otherPlanIds.length) {
           await Routine.updateMany(
             {
               ownerId: athlete._id.toString(),
-              $or: [
-                { trainingPlanId: { $in: otherPlanIds } },
-                { _id: { $in: otherRoutineIds } },
-              ],
+              trainingPlanId: { $in: otherPlanIds },
             },
-            { $set: { isArchived: true } },
+            { $set: { isArchived: true, isAvailableForTraining: false } },
           );
         }
+      } else if (status === "scheduled") {
+        await TrainingPlan.updateMany(
+          {
+            _id: { $ne: plan._id },
+            athleteId: athlete._id.toString(),
+            status: "scheduled",
+          },
+          { $set: { status: "paused" } },
+        );
       }
 
       plan.status = status;
       await plan.save();
-      const planRoutineIds = (plan.weeklySchedule || [])
-        .map((day) => day.routineId)
-        .filter(Boolean);
       await Routine.updateMany(
         {
           ownerId: athlete._id.toString(),
-          $or: [
-            { trainingPlanId: String(plan._id) },
-            { _id: { $in: planRoutineIds } },
-          ],
+          trainingPlanId: String(plan._id),
         },
-        { $set: { isArchived: status !== "active" } },
+        {
+          $set: {
+            isArchived: status !== "active",
+            isAvailableForTraining: status === "active",
+          },
+        },
       );
       res.json(plan);
     } catch (err) {
@@ -420,17 +493,22 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
       coachId: req.user.id,
     });
     if (!plan) return res.status(404).json({ error: "Plan no encontrado" });
+    if (["completed", "cancelled"].includes(plan.status)) {
+      return res
+        .status(409)
+        .json({ error: "Un plan finalizado no puede editarse" });
+    }
 
-    const schedule = normalizeSchedule(req.body.weeklySchedule);
+    const scheduleMode = [
+      "fixed",
+      "flexible_guided",
+      "sequential_cycle",
+    ].includes(req.body.scheduleMode)
+      ? req.body.scheduleMode
+      : plan.scheduleMode || "fixed";
+    const schedule = normalizeSchedule(req.body.weeklySchedule, scheduleMode);
     if (!schedule || !schedule.some((day) => day.type === "training")) {
       return res.status(400).json({ error: "Configura una semana valida" });
-    }
-    if (
-      schedule.some((day) => day.type === "training" && !day.sourceRoutineId)
-    ) {
-      return res.status(400).json({
-        error: "Asigna una rutina a cada dia de entrenamiento",
-      });
     }
     const durationWeeks = Number(req.body.durationWeeks);
     if (
@@ -453,25 +531,28 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     const level = PLAN_LEVELS.includes(req.body.level)
       ? req.body.level
       : plan.level;
-    const strategy = PROGRESSION_STRATEGIES.includes(
-      req.body.progression?.strategy,
-    )
-      ? req.body.progression.strategy
-      : plan.progression.strategy;
-    const deloadEveryWeeks =
-      Number(req.body.progression?.deloadEveryWeeks) || 0;
-    if (
-      !Number.isInteger(deloadEveryWeeks) ||
-      deloadEveryWeeks < 0 ||
-      deloadEveryWeeks > 12
-    ) {
-      return res
-        .status(400)
-        .json({ error: "La descarga programada no es valida" });
-    }
     const startDate = req.body.startDate ? new Date(req.body.startDate) : null;
-    if (startDate && Number.isNaN(startDate.getTime())) {
-      return res.status(400).json({ error: "La fecha de inicio no es valida" });
+    if (!startDate || Number.isNaN(startDate.getTime())) {
+      return res.status(400).json({ error: "Selecciona una fecha de inicio" });
+    }
+    const hasCompleteRoutines = schedule
+      .filter((day) => day.type === "training")
+      .every((day) => day.sourceRoutineId);
+    let nextStatus = hasCompleteRoutines ? plan.status : "draft";
+    if (hasCompleteRoutines && plan.status === "draft") {
+      nextStatus = isFuturePlan({ startDate }) ? "scheduled" : "active";
+    } else if (
+      hasCompleteRoutines &&
+      plan.status === "active" &&
+      isFuturePlan({ startDate })
+    ) {
+      nextStatus = "scheduled";
+    } else if (
+      hasCompleteRoutines &&
+      plan.status === "scheduled" &&
+      !isFuturePlan({ startDate })
+    ) {
+      nextStatus = "active";
     }
 
     const sourceIds = [
@@ -519,7 +600,8 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
       assigned.description = source.description || "";
       assigned.branch = source.branch;
       assigned.exercises = source.exercises || [];
-      assigned.isArchived = plan.status !== "active";
+      assigned.isArchived = nextStatus !== "active";
+      assigned.isAvailableForTraining = nextStatus === "active";
       await assigned.save();
       selectedRoutineIds.push(String(assigned._id));
       routineBySource.set(String(source._id), assigned._id);
@@ -530,7 +612,7 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
         trainingPlanId: String(plan._id),
         _id: { $nin: selectedRoutineIds },
       },
-      { $set: { isArchived: true } },
+      { $set: { isArchived: true, isAvailableForTraining: false } },
     );
 
     plan.name = name;
@@ -538,7 +620,8 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     plan.goal = goal;
     plan.durationWeeks = durationWeeks;
     plan.startDate = startDate;
-    plan.progression = { strategy, deloadEveryWeeks };
+    plan.scheduleMode = scheduleMode;
+    plan.status = nextStatus;
     plan.notes = notes;
     plan.weeklySchedule = schedule.map((day) => ({
       ...day,
@@ -549,6 +632,40 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
           : null,
     }));
     await plan.save();
+
+    if (nextStatus === "active") {
+      const otherPlans = await TrainingPlan.find(
+        {
+          _id: { $ne: plan._id },
+          athleteId: athlete._id.toString(),
+          status: "active",
+        },
+        "weeklySchedule.routineId",
+      ).lean();
+      const otherPlanIds = otherPlans.map((item) => String(item._id));
+      await TrainingPlan.updateMany(
+        { _id: { $in: otherPlanIds } },
+        { $set: { status: "paused" } },
+      );
+      if (otherPlanIds.length) {
+        await Routine.updateMany(
+          {
+            ownerId: athlete._id.toString(),
+            trainingPlanId: { $in: otherPlanIds },
+          },
+          { $set: { isArchived: true, isAvailableForTraining: false } },
+        );
+      }
+    } else if (nextStatus === "scheduled") {
+      await TrainingPlan.updateMany(
+        {
+          _id: { $ne: plan._id },
+          athleteId: athlete._id.toString(),
+          status: "scheduled",
+        },
+        { $set: { status: "paused" } },
+      );
+    }
     res.json(plan);
   } catch (err) {
     next(err);

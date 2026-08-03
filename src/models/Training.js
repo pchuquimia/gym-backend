@@ -98,6 +98,8 @@ const TrainingSchema = new mongoose.Schema(
     totalVolume: { type: Number, default: 0 },
     routineId: { type: String, default: null },
     routineName: { type: String, default: "" },
+    trainingPlanId: { type: String, default: null, index: true },
+    trainingPlanSlotId: { type: String, default: null, index: true },
     progressScopeId: { type: String, default: "" },
     orderSignature: { type: String, default: "" },
     branch: { type: String, default: null },
@@ -116,6 +118,7 @@ const TrainingSchema = new mongoose.Schema(
 
 TrainingSchema.index({ date: -1 });
 TrainingSchema.index({ routineId: 1, date: -1 });
+TrainingSchema.index({ trainingPlanId: 1, trainingPlanSlotId: 1, date: -1 });
 TrainingSchema.index({ progressScopeId: 1, date: -1 });
 TrainingSchema.index({ progressScopeId: 1, orderSignature: 1, date: -1 });
 TrainingSchema.index({ branch: 1, date: -1 });

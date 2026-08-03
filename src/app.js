@@ -74,6 +74,7 @@ app.use(
   rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 500,
+    skip: () => isDev,
     standardHeaders: true,
     legacyHeaders: false,
   }),

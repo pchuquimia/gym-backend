@@ -8,6 +8,7 @@ import {
 import Training from "../models/Training.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
+import TrainingPlan from "../models/TrainingPlan.js";
 
 const router = Router();
 
@@ -364,6 +365,18 @@ router.post("/", async (req, res, next) => {
         });
       }
     }
+    if (payload.trainingPlanId || payload.trainingPlanSlotId) {
+      const linkedPlan = await TrainingPlan.findOne({
+        _id: payload.trainingPlanId,
+        athleteId: ownerId,
+        status: { $ne: "cancelled" },
+        "weeklySchedule.slotId": payload.trainingPlanSlotId,
+      }).lean();
+      if (!linkedPlan) {
+        payload.trainingPlanId = null;
+        payload.trainingPlanSlotId = null;
+      }
+    }
     const isSupervised = ownerId !== req.user.id;
     payload.sessionType = isSupervised ? "supervised" : "personal";
     payload.startedBy = req.user.id;
@@ -397,6 +410,53 @@ router.post("/", async (req, res, next) => {
     payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0;
 
     const training = await Training.create(payload);
+    if (payload.routineId) {
+      try {
+        const plan = payload.trainingPlanId
+          ? await TrainingPlan.findOne({
+              _id: payload.trainingPlanId,
+              athleteId: ownerId,
+              status: "active",
+              scheduleMode: {
+                $in: ["flexible_guided", "sequential_cycle"],
+              },
+            })
+          : await TrainingPlan.findOne({
+              athleteId: ownerId,
+              status: "active",
+              scheduleMode: {
+                $in: ["flexible_guided", "sequential_cycle"],
+              },
+              "weeklySchedule.routineId": payload.routineId,
+            });
+        const schedule = plan?.weeklySchedule || [];
+        const currentIndex = Number(plan?.cycleProgress?.currentIndex || 0);
+        const current = schedule[currentIndex];
+        if (
+          plan &&
+          current?.type === "training" &&
+          (payload.trainingPlanSlotId
+            ? current.slotId === payload.trainingPlanSlotId
+            : String(current.routineId) === String(payload.routineId)) &&
+          plan.cycleProgress?.lastTrainingId !== String(training._id)
+        ) {
+          const nextIndex = (currentIndex + 1) % schedule.length;
+          plan.cycleProgress = plan.cycleProgress || {};
+          plan.cycleProgress.currentIndex = nextIndex;
+          plan.cycleProgress.completedCycles =
+            Number(plan.cycleProgress.completedCycles || 0) +
+            (nextIndex === 0 ? 1 : 0);
+          plan.cycleProgress.lastAdvancedAt = new Date();
+          plan.cycleProgress.lastTrainingId = String(training._id);
+          await plan.save();
+        }
+      } catch (cycleError) {
+        console.error(
+          "No se pudo avanzar el ciclo de entrenamiento",
+          cycleError,
+        );
+      }
+    }
     res.status(201).json(training);
   } catch (err) {
     next(err);

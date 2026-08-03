@@ -22,6 +22,7 @@ export const uploadPhotoToCloudinary = async (filePath) => {
   const result = await cloudinary.uploader.upload(filePath, {
     folder: PHOTO_FOLDER,
     resource_type: "image",
+    type: "authenticated",
     overwrite: true,
     transformation: [
       { width: 1600, height: 1600, crop: "limit" },
@@ -35,7 +36,44 @@ export const uploadPhotoToCloudinary = async (filePath) => {
     width: result.width,
     height: result.height,
     format: result.format,
+    deliveryType: result.type || "authenticated",
   };
+};
+
+export const getPhotoDeliveryUrl = ({
+  publicId,
+  deliveryType = "upload",
+  width,
+  height,
+}) => {
+  if (!publicId || !isCloudinaryReady) return "";
+  const transformation = [
+    {
+      ...(width ? { width } : {}),
+      ...(height ? { height } : {}),
+      crop: "limit",
+    },
+    { quality: "auto:eco", fetch_format: "auto" },
+  ];
+  return cloudinary.url(publicId, {
+    secure: true,
+    sign_url: deliveryType === "authenticated",
+    type: deliveryType,
+    resource_type: "image",
+    transformation,
+  });
+};
+
+export const deletePhotoFromCloudinary = async (
+  publicId,
+  deliveryType = "upload",
+) => {
+  if (!publicId || !isCloudinaryReady) return null;
+  return cloudinary.uploader.destroy(publicId, {
+    invalidate: true,
+    resource_type: "image",
+    type: deliveryType,
+  });
 };
 
 export const removeLocalFile = async (filePath) => {
