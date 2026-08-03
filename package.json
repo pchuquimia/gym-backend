@@ -11,6 +11,8 @@
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
     "import:exercises-excel": "node scripts/importExercisesFromExcel.js",
+    "import:exercises-dataset": "node scripts/importExercisesDataset.js",
+    "upload:exercises-dataset-media": "node scripts/uploadDatasetMediaToCloudinary.js",
     "build:cloudinary-map": "node scripts/buildCloudinaryMap.js",
     "clear:exercise-images": "node scripts/clearExerciseImages.js",
     "export:cloudinary-template": "node scripts/exportExerciseIds.js"

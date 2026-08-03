@@ -352,6 +352,18 @@ router.post("/", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     payload.ownerId = ownerId;
+    if (payload.routineId) {
+      const routine = await Routine.findOne({
+        _id: payload.routineId,
+        ownerId,
+        isArchived: { $ne: true },
+      }).lean();
+      if (!routine) {
+        return res.status(400).json({
+          error: "La rutina ya no esta disponible para entrenar",
+        });
+      }
+    }
     const isSupervised = ownerId !== req.user.id;
     payload.sessionType = isSupervised ? "supervised" : "personal";
     payload.startedBy = req.user.id;

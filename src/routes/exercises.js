@@ -343,11 +343,19 @@ router.post(
 
       const media = {
         ...(exercise.media?.toObject?.() || exercise.media || {}),
-        image: asset,
+        [kind === "thumbnail"
+          ? "thumbnail"
+          : kind === "animation"
+            ? "animation"
+            : kind === "video"
+              ? "video"
+              : "image"]: asset,
       };
       exercise.media = media;
-      exercise.image = asset.url;
-      exercise.imagePublicId = asset.publicId;
+      if (kind === "main" || kind === "image" || kind === "thumbnail") {
+        exercise.image = asset.url;
+        exercise.imagePublicId = asset.publicId;
+      }
       exercise.updatedBy = req.user.id;
       await exercise.save();
 
@@ -381,7 +389,7 @@ router.get("/", async (req, res, next) => {
     );
     const fields = req.query.fields
       ? req.query.fields.split(",").join(" ")
-      : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode isActive updatedAt createdAt";
+      : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
     andFilters.push({

@@ -17,6 +17,7 @@ import preferencesRoutes from "./routes/preferences.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
 import coachRoutes from "./routes/coach.js";
+import plansRoutes from "./routes/plans.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -92,6 +93,7 @@ app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/coach", coachRoutes);
+app.use("/api/plans", plansRoutes);
 app.use("/api/exercises", exercisesRoutes);
 app.use("/api/routines", routinesRoutes);
 app.use("/api/sessions", sessionsRoutes);

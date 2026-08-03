@@ -12,6 +12,21 @@ const MediaAssetSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const ExerciseSourceSchema = new mongoose.Schema(
+  {
+    provider: { type: String, required: true, trim: true },
+    externalId: { type: String, required: true, trim: true },
+    mediaId: { type: String, default: "" },
+    datasetCommit: { type: String, default: "" },
+    imagePath: { type: String, default: "" },
+    animationPath: { type: String, default: "" },
+    attribution: { type: String, default: "" },
+    importedAt: { type: Date, default: null },
+    lastSyncedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const ExerciseSchema = new mongoose.Schema(
   {
     _id: { type: String }, // usamos slug/id string para alinear con frontend
@@ -64,7 +79,14 @@ const ExerciseSchema = new mongoose.Schema(
     media: {
       image: { type: MediaAssetSchema, default: () => ({}) },
       thumbnail: { type: MediaAssetSchema, default: () => ({}) },
+      animation: { type: MediaAssetSchema, default: () => ({}) },
       video: { type: MediaAssetSchema, default: () => ({}) },
+    },
+    source: { type: ExerciseSourceSchema, default: undefined },
+    classificationStatus: {
+      type: String,
+      enum: ["curated", "mapped", "review"],
+      default: "curated",
     },
     branches: { type: [String], default: ["general"] },
     tags: { type: [String], default: [] },
@@ -92,5 +114,15 @@ ExerciseSchema.index({ equipment: 1 });
 ExerciseSchema.index({ difficulty: 1 });
 ExerciseSchema.index({ goals: 1 });
 ExerciseSchema.index({ tags: 1 });
+ExerciseSchema.index(
+  { "source.provider": 1, "source.externalId": 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      "source.provider": { $type: "string" },
+      "source.externalId": { $type: "string" },
+    },
+  },
+);
 
 export default mongoose.model("Exercise", ExerciseSchema);

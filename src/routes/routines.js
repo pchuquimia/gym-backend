@@ -42,7 +42,9 @@ const resolveProgressScope = async (req, payload, ownerId) => {
 
 router.get("/", async (req, res, next) => {
   try {
-    const filter = await getAccessibleOwnerFilter(req);
+    const filter = await getAccessibleOwnerFilter(req, {
+      isArchived: { $ne: true },
+    });
     const routines = await Routine.find(filter).lean();
     res.set("Cache-Control", "private, no-store");
     res.json(routines);

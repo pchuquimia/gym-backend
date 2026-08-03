@@ -9,6 +9,7 @@ import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
 import Session from "../models/Session.js";
 import Training from "../models/Training.js";
+import TrainingPlan from "../models/TrainingPlan.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
@@ -122,12 +123,87 @@ router.patch(
       } else {
         payload.trainingMode = "independent";
       }
+      const effectiveTrainerId =
+        nextRole === "Cliente" ? nextTrainerId || null : null;
       const user = await User.findByIdAndUpdate(req.params.id, payload, {
         new: true,
         runValidators: true,
       }).select(ADMIN_USER_FIELDS);
       if (!user) return res.status(404).json({ error: "Not found" });
-      if (req.body.role && req.body.role !== "Entrenador") {
+      const trainerChanged =
+        String(current.assignedTrainerId || "") !==
+        String(effectiveTrainerId || "");
+      if (
+        current.role === "Cliente" &&
+        trainerChanged &&
+        current.assignedTrainerId
+      ) {
+        const previousPlans = await TrainingPlan.find(
+          {
+            athleteId: req.params.id,
+            coachId: current.assignedTrainerId,
+            status: "active",
+          },
+          "weeklySchedule.routineId",
+        ).lean();
+        const previousPlanIds = previousPlans.map((plan) => String(plan._id));
+        const previousRoutineIds = previousPlans.flatMap((plan) =>
+          (plan.weeklySchedule || [])
+            .map((day) => day.routineId)
+            .filter(Boolean),
+        );
+        await TrainingPlan.updateMany(
+          { _id: { $in: previousPlanIds } },
+          { $set: { status: "paused" } },
+        );
+        if (
+          effectiveTrainerId &&
+          (previousPlanIds.length || previousRoutineIds.length)
+        ) {
+          await Routine.updateMany(
+            {
+              ownerId: req.params.id,
+              $or: [
+                { trainingPlanId: { $in: previousPlanIds } },
+                { _id: { $in: previousRoutineIds } },
+              ],
+            },
+            { $set: { isArchived: true } },
+          );
+        }
+        if (
+          !effectiveTrainerId &&
+          (previousPlanIds.length || previousRoutineIds.length)
+        ) {
+          await Routine.updateMany(
+            {
+              ownerId: req.params.id,
+              $or: [
+                { trainingPlanId: { $in: previousPlanIds } },
+                { _id: { $in: previousRoutineIds } },
+              ],
+            },
+            {
+              $set: {
+                trainingPlanId: null,
+                assignmentType: "personal",
+                isArchived: false,
+              },
+            },
+          );
+        }
+      }
+      const trainerLosesAccess =
+        current.role === "Entrenador" &&
+        (nextRole !== "Entrenador" || payload.isActive === false);
+      if (trainerLosesAccess) {
+        const assignedClients = await User.find(
+          { assignedTrainerId: req.params.id },
+          "_id",
+        ).lean();
+        const assignedClientIds = assignedClients.map((client) =>
+          String(client._id),
+        );
         await User.updateMany(
           { assignedTrainerId: req.params.id },
           {
@@ -137,6 +213,25 @@ router.patch(
             },
           },
         );
+        await TrainingPlan.updateMany(
+          { coachId: req.params.id, status: "active" },
+          { $set: { status: "paused" } },
+        );
+        if (assignedClientIds.length) {
+          await Routine.updateMany(
+            {
+              ownerId: { $in: assignedClientIds },
+              assignedByCoachId: req.params.id,
+            },
+            {
+              $set: {
+                trainingPlanId: null,
+                assignmentType: "personal",
+                isArchived: false,
+              },
+            },
+          );
+        }
       }
       res.json(user);
     } catch (err) {
@@ -159,24 +254,46 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
     }
 
     const ownerId = user._id.toString();
-    const [routines, trainings, sessions, photos, preferences, exercises] =
-      await Promise.all([
-        Routine.deleteMany({ ownerId }),
-        Training.deleteMany({ ownerId }),
-        Session.deleteMany({ ownerId }),
-        Photo.deleteMany({ ownerId }),
-        Preference.deleteMany({ userId: ownerId }),
-        Exercise.deleteMany({ ownerId, type: "custom" }),
-        User.updateMany(
-          { assignedTrainerId: ownerId },
-          {
-            $set: {
-              assignedTrainerId: null,
-              trainingMode: "independent",
-            },
+    if (user.role === "Entrenador") {
+      await Routine.updateMany(
+        { assignedByCoachId: ownerId },
+        {
+          $set: {
+            trainingPlanId: null,
+            assignmentType: "personal",
+            isArchived: false,
           },
-        ),
-      ]);
+        },
+      );
+    }
+    const [
+      routines,
+      trainings,
+      sessions,
+      photos,
+      preferences,
+      exercises,
+      plans,
+    ] = await Promise.all([
+      Routine.deleteMany({ ownerId }),
+      Training.deleteMany({ ownerId }),
+      Session.deleteMany({ ownerId }),
+      Photo.deleteMany({ ownerId }),
+      Preference.deleteMany({ userId: ownerId }),
+      Exercise.deleteMany({ ownerId, type: "custom" }),
+      TrainingPlan.deleteMany({
+        $or: [{ athleteId: ownerId }, { coachId: ownerId }],
+      }),
+      User.updateMany(
+        { assignedTrainerId: ownerId },
+        {
+          $set: {
+            assignedTrainerId: null,
+            trainingMode: "independent",
+          },
+        },
+      ),
+    ]);
 
     await User.findByIdAndDelete(ownerId);
     res.json({
@@ -188,6 +305,7 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         photos: photos.deletedCount,
         preferences: preferences.deletedCount,
         exercises: exercises.deletedCount,
+        plans: plans.deletedCount,
       },
     });
   } catch (err) {
