@@ -318,6 +318,26 @@ const assertCanManageExercise = async (req, exercise) => {
 
 router.use(protect);
 
+const getVisibleExerciseScope = async (req) => {
+  const requestedOwnerId = String(req.query.ownerId || req.user.id).trim();
+  if (
+    requestedOwnerId !== req.user.id &&
+    !(await ensureCanAccessOwner(req, requestedOwnerId))
+  ) {
+    return null;
+  }
+  const ownerIds = [
+    ...new Set([req.user.id, requestedOwnerId].filter(Boolean)),
+  ];
+  return {
+    $or: [
+      { ownerId: { $in: ownerIds }, type: "custom" },
+      { ownerId: null },
+      { type: "system" },
+    ],
+  };
+};
+
 const blockManagedAthleteWrites = (req, res, next) => {
   if (
     req.user.role === "Cliente" &&
@@ -392,9 +412,11 @@ router.post(
 
 router.get("/facets", async (req, res, next) => {
   try {
+    const scope = await getVisibleExerciseScope(req);
+    if (!scope) return res.status(403).json({ error: "No autorizado" });
     const filter = {
       isActive: { $ne: false },
-      $or: [{ ownerId: req.user.id }, { ownerId: null }, { type: "system" }],
+      ...scope,
     };
     const exercises = await Exercise.find(
       filter,
@@ -446,7 +468,7 @@ router.get("/facets", async (req, res, next) => {
       cardio: exercises.filter(isCardio).length,
     };
 
-    res.set("Cache-Control", "private, max-age=300");
+    res.set("Cache-Control", "private, no-store");
     res.json({
       total: exercises.length,
       categories: counts(
@@ -503,9 +525,9 @@ router.get("/", async (req, res, next) => {
       : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
-    andFilters.push({
-      $or: [{ ownerId: req.user.id }, { ownerId: null }, { type: "system" }],
-    });
+    const scope = await getVisibleExerciseScope(req);
+    if (!scope) return res.status(403).json({ error: "No autorizado" });
+    andFilters.push(scope);
 
     if (req.query.active !== "false") filter.isActive = { $ne: false };
     if (req.query.type && ["system", "custom"].includes(req.query.type)) {
@@ -626,7 +648,7 @@ router.get("/", async (req, res, next) => {
       .lean();
 
     const includeMeta = req.query.meta === "true";
-    res.set("Cache-Control", "private, max-age=120");
+    res.set("Cache-Control", "private, no-store");
     if (includeMeta) {
       const total = await Exercise.countDocuments(filter);
       res.json({
