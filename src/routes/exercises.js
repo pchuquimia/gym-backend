@@ -14,6 +14,15 @@ import {
   localizeExerciseDocument,
   translateExerciseNameToSpanish,
 } from "../utils/exerciseLocalization.js";
+import {
+  buildExerciseIdentityKey,
+  canonicalizeBodyRegion,
+  canonicalizeCategory,
+  canonicalizeEquipment,
+  canonicalizeMovementPattern,
+  canonicalizeMuscleGroup,
+  classifyExerciseTaxonomy,
+} from "../utils/exerciseTaxonomy.js";
 
 const router = Router();
 
@@ -286,6 +295,8 @@ const normalizePayload = (body, req, current = null) => {
   payload.stability = stringOrCurrent("stability", current?.stability);
   payload.position = stringOrCurrent("position", current?.position);
   payload.difficulty = stringOrCurrent("difficulty", current?.difficulty);
+  Object.assign(payload, classifyExerciseTaxonomy(payload));
+  payload.identityKey = buildExerciseIdentityKey(payload);
   payload.mechanics = mergeMechanics(payload.mechanics, current?.mechanics, {
     forceType: payload.force,
     contraction: payload.executionType,
@@ -448,7 +459,7 @@ router.get("/facets", async (req, res, next) => {
     };
     const exercises = await Exercise.find(
       filter,
-      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image",
+      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image type ownerId",
     )
       .maxTimeMS(10000)
       .lean();
@@ -465,12 +476,14 @@ router.get("/facets", async (req, res, next) => {
     const flat = (value) =>
       (Array.isArray(value) ? value : value ? [value] : []).filter(Boolean);
     const primaryGroup = (exercise) =>
-      exercise.primaryMuscleGroup ||
-      exercise.primaryMuscle ||
-      exercise.muscle ||
-      "";
+      canonicalizeMuscleGroup(
+        exercise.primaryMuscleGroup ||
+          exercise.primaryMuscle ||
+          exercise.muscle ||
+          "",
+      );
     const groupsByRegion = exercises.reduce((result, exercise) => {
-      const region = exercise.bodyRegion || "";
+      const region = canonicalizeBodyRegion(exercise.bodyRegion || "");
       const group = primaryGroup(exercise);
       if (!region || !group) return result;
       result[region] ||= [];
@@ -554,23 +567,38 @@ router.get("/facets", async (req, res, next) => {
     };
 
     res.set("Cache-Control", "private, no-store");
+    const personalCount = exercises.filter(
+      (exercise) => exercise.type === "custom" && Boolean(exercise.ownerId),
+    ).length;
+
     res.json({
       total: exercises.length,
+      sourceCounts: {
+        all: exercises.length,
+        system: exercises.length - personalCount,
+        custom: personalCount,
+      },
       categories: counts(
         exercises.flatMap((item) =>
           flat(item.categories).length
-            ? flat(item.categories)
-            : flat(item.category),
+            ? flat(item.categories).map(canonicalizeCategory)
+            : flat(item.category).map(canonicalizeCategory),
         ),
       ),
-      bodyRegions: counts(exercises.map((item) => item.bodyRegion)),
+      bodyRegions: counts(
+        exercises.map((item) => canonicalizeBodyRegion(item.bodyRegion)),
+      ),
       groupsByRegion,
-      equipment: counts(exercises.flatMap((item) => flat(item.equipment))),
+      equipment: counts(
+        exercises.flatMap((item) =>
+          flat(item.equipment).map(canonicalizeEquipment),
+        ),
+      ),
       movementPatterns: counts(
         exercises.flatMap((item) =>
           flat(item.movementPatterns).length
-            ? flat(item.movementPatterns)
-            : flat(item.movementPattern),
+            ? flat(item.movementPatterns).map(canonicalizeMovementPattern)
+            : flat(item.movementPattern).map(canonicalizeMovementPattern),
         ),
       ),
       difficulties: counts(exercises.map((item) => item.difficulty)),
@@ -587,8 +615,13 @@ router.get("/facets", async (req, res, next) => {
 
 router.get("/:id", async (req, res, next) => {
   try {
-    const exercise = await Exercise.findById(req.params.id).lean();
+    let exercise = await Exercise.findById(req.params.id).lean();
     if (!exercise) return res.status(404).json({ error: "Exercise not found" });
+    if (exercise.mergedIntoExerciseId) {
+      exercise =
+        (await Exercise.findById(exercise.mergedIntoExerciseId).lean()) ||
+        exercise;
+    }
     const isSystem = !exercise.ownerId || exercise.type === "system";
     if (!isSystem && !(await ensureCanAccessOwner(req, exercise.ownerId))) {
       return res.status(403).json({ error: "No autorizado" });
@@ -616,62 +649,73 @@ router.get("/", async (req, res, next) => {
     andFilters.push(scope);
 
     if (req.query.active !== "false") filter.isActive = { $ne: false };
-    if (req.query.type && ["system", "custom"].includes(req.query.type)) {
-      filter.type = req.query.type;
-    }
-    if (req.query.muscle) {
+    if (req.query.type === "custom") {
+      filter.type = "custom";
+      filter.ownerId = { $type: "string", $ne: "" };
+    } else if (req.query.type === "system") {
       andFilters.push({
         $or: [
-          { muscle: req.query.muscle },
-          { primaryMuscle: req.query.muscle },
-          { primaryMuscleGroup: req.query.muscle },
+          { type: "system" },
+          { ownerId: null },
+          { ownerId: { $exists: false } },
+        ],
+      });
+    }
+    if (req.query.muscle) {
+      const muscle = canonicalizeMuscleGroup(req.query.muscle);
+      andFilters.push({
+        $or: [
+          { muscle },
+          { primaryMuscle: muscle },
+          { primaryMuscleGroup: muscle },
         ],
       });
     }
     if (req.query.category) {
+      const category = canonicalizeCategory(req.query.category);
       andFilters.push({
-        $or: [
-          { category: req.query.category },
-          { categories: req.query.category },
-        ],
+        $or: [{ category }, { categories: category }],
       });
     }
     if (req.query.excludeCategory) {
+      const category = canonicalizeCategory(req.query.excludeCategory);
       andFilters.push({
-        $nor: [
-          { category: req.query.excludeCategory },
-          { categories: req.query.excludeCategory },
-        ],
+        $nor: [{ category }, { categories: category }],
       });
     }
     if (req.query.bodyRegion) {
-      filter.bodyRegion = req.query.bodyRegion;
+      filter.bodyRegion = canonicalizeBodyRegion(req.query.bodyRegion);
     }
     if (req.query.navigationRegion) {
       filter.navigationRegion = req.query.navigationRegion;
     }
     if (req.query.primaryMuscleGroup) {
+      const group = canonicalizeMuscleGroup(req.query.primaryMuscleGroup);
       andFilters.push({
         $or: [
-          { primaryMuscleGroup: req.query.primaryMuscleGroup },
-          { primaryMuscle: req.query.primaryMuscleGroup },
-          { muscle: req.query.primaryMuscleGroup },
+          { primaryMuscleGroup: group },
+          { primaryMuscle: group },
+          { muscle: group },
         ],
       });
     }
     if (req.query.movementPattern) {
+      const movementPattern = canonicalizeMovementPattern(
+        req.query.movementPattern,
+      );
       andFilters.push({
         $or: [
-          { movementPattern: req.query.movementPattern },
-          { movementPatterns: req.query.movementPattern },
+          { movementPattern },
+          { movementPatterns: movementPattern },
         ],
       });
     }
     if (req.query.equipment) {
-      if (req.query.equipment === "Sin equipamiento") {
+      const equipment = canonicalizeEquipment(req.query.equipment);
+      if (equipment === "Sin equipamiento") {
         filter.equipment = { $in: ["Sin equipamiento", "Peso corporal"] };
       } else {
-        filter.equipment = req.query.equipment;
+        filter.equipment = equipment;
       }
     }
     if (req.query.exerciseType) {

@@ -1,3 +1,8 @@
+import {
+  buildExerciseIdentityKey,
+  classifyExerciseTaxonomy,
+} from "../src/utils/exerciseTaxonomy.js";
+
 export const DATASET_PROVIDER = "hasaneyldrm";
 export const DATASET_COMMIT =
   process.env.EXERCISES_DATASET_COMMIT ||
@@ -105,7 +110,7 @@ export const toDatasetExercise = (row, now = new Date()) => {
   const primaryMuscles = unique([row.muscle_group, row.target]);
   const secondaryMuscles = unique(row.secondary_muscles);
 
-  return {
+  const exercise = {
     _id: id,
     slug: id,
     name: String(row.name || "").trim(),
@@ -153,7 +158,7 @@ export const toDatasetExercise = (row, now = new Date()) => {
     version: 1,
     createdBy: "hasaneyldrm_import",
     updatedBy: "hasaneyldrm_import",
-    classificationStatus: TARGET_MAP[target] ? "mapped" : "review",
+    classificationStatus: TARGET_MAP[target] ? "partially_mapped" : "review",
     source: {
       provider: DATASET_PROVIDER,
       externalId,
@@ -165,6 +170,11 @@ export const toDatasetExercise = (row, now = new Date()) => {
       importedAt: now,
       lastSyncedAt: now,
     },
+  };
+  const classified = { ...exercise, ...classifyExerciseTaxonomy(exercise) };
+  return {
+    ...classified,
+    identityKey: buildExerciseIdentityKey(classified),
   };
 };
 

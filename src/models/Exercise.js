@@ -86,12 +86,31 @@ const ExerciseSchema = new mongoose.Schema(
       animation: { type: MediaAssetSchema, default: () => ({}) },
       video: { type: MediaAssetSchema, default: () => ({}) },
     },
+    alternateMedia: [
+      {
+        sourceExerciseId: { type: String, required: true },
+        label: { type: String, default: "" },
+        image: { type: MediaAssetSchema, default: () => ({}) },
+        animation: { type: MediaAssetSchema, default: () => ({}) },
+        _id: false,
+      },
+    ],
     source: { type: ExerciseSourceSchema, default: undefined },
     classificationStatus: {
       type: String,
-      enum: ["curated", "mapped", "review"],
+      enum: [
+        "imported",
+        "partially_mapped",
+        "mapped",
+        "review",
+        "reviewed",
+        "curated",
+      ],
       default: "curated",
     },
+    taxonomyVersion: { type: Number, default: 1 },
+    identityKey: { type: String, default: "", trim: true },
+    mergedIntoExerciseId: { type: String, default: null },
     branches: { type: [String], default: ["general"] },
     tags: { type: [String], default: [] },
     type: { type: String, enum: ["system", "custom"], default: "custom" },
@@ -109,6 +128,7 @@ ExerciseSchema.index({ "localizedNames.es": 1 });
 ExerciseSchema.index({ "localizedNames.en": 1 });
 ExerciseSchema.index({ muscle: 1 });
 ExerciseSchema.index({ slug: 1 });
+ExerciseSchema.index({ identityKey: 1, isActive: 1 });
 ExerciseSchema.index({ type: 1, ownerId: 1, isActive: 1 });
 ExerciseSchema.index({ primaryMuscle: 1 });
 ExerciseSchema.index({ primaryMuscleGroup: 1 });
