@@ -9,6 +9,7 @@
     "admin:init": "node scripts/createAdminAndAssignData.js",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
+    "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",
     "plans:backfill": "node scripts/backfillTrainingPlans.js",
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
     "import:exercises-excel": "node scripts/importExercisesFromExcel.js",

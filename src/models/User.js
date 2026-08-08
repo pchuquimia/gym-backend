@@ -69,6 +69,7 @@ const UserSchema = new mongoose.Schema(
       },
       calories: { type: Number, default: 2500 },
       units: { type: String, enum: ["metric", "imperial"], default: "metric" },
+      language: { type: String, enum: ["es", "en"], default: "es" },
       privacy: {
         type: String,
         enum: ["público", "privado"],

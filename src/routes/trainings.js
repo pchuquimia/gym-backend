@@ -9,6 +9,10 @@ import Training from "../models/Training.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
+import {
+  getExerciseLanguage,
+  localizeExerciseReferences,
+} from "../utils/exerciseLocalization.js";
 
 const router = Router();
 
@@ -316,11 +320,20 @@ router.get("/", async (req, res, next) => {
       .lean();
 
     res.set("Cache-Control", "no-store");
+    const localizedTrainings = await localizeExerciseReferences(
+      trainings,
+      getExerciseLanguage(req),
+    );
     const includeMeta = req.query.meta === "true";
     if (includeMeta) {
-      res.json({ page, limit, count: trainings.length, items: trainings });
+      res.json({
+        page,
+        limit,
+        count: localizedTrainings.length,
+        items: localizedTrainings,
+      });
     } else {
-      res.json(trainings);
+      res.json(localizedTrainings);
     }
   } catch (err) {
     next(err);
@@ -339,7 +352,9 @@ router.get("/:id", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     res.set("Cache-Control", "private, no-store");
-    res.json(training);
+    res.json(
+      await localizeExerciseReferences(training, getExerciseLanguage(req)),
+    );
   } catch (err) {
     next(err);
   }
@@ -365,16 +380,33 @@ router.post("/", async (req, res, next) => {
         });
       }
     }
+    let linkedPlan = null;
+    let linkedPlanSlot = null;
+    let linkedPlanSlotIndex = -1;
     if (payload.trainingPlanId || payload.trainingPlanSlotId) {
-      const linkedPlan = await TrainingPlan.findOne({
+      linkedPlan = await TrainingPlan.findOne({
         _id: payload.trainingPlanId,
         athleteId: ownerId,
-        status: { $ne: "cancelled" },
+        status: "active",
         "weeklySchedule.slotId": payload.trainingPlanSlotId,
       }).lean();
       if (!linkedPlan) {
-        payload.trainingPlanId = null;
-        payload.trainingPlanSlotId = null;
+        return res.status(400).json({
+          error: "El bloque seleccionado no pertenece al plan vigente",
+        });
+      }
+      linkedPlanSlotIndex = (linkedPlan.weeklySchedule || []).findIndex(
+        (day) => day.slotId === payload.trainingPlanSlotId,
+      );
+      linkedPlanSlot = linkedPlan.weeklySchedule?.[linkedPlanSlotIndex];
+      if (
+        !linkedPlanSlot ||
+        linkedPlanSlot.type !== "training" ||
+        String(linkedPlanSlot.routineId) !== String(payload.routineId)
+      ) {
+        return res.status(400).json({
+          error: "La rutina no corresponde al bloque seleccionado",
+        });
       }
     }
     const isSupervised = ownerId !== req.user.id;
@@ -388,6 +420,39 @@ router.post("/", async (req, res, next) => {
     // normalizar fecha a string local yyyy-mm-dd para evitar corrimientos por zona horaria
     const normalizedDate = toLocalISODate(payload.date);
     payload.date = normalizedDate || toLocalISODate(new Date()) || payload.date;
+    if (linkedPlan && linkedPlanSlot) {
+      const date = new Date(`${payload.date}T00:00:00Z`);
+      const mondayDayIndex = ((date.getUTCDay() + 6) % 7) + 1;
+      const expectedCycleIndex = Number(
+        linkedPlan.cycleProgress?.currentIndex || 0,
+      );
+      const requiresAcknowledgement =
+        (linkedPlan.scheduleMode === "fixed" &&
+          Number(linkedPlanSlot.dayIndex) !== mondayDayIndex) ||
+        (linkedPlan.scheduleMode !== "fixed" &&
+          linkedPlanSlotIndex !== expectedCycleIndex);
+      if (requiresAcknowledgement && !payload.scheduleOverride?.acknowledged) {
+        return res.status(409).json({
+          error: "Confirma que deseas entrenar un dia distinto al planificado",
+        });
+      }
+      payload.scheduleOverride = requiresAcknowledgement
+        ? {
+            acknowledged: true,
+            scheduledDate: String(
+              payload.scheduleOverride?.scheduledDate || "",
+            ).slice(0, 10),
+            actualDate: payload.date,
+            selectedDayIndex: Number(linkedPlanSlot.dayIndex) || null,
+            scheduleMode: linkedPlan.scheduleMode,
+            acknowledgedAt:
+              payload.scheduleOverride?.acknowledgedAt ||
+              new Date().toISOString(),
+          }
+        : undefined;
+    } else {
+      payload.scheduleOverride = undefined;
+    }
     payload.progressScopeId = await resolveTrainingProgressScope(req, payload);
     payload.exercises = normalizeExerciseOrders(payload.exercises);
     payload.orderSignature =
@@ -431,16 +496,23 @@ router.post("/", async (req, res, next) => {
             });
         const schedule = plan?.weeklySchedule || [];
         const currentIndex = Number(plan?.cycleProgress?.currentIndex || 0);
-        const current = schedule[currentIndex];
+        const selectedIndex = payload.trainingPlanSlotId
+          ? schedule.findIndex(
+              (day) => day.slotId === payload.trainingPlanSlotId,
+            )
+          : currentIndex;
+        const selected = schedule[selectedIndex];
+        const acceptedOverride = Boolean(payload.scheduleOverride?.acknowledged);
         if (
           plan &&
-          current?.type === "training" &&
+          selected?.type === "training" &&
           (payload.trainingPlanSlotId
-            ? current.slotId === payload.trainingPlanSlotId
-            : String(current.routineId) === String(payload.routineId)) &&
+            ? selected.slotId === payload.trainingPlanSlotId
+            : String(selected.routineId) === String(payload.routineId)) &&
+          (selectedIndex === currentIndex || acceptedOverride) &&
           plan.cycleProgress?.lastTrainingId !== String(training._id)
         ) {
-          const nextIndex = (currentIndex + 1) % schedule.length;
+          const nextIndex = (selectedIndex + 1) % schedule.length;
           plan.cycleProgress = plan.cycleProgress || {};
           plan.cycleProgress.currentIndex = nextIndex;
           plan.cycleProgress.completedCycles =

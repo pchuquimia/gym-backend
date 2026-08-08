@@ -7,6 +7,10 @@ import {
 } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
+import {
+  getExerciseLanguage,
+  localizeExerciseReferences,
+} from "../utils/exerciseLocalization.js";
 
 const router = Router();
 
@@ -48,7 +52,9 @@ router.get("/", async (req, res, next) => {
     });
     const routines = await Routine.find(filter).lean();
     res.set("Cache-Control", "private, no-store");
-    res.json(routines);
+    res.json(
+      await localizeExerciseReferences(routines, getExerciseLanguage(req)),
+    );
   } catch (err) {
     next(err);
   }
@@ -107,7 +113,11 @@ router.post("/", async (req, res, next) => {
       planSlot.sourceRoutineId = routine.sourceRoutineId || null;
       await plan.save();
     }
-    res.status(201).json(routine);
+    res
+      .status(201)
+      .json(
+        await localizeExerciseReferences(routine, getExerciseLanguage(req)),
+      );
   } catch (err) {
     next(err);
   }
@@ -151,7 +161,9 @@ router.put("/:id", async (req, res, next) => {
     const routine = await Routine.findByIdAndUpdate(req.params.id, payload, {
       new: true,
     });
-    res.json(routine);
+    res.json(
+      await localizeExerciseReferences(routine, getExerciseLanguage(req)),
+    );
   } catch (err) {
     next(err);
   }

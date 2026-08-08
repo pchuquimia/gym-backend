@@ -31,6 +31,10 @@ const ExerciseSchema = new mongoose.Schema(
   {
     _id: { type: String }, // usamos slug/id string para alinear con frontend
     name: { type: String, required: true, trim: true },
+    localizedNames: {
+      es: { type: String, default: "", trim: true },
+      en: { type: String, default: "", trim: true },
+    },
     slug: { type: String, default: "" },
     aliases: { type: [String], default: [] },
     category: { type: String, default: "" },
@@ -101,6 +105,8 @@ const ExerciseSchema = new mongoose.Schema(
 );
 
 ExerciseSchema.index({ name: 1 });
+ExerciseSchema.index({ "localizedNames.es": 1 });
+ExerciseSchema.index({ "localizedNames.en": 1 });
 ExerciseSchema.index({ muscle: 1 });
 ExerciseSchema.index({ slug: 1 });
 ExerciseSchema.index({ type: 1, ownerId: 1, isActive: 1 });

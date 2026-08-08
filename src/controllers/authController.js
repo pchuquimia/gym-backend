@@ -518,6 +518,7 @@ const updateProfile = asyncHandler(async (req, res) => {
     "goal",
     "calories",
     "units",
+    "language",
     "privacy",
     "notifications",
     "avatarPhotoId",

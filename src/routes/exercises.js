@@ -9,6 +9,11 @@ import {
   removeLocalFile,
   uploadExerciseMedia,
 } from "../utils/exerciseMediaUpload.js";
+import {
+  getExerciseLanguage,
+  localizeExerciseDocument,
+  translateExerciseNameToSpanish,
+} from "../utils/exerciseLocalization.js";
 
 const router = Router();
 
@@ -189,6 +194,29 @@ const normalizePayload = (body, req, current = null) => {
 
   payload.type = type;
   payload.ownerId = type === "system" ? null : current?.ownerId || req.user.id;
+
+  const language = getExerciseLanguage(req);
+  const incomingName = String(payload.name || current?.name || "").trim();
+  const currentNames = current?.localizedNames || {};
+  const incomingNames =
+    payload.localizedNames && typeof payload.localizedNames === "object"
+      ? payload.localizedNames
+      : {};
+  const englishName = String(
+    incomingNames.en ||
+      (language === "en" ? incomingName : "") ||
+      currentNames.en ||
+      current?.name ||
+      incomingName,
+  ).trim();
+  const spanishName = String(
+    incomingNames.es ||
+      (language === "es" ? incomingName : "") ||
+      currentNames.es ||
+      translateExerciseNameToSpanish(englishName),
+  ).trim();
+  payload.localizedNames = { es: spanishName, en: englishName };
+  payload.name = englishName || spanishName;
 
   payload.aliases = arrayOrCurrent("aliases", current?.aliases);
   payload.categories =
@@ -403,7 +431,7 @@ router.post(
       exercise.updatedBy = req.user.id;
       await exercise.save();
 
-      res.json(exercise);
+      res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
     } catch (err) {
       next(err);
     }
@@ -420,7 +448,7 @@ router.get("/facets", async (req, res, next) => {
     };
     const exercises = await Exercise.find(
       filter,
-      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals",
+      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image",
     )
       .maxTimeMS(10000)
       .lean();
@@ -456,6 +484,22 @@ router.get("/facets", async (req, res, next) => {
     const isCardio = (exercise) =>
       flat(exercise.categories).includes("Cardio") ||
       exercise.category === "Cardio";
+    const hasPreview = (exercise) =>
+      Boolean(
+        exercise.media?.image?.url ||
+          exercise.media?.image?.publicId ||
+          exercise.image ||
+          exercise.imagePublicId,
+      );
+    const previewFrom = (items) => {
+      const exercise = items.find(hasPreview);
+      if (!exercise) return null;
+      return {
+        image: exercise.image || "",
+        imagePublicId: exercise.imagePublicId || "",
+        media: { image: exercise.media?.image || null },
+      };
+    };
     const entryCounts = {
       upper: exercises.filter((item) => item.bodyRegion === "Tren superior")
         .length,
@@ -466,6 +510,47 @@ router.get("/facets", async (req, res, next) => {
         (item) => item.bodyRegion === "Cuerpo completo" && !isCardio(item),
       ).length,
       cardio: exercises.filter(isCardio).length,
+      mobility: exercises.filter(
+        (item) =>
+          flat(item.categories).includes("Movilidad") ||
+          item.category === "Movilidad",
+      ).length,
+      activation: exercises.filter(
+        (item) =>
+          flat(item.categories).includes("Activación") ||
+          item.category === "Activación",
+      ).length,
+    };
+    const entryPreviews = {
+      upper: previewFrom(
+        exercises.filter((item) => item.bodyRegion === "Tren superior"),
+      ),
+      lower: previewFrom(
+        exercises.filter((item) => item.bodyRegion === "Tren inferior"),
+      ),
+      core: previewFrom(
+        exercises.filter((item) => item.bodyRegion === "Zona media"),
+      ),
+      fullBody: previewFrom(
+        exercises.filter(
+          (item) => item.bodyRegion === "Cuerpo completo" && !isCardio(item),
+        ),
+      ),
+      cardio: previewFrom(exercises.filter(isCardio)),
+      mobility: previewFrom(
+        exercises.filter(
+          (item) =>
+            flat(item.categories).includes("Movilidad") ||
+            item.category === "Movilidad",
+        ),
+      ),
+      activation: previewFrom(
+        exercises.filter(
+          (item) =>
+            flat(item.categories).includes("Activación") ||
+            item.category === "Activación",
+        ),
+      ),
     };
 
     res.set("Cache-Control", "private, no-store");
@@ -493,6 +578,7 @@ router.get("/facets", async (req, res, next) => {
       positions: counts(exercises.map((item) => item.position)),
       goals: counts(exercises.flatMap((item) => flat(item.goals))),
       entryCounts,
+      entryPreviews,
     });
   } catch (error) {
     next(error);
@@ -507,7 +593,7 @@ router.get("/:id", async (req, res, next) => {
     if (!isSystem && !(await ensureCanAccessOwner(req, exercise.ownerId))) {
       return res.status(403).json({ error: "No autorizado" });
     }
-    res.json(exercise);
+    res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
   } catch (err) {
     next(err);
   }
@@ -522,7 +608,7 @@ router.get("/", async (req, res, next) => {
     );
     const fields = req.query.fields
       ? req.query.fields.split(",").join(" ")
-      : "name slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
+      : "name localizedNames slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
     const scope = await getVisibleExerciseScope(req);
@@ -582,7 +668,11 @@ router.get("/", async (req, res, next) => {
       });
     }
     if (req.query.equipment) {
-      filter.equipment = req.query.equipment;
+      if (req.query.equipment === "Sin equipamiento") {
+        filter.equipment = { $in: ["Sin equipamiento", "Peso corporal"] };
+      } else {
+        filter.equipment = req.query.equipment;
+      }
     }
     if (req.query.exerciseType) {
       filter.exerciseType = req.query.exerciseType;
@@ -615,6 +705,8 @@ router.get("/", async (req, res, next) => {
       const terms = expandSearchTerms(req.query.q).map(escapeRegex);
       const searchableFields = [
         "name",
+        "localizedNames.es",
+        "localizedNames.en",
         "aliases",
         "categories",
         "bodyRegion",
@@ -647,6 +739,9 @@ router.get("/", async (req, res, next) => {
       .maxTimeMS(10000)
       .lean();
 
+    const localizedExercises = exercises.map((exercise) =>
+      localizeExerciseDocument(exercise, getExerciseLanguage(req)),
+    );
     const includeMeta = req.query.meta === "true";
     res.set("Cache-Control", "private, no-store");
     if (includeMeta) {
@@ -654,12 +749,12 @@ router.get("/", async (req, res, next) => {
       res.json({
         page,
         limit,
-        count: exercises.length,
+        count: localizedExercises.length,
         total,
-        items: exercises,
+        items: localizedExercises,
       });
     } else {
-      res.json(exercises);
+      res.json(localizedExercises);
     }
   } catch (err) {
     next(err);
@@ -686,7 +781,9 @@ router.post("/", blockManagedAthleteWrites, async (req, res, next) => {
       payload._id = `${payload.slug}-${String(payload.ownerId).slice(-6)}-${Date.now()}`;
     }
     const exercise = await Exercise.create(payload);
-    res.status(201).json(exercise);
+    res
+      .status(201)
+      .json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
   } catch (err) {
     next(err);
   }
@@ -707,7 +804,7 @@ router.put("/:id", blockManagedAthleteWrites, async (req, res, next) => {
       new: true,
       runValidators: true,
     });
-    res.json(exercise);
+    res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
   } catch (err) {
     next(err);
   }

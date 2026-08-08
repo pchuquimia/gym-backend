@@ -13,8 +13,7 @@ export const validate = (req, _res, next) => {
 };
 
 export const passwordRules = {
-  minLength: 8,
-  pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/,
-  message:
-    "La contraseña debe tener mínimo 8 caracteres, mayúscula, minúscula, número y símbolo",
+  minLength: 6,
+  pattern: /^.{6,72}$/s,
+  message: "La contraseña debe tener entre 6 y 72 caracteres",
 };

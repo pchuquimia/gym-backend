@@ -50,6 +50,9 @@ export const protect = async (req, _res, next) => {
         user.role === "Cliente" && user.assignedTrainerId
           ? "coach_managed"
           : user.trainingMode || "independent",
+      profile: {
+        language: user.profile?.language === "en" ? "en" : "es",
+      },
       sessionId: decoded.sid || null,
     };
     next();
