@@ -27,6 +27,15 @@ const canManagePlanning = async (req, ownerId) => {
   return ensureCanAccessOwner(req, ownerId);
 };
 
+const canManageRoutine = async (req, routine) => {
+  if (!(await canManagePlanning(req, routine.ownerId))) return false;
+  if (String(routine.ownerId) === String(req.user.id)) return true;
+  return (
+    req.user.role === "Entrenador" &&
+    String(routine.assignedByCoachId || "") === String(req.user.id)
+  );
+};
+
 const resolveProgressScope = async (req, payload, ownerId) => {
   if (payload.progressScopeId) return payload.progressScopeId;
   if (payload.progressMode === "inherit" && payload.sourceRoutineId) {
@@ -50,6 +59,17 @@ router.get("/", async (req, res, next) => {
     const filter = await getAccessibleOwnerFilter(req, {
       isArchived: { $ne: true },
     });
+    const requestedOwnerId = String(req.query.athleteId || req.user.id);
+    const includeSystemTemplates =
+      ["Admin", "Entrenador"].includes(req.user.role) &&
+      requestedOwnerId === req.user.id;
+    if (includeSystemTemplates) {
+      delete filter.ownerId;
+      filter.$or = [
+        { ownerId: req.user.id },
+        { visibility: "system", kind: "template" },
+      ];
+    }
     if (["template", "personal", "assigned"].includes(req.query.kind)) {
       filter.kind = req.query.kind;
     }
@@ -80,6 +100,7 @@ router.post("/", async (req, res, next) => {
     payload.assignedByCoachId = null;
     payload.assignedAt = null;
     payload.assignmentType = "personal";
+    payload.visibility = "private";
     payload.kind =
       req.user.role === "Entrenador" && String(ownerId) === req.user.id
         ? "template"
@@ -136,7 +157,7 @@ router.put("/:id", async (req, res, next) => {
   try {
     const current = await Routine.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await canManagePlanning(req, current.ownerId))) {
+    if (!(await canManageRoutine(req, current))) {
       return res.status(403).json({
         error: "Tu coach administra la planificación de tus rutinas",
       });
@@ -157,6 +178,7 @@ router.put("/:id", async (req, res, next) => {
     payload.trainingPlanSlotId = current.trainingPlanSlotId || null;
     payload.assignmentType = current.assignmentType || "personal";
     payload.kind = current.kind || "personal";
+    payload.visibility = current.visibility || "private";
     payload.version =
       payload.kind === "template"
         ? Number(current.version || 1) + 1
@@ -188,7 +210,12 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Routine.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await canManagePlanning(req, current.ownerId))) {
+    if (current.visibility === "system") {
+      return res.status(403).json({
+        error: "Las rutinas del sistema no se pueden eliminar",
+      });
+    }
+    if (!(await canManageRoutine(req, current))) {
       return res.status(403).json({
         error: "Tu coach administra la planificación de tus rutinas",
       });

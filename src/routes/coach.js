@@ -68,6 +68,36 @@ const normalizeSchedule = (value, scheduleMode = "fixed") => {
   return days.sort((a, b) => a.dayIndex - b.dayIndex);
 };
 
+const normalizePlanName = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es");
+
+const sameDraftStructure = (plan, candidate) => {
+  const planDays = plan.weeklySchedule || [];
+  const candidateDays = candidate.weeklySchedule || [];
+  return (
+    normalizePlanName(plan.name) === normalizePlanName(candidate.name) &&
+    String(plan.scheduleMode || "fixed") ===
+      String(candidate.scheduleMode || "fixed") &&
+    Number(plan.durationWeeks) === Number(candidate.durationWeeks) &&
+    new Date(plan.startDate).toISOString().slice(0, 10) ===
+      new Date(candidate.startDate).toISOString().slice(0, 10) &&
+    planDays.length === candidateDays.length &&
+    planDays.every((day, index) => {
+      const other = candidateDays[index];
+      return (
+        Number(day.dayIndex) === Number(other?.dayIndex) &&
+        day.type === other?.type &&
+        String(day.focus || "").trim() === String(other?.focus || "").trim() &&
+        String(day.sourceRoutineId || "") ===
+          String(other?.sourceRoutineId || "")
+      );
+    })
+  );
+};
+
 router.get("/athletes", async (req, res, next) => {
   try {
     const athletes = await User.find(
@@ -122,6 +152,7 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
     const plans = await TrainingPlan.find({
       athleteId: ownerId,
       coachId: req.user.id,
+      status: { $ne: "cancelled" },
     })
       .sort({ updatedAt: -1 })
       .limit(12)
@@ -224,6 +255,27 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     }
     const nextStatus = "draft";
 
+    const existingDrafts = await TrainingPlan.find({
+      athleteId: athlete._id.toString(),
+      coachId: req.user.id,
+      status: "draft",
+    }).lean();
+    const duplicateDraft = existingDrafts.find((draft) =>
+      sameDraftStructure(draft, {
+        name: planName,
+        scheduleMode,
+        durationWeeks,
+        startDate,
+        weeklySchedule: schedule,
+      }),
+    );
+    if (duplicateDraft) {
+      return res.status(409).json({
+        error: "Ya existe un borrador identico para este atleta",
+        planId: duplicateDraft._id,
+      });
+    }
+
     const planTemplate = req.body.planTemplateId
       ? await PlanTemplate.findOne({
           _id: String(req.body.planTemplateId),
@@ -241,8 +293,11 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     const sources = sourceIds.length
       ? await Routine.find({
           _id: { $in: sourceIds },
-          ownerId: req.user.id,
-          $or: [{ kind: "template" }, { kind: { $exists: false } }],
+          $or: [
+            { ownerId: req.user.id, kind: "template" },
+            { ownerId: req.user.id, kind: { $exists: false } },
+            { visibility: "system", kind: "template" },
+          ],
           isArchived: { $ne: true },
         }).lean()
       : [];
@@ -280,7 +335,12 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         _id: routineId,
         name: source.name,
         description: source.description || "",
-        branch: source.branch,
+        templateGroup: source.templateGroup || "",
+        goal: source.goal || "",
+        level: source.level || "",
+        tags: source.tags || [],
+        exerciseOrderMode: source.exerciseOrderMode || "free",
+        branch: req.body.branch || "general",
         exercises: source.exercises || [],
         ownerId: athlete._id.toString(),
         progressMode: "fresh",
@@ -504,8 +564,11 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     ];
     const sources = await Routine.find({
       _id: { $in: sourceIds },
-      ownerId: req.user.id,
-      $or: [{ kind: "template" }, { kind: { $exists: false } }],
+      $or: [
+        { ownerId: req.user.id, kind: "template" },
+        { ownerId: req.user.id, kind: { $exists: false } },
+        { visibility: "system", kind: "template" },
+      ],
       isArchived: { $ne: true },
     }).lean();
     if (sources.length !== sourceIds.length) {
@@ -546,7 +609,12 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
       }
       assigned.name = source.name;
       assigned.description = source.description || "";
-      assigned.branch = source.branch;
+      assigned.templateGroup = source.templateGroup || "";
+      assigned.goal = source.goal || "";
+      assigned.level = source.level || "";
+      assigned.tags = source.tags || [];
+      assigned.exerciseOrderMode = source.exerciseOrderMode || "free";
+      assigned.branch = req.body.branch || assigned.branch || "general";
       assigned.exercises = source.exercises || [];
       assigned.sourceRoutineVersion = Number(source.version || 1);
       assigned.isArchived = nextStatus !== "active";
@@ -621,6 +689,61 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
   }
 });
 
+router.delete("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
+  try {
+    const athlete = await getAthlete(req.user.id, req.params.athleteId);
+    if (!athlete) {
+      return res.status(404).json({ error: "Atleta no encontrado" });
+    }
+    const ownerId = athlete._id.toString();
+    const plan = await TrainingPlan.findOne({
+      _id: req.params.planId,
+      athleteId: ownerId,
+      coachId: req.user.id,
+    });
+    if (!plan) return res.status(404).json({ error: "Plan no encontrado" });
+    if (plan.status === "active") {
+      return res.status(409).json({
+        error: "Pausa el plan activo antes de archivarlo",
+      });
+    }
+    if (["completed", "cancelled"].includes(plan.status)) {
+      return res.status(409).json({
+        error: "El historial de un plan finalizado no se puede eliminar",
+      });
+    }
+
+    const hasTrainings = await Training.exists({
+      ownerId,
+      trainingPlanId: String(plan._id),
+    });
+    if (plan.status === "draft" && !hasTrainings) {
+      const routines = await Routine.deleteMany({
+        ownerId,
+        trainingPlanId: String(plan._id),
+      });
+      await plan.deleteOne();
+      return res.json({
+        ok: true,
+        disposition: "deleted",
+        deletedRoutines: routines.deletedCount,
+      });
+    }
+
+    plan.status = "cancelled";
+    await Promise.all([
+      plan.save(),
+      Routine.updateMany(
+        { ownerId, trainingPlanId: String(plan._id) },
+        { $set: { isArchived: true, isAvailableForTraining: false } },
+      ),
+    ]);
+    res.json({ ok: true, disposition: "archived" });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.post("/athletes/:athleteId/routines", async (req, res, next) => {
   try {
     const athlete = await getAthlete(req.user.id, req.params.athleteId);
@@ -633,8 +756,11 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
     }
     const source = await Routine.findOne({
       _id: sourceRoutineId,
-      ownerId: req.user.id,
-      $or: [{ kind: "template" }, { kind: { $exists: false } }],
+      $or: [
+        { ownerId: req.user.id, kind: "template" },
+        { ownerId: req.user.id, kind: { $exists: false } },
+        { visibility: "system", kind: "template" },
+      ],
     }).lean();
     if (!source) {
       return res.status(404).json({ error: "Plantilla no encontrada" });
@@ -654,7 +780,12 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
       _id: `routine_${crypto.randomUUID()}`,
       name: String(req.body.name || source.name).trim(),
       description: source.description || "",
-      branch: req.body.branch || source.branch,
+      templateGroup: source.templateGroup || "",
+      goal: source.goal || "",
+      level: source.level || "",
+      tags: source.tags || [],
+      exerciseOrderMode: source.exerciseOrderMode || "free",
+      branch: req.body.branch || "general",
       exercises: source.exercises || [],
       ownerId: athlete._id.toString(),
       progressMode: "fresh",
@@ -673,5 +804,54 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
     next(err);
   }
 });
+
+router.post(
+  "/athletes/:athleteId/routines/:routineId/duplicate",
+  async (req, res, next) => {
+    try {
+      const athlete = await getAthlete(req.user.id, req.params.athleteId);
+      if (!athlete) {
+        return res.status(404).json({ error: "Atleta no encontrado" });
+      }
+      const source = await Routine.findOne({
+        _id: req.params.routineId,
+        ownerId: athlete._id.toString(),
+        assignedByCoachId: req.user.id,
+        isArchived: { $ne: true },
+      }).lean();
+      if (!source) {
+        return res.status(404).json({ error: "Rutina no encontrada" });
+      }
+      const routine = await Routine.create({
+        _id: `routine_${crypto.randomUUID()}`,
+        name: `${source.name} (Copia)`,
+        description: source.description || "",
+        templateGroup: source.templateGroup || "",
+        goal: source.goal || "",
+        level: source.level || "",
+        tags: source.tags || [],
+        exerciseOrderMode: source.exerciseOrderMode || "free",
+        branch: req.body.branch || "general",
+        exercises: source.exercises || [],
+        ownerId: athlete._id.toString(),
+        progressMode: "fresh",
+        progressScopeId: `scope_${crypto.randomUUID()}`,
+        sourceRoutineId: source.sourceRoutineId || source._id,
+        sourceRoutineVersion: Number(source.sourceRoutineVersion || 1),
+        kind: "assigned",
+        version: 1,
+        assignedByCoachId: req.user.id,
+        assignedAt: new Date(),
+        assignmentType: "extra",
+        trainingPlanId: null,
+        isArchived: false,
+        isAvailableForTraining: true,
+      });
+      res.status(201).json(routine);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 export default router;

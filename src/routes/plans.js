@@ -128,7 +128,10 @@ router.get("/", async (req, res, next) => {
     }
     await syncTrainingPlanLifecycle(athleteId);
     const filter = { athleteId };
-    if (req.user.role === "Entrenador") filter.coachId = req.user.id;
+    if (req.user.role === "Entrenador") {
+      filter.coachId =
+        athleteId === String(req.user.id) ? null : String(req.user.id);
+    }
     const plans = await TrainingPlan.find(filter)
       .sort({ status: 1, updatedAt: -1 })
       .lean();
@@ -141,6 +144,12 @@ router.get("/", async (req, res, next) => {
 
 router.post("/", async (req, res, next) => {
   try {
+    if (req.user.role === "Entrenador") {
+      return res.status(403).json({
+        error:
+          "Los coaches crean plantillas y las asignan desde Mis atletas",
+      });
+    }
     if (
       req.user.role === "Cliente" &&
       req.user.trainingMode === "coach_managed"

@@ -65,8 +65,10 @@ const hasValidRoutineSources = async (schedule, ownerId) => {
   if (!ids.length) return true;
   const count = await Routine.countDocuments({
     _id: { $in: ids },
-    ownerId,
-    kind: { $in: ["template", null] },
+    $or: [
+      { ownerId, kind: { $in: ["template", null] } },
+      { visibility: "system", kind: "template" },
+    ],
     isArchived: { $ne: true },
   });
   return count === ids.length;

@@ -27,7 +27,14 @@ router.post("/", async (req, res, next) => {
     if (!(await ensureCanAccessOwner(req, ownerId))) {
       return res.status(403).json({ error: "No autorizado" });
     }
-    const session = await Session.create({ ...req.body, ownerId });
+    const isSupervised = String(ownerId) !== String(req.user.id);
+    const session = await Session.create({
+      ...req.body,
+      ownerId,
+      sessionType: isSupervised ? "supervised" : "personal",
+      startedBy: req.user.id,
+      supervisedBy: isSupervised ? req.user.id : null,
+    });
     res.status(201).json(session);
   } catch (err) {
     next(err);
@@ -38,7 +45,13 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Session.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+    const ownsSession = String(current.ownerId) === String(req.user.id);
+    const supervisedByCoach =
+      req.user.role === "Entrenador" &&
+      current.sessionType === "supervised" &&
+      String(current.supervisedBy || "") === String(req.user.id) &&
+      (await ensureCanAccessOwner(req, current.ownerId));
+    if (!ownsSession && !supervisedByCoach) {
       return res.status(403).json({ error: "No autorizado" });
     }
     await Session.findByIdAndDelete(req.params.id);

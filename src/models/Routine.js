@@ -39,10 +39,23 @@ const RoutineSchema = new mongoose.Schema(
     _id: { type: String }, // slug/id string
     name: { type: String, required: true },
     description: { type: String, default: "" },
+    templateGroup: { type: String, default: "", index: true },
+    goal: { type: String, default: "" },
+    level: {
+      type: String,
+      enum: ["", "beginner", "intermediate", "advanced"],
+      default: "",
+    },
+    tags: { type: [String], default: [] },
     branch: {
       type: String,
-      enum: ["sopocachi", "miraflores"],
+      enum: ["general", "sopocachi", "miraflores"],
       default: "sopocachi",
+    },
+    exerciseOrderMode: {
+      type: String,
+      enum: ["free", "muscle_blocks"],
+      default: "free",
     },
     exercises: [RoutineExerciseSchema],
     ownerId: { type: String, default: null },
@@ -58,6 +71,12 @@ const RoutineSchema = new mongoose.Schema(
       type: String,
       enum: ["template", "personal", "assigned"],
       default: "personal",
+      index: true,
+    },
+    visibility: {
+      type: String,
+      enum: ["system", "private"],
+      default: "private",
       index: true,
     },
     version: { type: Number, min: 1, default: 1 },
@@ -80,5 +99,7 @@ RoutineSchema.index({ progressScopeId: 1 });
 RoutineSchema.index({ ownerId: 1, progressScopeId: 1 });
 RoutineSchema.index({ ownerId: 1, isArchived: 1, updatedAt: -1 });
 RoutineSchema.index({ ownerId: 1, kind: 1, isArchived: 1 });
+RoutineSchema.index({ visibility: 1, kind: 1, isArchived: 1 });
+RoutineSchema.index({ visibility: 1, templateGroup: 1, level: 1 });
 
 export default mongoose.model("Routine", RoutineSchema);

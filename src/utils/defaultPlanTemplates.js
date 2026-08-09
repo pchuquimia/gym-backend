@@ -1,18 +1,24 @@
 import PlanTemplate from "../models/PlanTemplate.js";
+import { ensureDefaultRoutineTemplates } from "./defaultRoutineTemplates.js";
 
-const fixedSchedule = (focuses) =>
-  focuses.map((focus, index) => ({
-    slotId: `slot_${index + 1}`,
-    dayIndex: index + 1,
-    type:
-      focus === "Descanso"
-        ? "rest"
-        : focus === "Recuperacion"
-          ? "recovery"
-          : "training",
-    focus: ["Descanso", "Recuperacion"].includes(focus) ? "" : focus,
-    sourceRoutineId: null,
-  }));
+const fixedSchedule = (items) =>
+  items.map((item, index) => {
+    const [focus, sourceRoutineId = null] = Array.isArray(item)
+      ? item
+      : [item, null];
+    return {
+      slotId: `slot_${index + 1}`,
+      dayIndex: index + 1,
+      type:
+        focus === "Descanso"
+          ? "rest"
+          : focus === "Recuperacion"
+            ? "recovery"
+            : "training",
+      focus: ["Descanso", "Recuperacion"].includes(focus) ? "" : focus,
+      sourceRoutineId,
+    };
+  });
 
 export const DEFAULT_PLAN_TEMPLATES = [
   {
@@ -24,11 +30,11 @@ export const DEFAULT_PLAN_TEMPLATES = [
     durationWeeks: 8,
     tags: ["3 dias", "principiante", "full body"],
     weeklySchedule: fixedSchedule([
-      "Full body A",
+      ["Full body A", "system_routine_full_body_a"],
       "Descanso",
-      "Full body B",
+      ["Full body B", "system_routine_full_body_b"],
       "Descanso",
-      "Full body C",
+      ["Full body C", "system_routine_full_body_c"],
       "Recuperacion",
       "Descanso",
     ]),
@@ -42,11 +48,11 @@ export const DEFAULT_PLAN_TEMPLATES = [
     durationWeeks: 8,
     tags: ["4 dias", "frecuencia 2"],
     weeklySchedule: fixedSchedule([
-      "Tren superior A",
-      "Tren inferior A",
+      ["Tren superior A", "system_routine_upper_a"],
+      ["Tren inferior A", "system_routine_lower_a"],
       "Descanso",
-      "Tren superior B",
-      "Tren inferior B",
+      ["Tren superior B", "system_routine_upper_b"],
+      ["Tren inferior B", "system_routine_lower_b"],
       "Recuperacion",
       "Descanso",
     ]),
@@ -60,11 +66,11 @@ export const DEFAULT_PLAN_TEMPLATES = [
     durationWeeks: 8,
     tags: ["3 dias", "ppl"],
     weeklySchedule: fixedSchedule([
-      "Empuje",
+      ["Empuje", "system_routine_push_a"],
       "Descanso",
-      "Jale",
+      ["Jale", "system_routine_pull_a"],
       "Descanso",
-      "Piernas",
+      ["Piernas", "system_routine_legs_a"],
       "Recuperacion",
       "Descanso",
     ]),
@@ -78,12 +84,12 @@ export const DEFAULT_PLAN_TEMPLATES = [
     durationWeeks: 8,
     tags: ["6 dias", "ppl", "frecuencia 2"],
     weeklySchedule: fixedSchedule([
-      "Empuje A",
-      "Jale A",
-      "Piernas A",
-      "Empuje B",
-      "Jale B",
-      "Piernas B",
+      ["Empuje A", "system_routine_push_a"],
+      ["Jale A", "system_routine_pull_a"],
+      ["Piernas A", "system_routine_legs_a"],
+      ["Empuje B", "system_routine_push_b"],
+      ["Jale B", "system_routine_pull_b"],
+      ["Piernas B", "system_routine_legs_b"],
       "Descanso",
     ]),
   },
@@ -96,11 +102,11 @@ export const DEFAULT_PLAN_TEMPLATES = [
     durationWeeks: 10,
     tags: ["4 dias", "fuerza"],
     weeklySchedule: fixedSchedule([
-      "Tren inferior fuerza",
-      "Tren superior fuerza",
+      ["Tren inferior fuerza", "system_routine_strength_lower"],
+      ["Tren superior fuerza", "system_routine_strength_upper"],
       "Descanso",
-      "Tren inferior volumen",
-      "Tren superior volumen",
+      ["Tren inferior volumen", "system_routine_volume_lower"],
+      ["Tren superior volumen", "system_routine_volume_upper"],
       "Recuperacion",
       "Descanso",
     ]),
@@ -108,38 +114,52 @@ export const DEFAULT_PLAN_TEMPLATES = [
   {
     _id: "system_return_3",
     name: "Retorno al entrenamiento",
-    description: "Tres sesiones moderadas para recuperar consistencia.",
+    description: "Tres sesiones moderadas y una sesion de movilidad para recuperar consistencia.",
     level: "beginner",
     goal: "Retorno al entrenamiento",
     durationWeeks: 6,
-    tags: ["3 dias", "retorno", "movilidad"],
+    tags: ["4 dias", "retorno", "movilidad"],
     weeklySchedule: fixedSchedule([
-      "Full body tecnico",
-      "Movilidad",
+      ["Full body tecnico", "system_routine_return_technical"],
+      ["Movilidad", "system_routine_mobility"],
       "Descanso",
-      "Full body controlado",
+      ["Full body controlado", "system_routine_return_controlled"],
       "Descanso",
-      "Acondicionamiento",
+      ["Acondicionamiento", "system_routine_conditioning"],
       "Descanso",
     ]),
   },
 ];
 
-export const ensureDefaultPlanTemplates = async () => {
+export const ensureDefaultPlanTemplates = async ({ force = false } = {}) => {
+  await ensureDefaultRoutineTemplates();
   await PlanTemplate.bulkWrite(
-    DEFAULT_PLAN_TEMPLATES.map((template) => ({
+    DEFAULT_PLAN_TEMPLATES.map(({ _id, weeklySchedule, ...template }) => ({
       updateOne: {
-        filter: { _id: template._id },
-        update: {
-          $setOnInsert: {
-            ...template,
-            ownerId: null,
-            visibility: "system",
-            scheduleMode: "fixed",
-            version: 1,
-            isArchived: false,
-          },
-        },
+        filter: { _id },
+        update: force
+          ? {
+              $set: {
+                ...template,
+                weeklySchedule,
+                ownerId: null,
+                visibility: "system",
+                scheduleMode: "fixed",
+                version: 1,
+                isArchived: false,
+              },
+            }
+          : {
+              $setOnInsert: {
+                ...template,
+                weeklySchedule,
+                ownerId: null,
+                visibility: "system",
+                scheduleMode: "fixed",
+                version: 1,
+                isArchived: false,
+              },
+            },
         upsert: true,
       },
     })),

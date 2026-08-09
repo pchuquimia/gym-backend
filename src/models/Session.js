@@ -24,6 +24,13 @@ const SessionSchema = new mongoose.Schema(
     photoUrl: { type: String, default: "" },
     photoType: { type: String, enum: ["gym", "home", ""], default: "" },
     ownerId: { type: String, default: null },
+    sessionType: {
+      type: String,
+      enum: ["personal", "supervised"],
+      default: "personal",
+    },
+    startedBy: { type: String, default: null },
+    supervisedBy: { type: String, default: null, index: true },
   },
   { timestamps: true, versionKey: false },
 );

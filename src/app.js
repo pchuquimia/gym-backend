@@ -78,6 +78,7 @@ app.use(
     skip: () => isDev,
     standardHeaders: true,
     legacyHeaders: false,
+    message: { error: "Demasiadas solicitudes. Espera un momento." },
   }),
 );
 app.use(

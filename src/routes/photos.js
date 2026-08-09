@@ -120,7 +120,7 @@ const requestedOwnerId = async (req) => {
   const ownerId = String(
     req.body?.ownerId || req.query?.athleteId || req.user.id,
   );
-  if (!(await ensureCanAccessOwner(req, ownerId))) {
+  if (String(ownerId) !== String(req.user.id)) {
     const error = new Error("No autorizado para administrar estas fotos");
     error.statusCode = 403;
     throw error;
@@ -313,7 +313,7 @@ router.put("/:id", async (req, res, next) => {
   try {
     const current = await Photo.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+    if (String(current.ownerId) !== String(req.user.id)) {
       return res.status(403).json({ error: "No autorizado" });
     }
     const payload = {};
@@ -356,7 +356,7 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Photo.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+    if (String(current.ownerId) !== String(req.user.id)) {
       return res.status(403).json({ error: "No autorizado" });
     }
     if (current.publicId) {

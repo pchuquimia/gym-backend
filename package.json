@@ -13,6 +13,8 @@
     "exercises:normalize-catalog": "node scripts/normalizeExerciseCatalog.js",
     "plans:backfill": "node scripts/backfillTrainingPlans.js",
     "plans:migrate-structure": "node scripts/migratePlanningStructure.js --apply",
+    "plans:migrate-coach-templates": "node scripts/migrateCoachPlansToTemplates.js --apply",
+    "plans:seed-default-templates": "node scripts/seedDefaultTrainingTemplates.js",
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
     "import:exercises-excel": "node scripts/importExercisesFromExcel.js",
     "import:exercises-dataset": "node scripts/importExercisesDataset.js",

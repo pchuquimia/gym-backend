@@ -18,6 +18,17 @@ const router = Router();
 
 router.use(protect);
 
+const canMutateTraining = async (req, training) => {
+  if (!training?.ownerId) return false;
+  if (String(training.ownerId) === String(req.user.id)) return true;
+  if (!(await ensureCanAccessOwner(req, training.ownerId))) return false;
+  return (
+    req.user.role === "Entrenador" &&
+    training.sessionType === "supervised" &&
+    String(training.supervisedBy || "") === String(req.user.id)
+  );
+};
+
 const toLocalISODate = (value) => {
   if (!value) return null;
   if (typeof value === "string") return value.slice(0, 10);
@@ -550,9 +561,12 @@ router.patch(
           error: "La duración debe estar entre 0 y 86400 segundos",
         });
       }
-      const current = await Training.findById(req.params.id, "ownerId").lean();
+      const current = await Training.findById(
+        req.params.id,
+        "ownerId sessionType supervisedBy",
+      ).lean();
       if (!current) return res.status(404).json({ error: "Not found" });
-      if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+      if (!(await canMutateTraining(req, current))) {
         return res.status(403).json({ error: "No autorizado" });
       }
       const training = await Training.findByIdAndUpdate(
@@ -573,7 +587,7 @@ router.put("/:id", async (req, res, next) => {
     const payload = { ...req.body };
     const current = await Training.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+    if (!(await canMutateTraining(req, current))) {
       return res.status(403).json({ error: "No autorizado" });
     }
     delete payload._id;
@@ -625,7 +639,7 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Training.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (!(await ensureCanAccessOwner(req, current.ownerId))) {
+    if (!(await canMutateTraining(req, current))) {
       return res.status(403).json({ error: "No autorizado" });
     }
     await Training.findByIdAndDelete(req.params.id);
