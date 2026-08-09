@@ -30,6 +30,12 @@ const TrainingPlanSchema = new mongoose.Schema(
       },
     },
     athleteId: { type: String, required: true, index: true },
+    planTemplateId: { type: String, default: null, index: true },
+    planTemplateVersion: { type: Number, min: 1, default: null },
+    planTemplateSnapshot: {
+      name: { type: String, default: "" },
+      version: { type: Number, default: null },
+    },
     level: {
       type: String,
       enum: ["beginner", "intermediate", "advanced"],

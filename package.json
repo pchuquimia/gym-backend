@@ -12,6 +12,7 @@
     "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",
     "exercises:normalize-catalog": "node scripts/normalizeExerciseCatalog.js",
     "plans:backfill": "node scripts/backfillTrainingPlans.js",
+    "plans:migrate-structure": "node scripts/migratePlanningStructure.js --apply",
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
     "import:exercises-excel": "node scripts/importExercisesFromExcel.js",
     "import:exercises-dataset": "node scripts/importExercisesDataset.js",

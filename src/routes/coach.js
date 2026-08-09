@@ -3,6 +3,7 @@ import { Router } from "express";
 import { authorizeRoles, protect } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
+import PlanTemplate from "../models/PlanTemplate.js";
 import Training from "../models/Training.js";
 import User from "../models/User.js";
 import {
@@ -176,7 +177,6 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
 router.post("/athletes/:athleteId/plans", async (req, res, next) => {
   const createdRoutineIds = [];
   let createdPlanId = null;
-  let previousPlanIds = [];
   try {
     const athlete = await getAthlete(req.user.id, req.params.athleteId);
     if (!athlete) {
@@ -222,14 +222,18 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     if (!startDate || Number.isNaN(startDate.getTime())) {
       return res.status(400).json({ error: "Selecciona una fecha de inicio" });
     }
-    const hasCompleteRoutines = schedule
-      .filter((day) => day.type === "training")
-      .every((day) => day.sourceRoutineId);
-    const nextStatus = hasCompleteRoutines
-      ? isFuturePlan({ startDate })
-        ? "scheduled"
-        : "active"
-      : "draft";
+    const nextStatus = "draft";
+
+    const planTemplate = req.body.planTemplateId
+      ? await PlanTemplate.findOne({
+          _id: String(req.body.planTemplateId),
+          isArchived: { $ne: true },
+          $or: [{ visibility: "system" }, { ownerId: req.user.id }],
+        }).lean()
+      : null;
+    if (req.body.planTemplateId && !planTemplate) {
+      return res.status(400).json({ error: "Plantilla no disponible" });
+    }
 
     const sourceIds = [
       ...new Set(schedule.map((day) => day.sourceRoutineId).filter(Boolean)),
@@ -238,6 +242,7 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
       ? await Routine.find({
           _id: { $in: sourceIds },
           ownerId: req.user.id,
+          $or: [{ kind: "template" }, { kind: { $exists: false } }],
           isArchived: { $ne: true },
         }).lean()
       : [];
@@ -246,18 +251,6 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         .status(400)
         .json({ error: "Una de las plantillas no esta disponible" });
     }
-
-    const previousPlans =
-      nextStatus === "active"
-        ? await TrainingPlan.find(
-            {
-              athleteId: athlete._id.toString(),
-              status: "active",
-            },
-            "weeklySchedule.routineId",
-          ).lean()
-        : [];
-    previousPlanIds = previousPlans.map((plan) => String(plan._id));
 
     const plan = new TrainingPlan({
       name: planName,
@@ -270,6 +263,11 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
       startDate,
       scheduleMode,
       status: nextStatus,
+      planTemplateId: planTemplate?._id || null,
+      planTemplateVersion: planTemplate?.version || null,
+      planTemplateSnapshot: planTemplate
+        ? { name: planTemplate.name, version: planTemplate.version }
+        : undefined,
       notes: req.body.notes,
       weeklySchedule: [],
     });
@@ -288,12 +286,15 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         progressMode: "fresh",
         progressScopeId: `scope_${crypto.randomUUID()}`,
         sourceRoutineId: source._id,
+        sourceRoutineVersion: Number(source.version || 1),
+        kind: "assigned",
+        version: 1,
         assignedByCoachId: req.user.id,
         assignedAt: new Date(),
         trainingPlanId: String(plan._id),
         assignmentType: "plan",
-        isArchived: nextStatus !== "active",
-        isAvailableForTraining: nextStatus === "active",
+        isArchived: true,
+        isAvailableForTraining: false,
       });
       createdRoutineIds.push(routineId);
       assignedRoutineBySource.set(String(source._id), assignedRoutine._id);
@@ -309,35 +310,6 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     }));
     await plan.save();
 
-    if (nextStatus === "active") {
-      await TrainingPlan.updateMany(
-        {
-          _id: { $ne: plan._id },
-          athleteId: athlete._id.toString(),
-          status: "active",
-        },
-        { $set: { status: "paused" } },
-      );
-    }
-    if (nextStatus === "active" && previousPlanIds.length) {
-      await Routine.updateMany(
-        {
-          ownerId: athlete._id.toString(),
-          trainingPlanId: { $in: previousPlanIds },
-        },
-        { $set: { isArchived: true, isAvailableForTraining: false } },
-      );
-    } else if (nextStatus === "scheduled") {
-      await TrainingPlan.updateMany(
-        {
-          _id: { $ne: plan._id },
-          athleteId: athlete._id.toString(),
-          status: "scheduled",
-        },
-        { $set: { status: "paused" } },
-      );
-    }
-
     res.status(201).json(plan);
   } catch (err) {
     if (createdPlanId) {
@@ -347,19 +319,6 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
       await Routine.deleteMany({ _id: { $in: createdRoutineIds } }).catch(
         () => {},
       );
-    }
-    if (previousPlanIds.length) {
-      await TrainingPlan.updateMany(
-        { _id: { $in: previousPlanIds } },
-        { $set: { status: "active" } },
-      ).catch(() => {});
-      await Routine.updateMany(
-        {
-          ownerId: req.params.athleteId,
-          trainingPlanId: { $in: previousPlanIds },
-        },
-        { $set: { isArchived: false, isAvailableForTraining: true } },
-      ).catch(() => {});
     }
     next(err);
   }
@@ -538,22 +497,7 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     const hasCompleteRoutines = schedule
       .filter((day) => day.type === "training")
       .every((day) => day.sourceRoutineId);
-    let nextStatus = hasCompleteRoutines ? plan.status : "draft";
-    if (hasCompleteRoutines && plan.status === "draft") {
-      nextStatus = isFuturePlan({ startDate }) ? "scheduled" : "active";
-    } else if (
-      hasCompleteRoutines &&
-      plan.status === "active" &&
-      isFuturePlan({ startDate })
-    ) {
-      nextStatus = "scheduled";
-    } else if (
-      hasCompleteRoutines &&
-      plan.status === "scheduled" &&
-      !isFuturePlan({ startDate })
-    ) {
-      nextStatus = "active";
-    }
+    const nextStatus = hasCompleteRoutines ? plan.status : "draft";
 
     const sourceIds = [
       ...new Set(schedule.map((day) => day.sourceRoutineId).filter(Boolean)),
@@ -561,6 +505,7 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     const sources = await Routine.find({
       _id: { $in: sourceIds },
       ownerId: req.user.id,
+      $or: [{ kind: "template" }, { kind: { $exists: false } }],
       isArchived: { $ne: true },
     }).lean();
     if (sources.length !== sourceIds.length) {
@@ -590,6 +535,9 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
           progressMode: "fresh",
           progressScopeId: `scope_${crypto.randomUUID()}`,
           sourceRoutineId: source._id,
+          sourceRoutineVersion: Number(source.version || 1),
+          kind: "assigned",
+          version: 1,
           assignedByCoachId: req.user.id,
           assignedAt: new Date(),
           trainingPlanId: String(plan._id),
@@ -600,6 +548,7 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
       assigned.description = source.description || "";
       assigned.branch = source.branch;
       assigned.exercises = source.exercises || [];
+      assigned.sourceRoutineVersion = Number(source.version || 1);
       assigned.isArchived = nextStatus !== "active";
       assigned.isAvailableForTraining = nextStatus === "active";
       await assigned.save();
@@ -685,6 +634,7 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
     const source = await Routine.findOne({
       _id: sourceRoutineId,
       ownerId: req.user.id,
+      $or: [{ kind: "template" }, { kind: { $exists: false } }],
     }).lean();
     if (!source) {
       return res.status(404).json({ error: "Plantilla no encontrada" });
@@ -710,6 +660,9 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
       progressMode: "fresh",
       progressScopeId: `scope_${crypto.randomUUID()}`,
       sourceRoutineId: source._id,
+      sourceRoutineVersion: Number(source.version || 1),
+      kind: "assigned",
+      version: 1,
       assignedByCoachId: req.user.id,
       assignedAt: new Date(),
       assignmentType: "extra",

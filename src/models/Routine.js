@@ -53,6 +53,14 @@ const RoutineSchema = new mongoose.Schema(
       default: "fresh",
     },
     sourceRoutineId: { type: String, default: null },
+    sourceRoutineVersion: { type: Number, min: 1, default: null },
+    kind: {
+      type: String,
+      enum: ["template", "personal", "assigned"],
+      default: "personal",
+      index: true,
+    },
+    version: { type: Number, min: 1, default: 1 },
     assignedByCoachId: { type: String, default: null, index: true },
     assignedAt: { type: Date, default: null },
     trainingPlanId: { type: String, default: null, index: true },
@@ -71,5 +79,6 @@ const RoutineSchema = new mongoose.Schema(
 RoutineSchema.index({ progressScopeId: 1 });
 RoutineSchema.index({ ownerId: 1, progressScopeId: 1 });
 RoutineSchema.index({ ownerId: 1, isArchived: 1, updatedAt: -1 });
+RoutineSchema.index({ ownerId: 1, kind: 1, isArchived: 1 });
 
 export default mongoose.model("Routine", RoutineSchema);

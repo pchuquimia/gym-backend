@@ -50,6 +50,9 @@ router.get("/", async (req, res, next) => {
     const filter = await getAccessibleOwnerFilter(req, {
       isArchived: { $ne: true },
     });
+    if (["template", "personal", "assigned"].includes(req.query.kind)) {
+      filter.kind = req.query.kind;
+    }
     const routines = await Routine.find(filter).lean();
     res.set("Cache-Control", "private, no-store");
     res.json(
@@ -77,6 +80,11 @@ router.post("/", async (req, res, next) => {
     payload.assignedByCoachId = null;
     payload.assignedAt = null;
     payload.assignmentType = "personal";
+    payload.kind =
+      req.user.role === "Entrenador" && String(ownerId) === req.user.id
+        ? "template"
+        : "personal";
+    payload.version = 1;
     payload.isArchived = false;
     payload.isAvailableForTraining = true;
     let plan = null;
@@ -105,6 +113,7 @@ router.post("/", async (req, res, next) => {
           .json({ error: "Este bloque ya tiene una rutina" });
       }
       payload.assignmentType = "plan";
+      payload.kind = "assigned";
       payload.isAvailableForTraining = plan.status === "active";
     }
     const routine = await Routine.create(payload);
@@ -147,6 +156,12 @@ router.put("/:id", async (req, res, next) => {
     payload.trainingPlanId = current.trainingPlanId || null;
     payload.trainingPlanSlotId = current.trainingPlanSlotId || null;
     payload.assignmentType = current.assignmentType || "personal";
+    payload.kind = current.kind || "personal";
+    payload.version =
+      payload.kind === "template"
+        ? Number(current.version || 1) + 1
+        : Number(current.version || 1);
+    payload.sourceRoutineVersion = current.sourceRoutineVersion || null;
     payload.assignedByCoachId = current.assignedByCoachId || null;
     payload.assignedAt = current.assignedAt || null;
     payload.isArchived = current.isArchived === true;

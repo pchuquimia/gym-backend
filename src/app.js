@@ -18,6 +18,7 @@ import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
 import coachRoutes from "./routes/coach.js";
 import plansRoutes from "./routes/plans.js";
+import planTemplatesRoutes from "./routes/planTemplates.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -95,6 +96,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/coach", coachRoutes);
 app.use("/api/plans", plansRoutes);
+app.use("/api/plan-templates", planTemplatesRoutes);
 app.use("/api/exercises", exercisesRoutes);
 app.use("/api/routines", routinesRoutes);
 app.use("/api/sessions", sessionsRoutes);

@@ -6,6 +6,7 @@ import {
 } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
+import PlanTemplate from "../models/PlanTemplate.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
@@ -14,6 +15,15 @@ import {
 const router = Router();
 
 router.use(protect);
+
+const getVisibleTemplate = async (req, id) => {
+  if (!id) return null;
+  return PlanTemplate.findOne({
+    _id: String(id),
+    isArchived: { $ne: true },
+    $or: [{ visibility: "system" }, { ownerId: req.user.id }],
+  }).lean();
+};
 
 const normalizeSchedule = (value, scheduleMode = "fixed") => {
   const sequential = scheduleMode !== "fixed";
@@ -141,12 +151,21 @@ router.post("/", async (req, res, next) => {
     }
     const parsed = readPlanPayload(req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
+    const template = await getVisibleTemplate(req, req.body.planTemplateId);
+    if (req.body.planTemplateId && !template) {
+      return res.status(400).json({ error: "Plantilla no disponible" });
+    }
     const plan = await TrainingPlan.create({
       ...parsed.value,
       athleteId: req.user.id,
       createdById: req.user.id,
       coachId: null,
       status: "draft",
+      planTemplateId: template?._id || null,
+      planTemplateVersion: template?.version || null,
+      planTemplateSnapshot: template
+        ? { name: template.name, version: template.version }
+        : undefined,
     });
     res.status(201).json(plan);
   } catch (err) {
