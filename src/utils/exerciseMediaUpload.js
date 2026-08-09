@@ -42,7 +42,7 @@ export const buildExercisePublicId = ({
 
 export const uploadExerciseMedia = async (filePath, options = {}) => {
   if (!isCloudinaryReady) return null;
-  const publicId = buildExercisePublicId(options);
+  const publicId = options.publicId || buildExercisePublicId(options);
   const result = await cloudinary.uploader.upload(filePath, {
     public_id: publicId,
     resource_type: "image",
@@ -60,6 +60,7 @@ export const uploadExerciseMedia = async (filePath, options = {}) => {
     width: result.width,
     height: result.height,
     format: result.format,
+    version: result.version,
   };
 };
 

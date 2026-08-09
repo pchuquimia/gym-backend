@@ -10,11 +10,183 @@ import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
 } from "../utils/trainingPlanLifecycle.js";
+import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
 
-router.use(protect, authorizeRoles("Entrenador"));
+router.use(protect);
+
+const canonicalCoachCode = (value) => {
+  const compact = String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  if (!compact.startsWith("APEX") || compact.length !== 12) return "";
+  return `APEX-${compact.slice(4)}`;
+};
+
+const createCoachCode = async () => {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = `APEX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+    if (!(await User.exists({ coachCode: code }))) return code;
+  }
+  throw new Error("No se pudo generar un código de coach");
+};
+
+const ensureCoachCode = async (userId) => {
+  const current = await User.findById(userId, "coachCode").lean();
+  if (current?.coachCode) return current.coachCode;
+  const code = await createCoachCode();
+  const updated = await User.findByIdAndUpdate(
+    userId,
+    { $set: { coachCode: code } },
+    { new: true },
+  ).select("coachCode");
+  return updated.coachCode;
+};
+
+router.get(
+  "/relationship",
+  authorizeRoles("Cliente"),
+  async (req, res, next) => {
+    try {
+      const athlete = await User.findById(
+        req.user.id,
+        "assignedTrainerId trainingMode",
+      ).lean();
+      const coach = athlete?.assignedTrainerId
+        ? await User.findOne(
+            {
+              _id: athlete.assignedTrainerId,
+              role: { $in: ["Admin", "Entrenador"] },
+              isActive: true,
+            },
+            "name email role profile.avatarPhotoId",
+          ).lean()
+        : null;
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        connected: Boolean(coach),
+        coach,
+        trainingMode: coach ? "coach_managed" : "independent",
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  "/relationship",
+  authorizeRoles("Cliente"),
+  async (req, res, next) => {
+    try {
+      const coachCode = canonicalCoachCode(req.body.coachCode);
+      if (!coachCode) {
+        return res.status(400).json({ error: "Código de coach inválido" });
+      }
+      const coach = await User.findOne(
+        {
+          coachCode,
+          role: { $in: ["Admin", "Entrenador"] },
+          isActive: true,
+        },
+        "name email role profile.avatarPhotoId",
+      ).lean();
+      if (!coach) {
+        return res.status(404).json({ error: "No encontramos ese coach" });
+      }
+      const athlete = await User.findById(
+        req.user.id,
+        "assignedTrainerId trainingMode",
+      );
+      if (!athlete) return res.status(404).json({ error: "Usuario no encontrado" });
+      const previousCoachId = String(athlete.assignedTrainerId || "");
+      const nextCoachId = String(coach._id);
+      if (
+        previousCoachId &&
+        previousCoachId !== nextCoachId &&
+        req.body.confirmTransfer !== true
+      ) {
+        return res.status(409).json({
+          error: "Confirma el cambio de coach",
+          code: "COACH_TRANSFER_CONFIRMATION_REQUIRED",
+        });
+      }
+      await transitionAthleteCoach({
+        athleteId: athlete._id,
+        previousCoachId,
+        nextCoachId,
+      });
+      athlete.assignedTrainerId = nextCoachId;
+      athlete.trainingMode = "coach_managed";
+      await athlete.save();
+      res.json({ connected: true, coach, trainingMode: "coach_managed" });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.delete(
+  "/relationship",
+  authorizeRoles("Cliente"),
+  async (req, res, next) => {
+    try {
+      const athlete = await User.findById(
+        req.user.id,
+        "assignedTrainerId trainingMode",
+      );
+      if (!athlete) return res.status(404).json({ error: "Usuario no encontrado" });
+      await transitionAthleteCoach({
+        athleteId: athlete._id,
+        previousCoachId: athlete.assignedTrainerId,
+        nextCoachId: null,
+      });
+      athlete.assignedTrainerId = null;
+      athlete.trainingMode = "independent";
+      await athlete.save();
+      res.json({ connected: false, coach: null, trainingMode: "independent" });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.get(
+  "/link-code",
+  authorizeRoles("Admin", "Entrenador"),
+  async (req, res, next) => {
+    try {
+      const coachCode = await ensureCoachCode(req.user.id);
+      const athleteCount = await User.countDocuments({
+        role: "Cliente",
+        assignedTrainerId: req.user.id,
+        isActive: true,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.json({ coachCode, athleteCount });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.post(
+  "/link-code/regenerate",
+  authorizeRoles("Admin", "Entrenador"),
+  async (req, res, next) => {
+    try {
+      const coachCode = await createCoachCode();
+      await User.findByIdAndUpdate(req.user.id, { $set: { coachCode } });
+      res.json({ coachCode });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.use(authorizeRoles("Admin", "Entrenador"));
 
 const athleteFilter = (coachId, athleteId) => ({
   _id: athleteId,
@@ -140,6 +312,32 @@ router.get("/athletes", async (req, res, next) => {
     next(err);
   }
 });
+
+router.delete(
+  "/athletes/:athleteId/relationship",
+  async (req, res, next) => {
+    try {
+      const athlete = await User.findOne(
+        athleteFilter(req.user.id, req.params.athleteId),
+        "assignedTrainerId trainingMode name",
+      );
+      if (!athlete) {
+        return res.status(404).json({ error: "Atleta no encontrado" });
+      }
+      await transitionAthleteCoach({
+        athleteId: athlete._id,
+        previousCoachId: req.user.id,
+        nextCoachId: null,
+      });
+      athlete.assignedTrainerId = null;
+      athlete.trainingMode = "independent";
+      await athlete.save();
+      res.json({ ok: true, athleteId: String(athlete._id) });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.get("/athletes/:athleteId/overview", async (req, res, next) => {
   try {

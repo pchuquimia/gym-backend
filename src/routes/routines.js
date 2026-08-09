@@ -31,7 +31,7 @@ const canManageRoutine = async (req, routine) => {
   if (!(await canManagePlanning(req, routine.ownerId))) return false;
   if (String(routine.ownerId) === String(req.user.id)) return true;
   return (
-    req.user.role === "Entrenador" &&
+    ["Admin", "Entrenador"].includes(req.user.role) &&
     String(routine.assignedByCoachId || "") === String(req.user.id)
   );
 };

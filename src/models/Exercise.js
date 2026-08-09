@@ -8,6 +8,7 @@ const MediaAssetSchema = new mongoose.Schema(
     height: { type: Number, default: null },
     format: { type: String, default: "" },
     bytes: { type: Number, default: null },
+    version: { type: Number, default: null },
   },
   { _id: false },
 );

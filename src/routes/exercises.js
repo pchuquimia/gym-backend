@@ -3,8 +3,13 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { Router } from "express";
 import multer from "multer";
-import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
+import {
+  authorizeRoles,
+  ensureCanAccessOwner,
+  protect,
+} from "../middleware/authMiddleware.js";
 import Exercise from "../models/Exercise.js";
+import Routine from "../models/Routine.js";
 import {
   removeLocalFile,
   uploadExerciseMedia,
@@ -23,6 +28,11 @@ import {
   canonicalizeMuscleGroup,
   classifyExerciseTaxonomy,
 } from "../utils/exerciseTaxonomy.js";
+import {
+  deleteLegacyExercise,
+  listExerciseMigrationCandidates,
+  migrateExercise,
+} from "../services/exerciseMigrationService.js";
 
 const router = Router();
 
@@ -357,6 +367,132 @@ const assertCanManageExercise = async (req, exercise) => {
 
 router.use(protect);
 
+router.get(
+  "/admin/migrations",
+  authorizeRoles("Admin"),
+  async (_req, res, next) => {
+    try {
+      res.set("Cache-Control", "private, no-store");
+      res.json(await listExerciseMigrationCandidates());
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/migrations",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const result = await migrateExercise({
+        legacyExerciseId: String(req.body.legacyExerciseId || "").trim(),
+        targetExerciseId: String(req.body.targetExerciseId || "").trim(),
+        deleteLegacy: req.body.deleteLegacy !== false,
+        performedBy: req.user.id,
+      });
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  "/admin/legacy/:id",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      res.json(
+        await deleteLegacyExercise({
+          exerciseId: String(req.params.id || "").trim(),
+          performedBy: req.user.id,
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/:id/image",
+  authorizeRoles("Admin"),
+  upload.single("file"),
+  async (req, res, next) => {
+    try {
+      const exercise = await Exercise.findById(req.params.id);
+      if (!exercise) {
+        return res.status(404).json({ error: "Ejercicio no encontrado" });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: "Selecciona una imagen" });
+      }
+
+      const currentPublicId =
+        exercise.media?.image?.publicId ||
+        exercise.imagePublicId ||
+        cloudinaryPublicIdFromUrl(exercise.media?.image?.url || exercise.image);
+      const uploaded = await uploadExerciseMedia(req.file.path, {
+        type: exercise.type,
+        ownerId: exercise.ownerId,
+        slug: exercise._id,
+        ...getExerciseMediaStructure(exercise),
+        kind: "main",
+        publicId: currentPublicId || undefined,
+      });
+
+      if (!uploaded) {
+        return res.status(503).json({
+          error: "Cloudinary no esta configurado para reemplazar imagenes",
+        });
+      }
+
+      const currentMedia = exercise.media?.toObject?.() || exercise.media || {};
+      exercise.media = {
+        ...currentMedia,
+        image: uploaded,
+      };
+      exercise.image = uploaded.url;
+      exercise.imagePublicId = uploaded.publicId;
+      exercise.updatedBy = req.user.id;
+      await exercise.save();
+
+      await Routine.updateMany(
+        { "exercises.exerciseId": exercise._id },
+        {
+          $set: {
+            "exercises.$[exercise].image": uploaded.url,
+            "exercises.$[exercise].imagePublicId": uploaded.publicId,
+          },
+        },
+        { arrayFilters: [{ "exercise.exerciseId": exercise._id }] },
+      );
+      await Routine.updateMany(
+        { "exercises.alternatives.exerciseId": exercise._id },
+        {
+          $set: {
+            "exercises.$[].alternatives.$[alternative].image": uploaded.url,
+            "exercises.$[].alternatives.$[alternative].imagePublicId":
+              uploaded.publicId,
+          },
+        },
+        { arrayFilters: [{ "alternative.exerciseId": exercise._id }] },
+      );
+
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        exercise: localizeExerciseDocument(exercise, getExerciseLanguage(req)),
+        asset: uploaded,
+      });
+    } catch (error) {
+      next(error);
+    } finally {
+      await removeLocalFile(req.file?.path);
+    }
+  },
+);
+
 const getVisibleExerciseScope = async (req) => {
   const requestedOwnerId = String(req.query.ownerId || req.user.id).trim();
   if (
@@ -500,9 +636,9 @@ router.get("/facets", async (req, res, next) => {
     const hasPreview = (exercise) =>
       Boolean(
         exercise.media?.image?.url ||
-          exercise.media?.image?.publicId ||
-          exercise.image ||
-          exercise.imagePublicId,
+        exercise.media?.image?.publicId ||
+        exercise.image ||
+        exercise.imagePublicId,
       );
     const previewFrom = (items) => {
       const exercise = items.find(hasPreview);
@@ -704,10 +840,7 @@ router.get("/", async (req, res, next) => {
         req.query.movementPattern,
       );
       andFilters.push({
-        $or: [
-          { movementPattern },
-          { movementPatterns: movementPattern },
-        ],
+        $or: [{ movementPattern }, { movementPatterns: movementPattern }],
       });
     }
     if (req.query.equipment) {

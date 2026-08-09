@@ -96,6 +96,8 @@ const RoutineSchema = new mongoose.Schema(
 );
 
 RoutineSchema.index({ progressScopeId: 1 });
+RoutineSchema.index({ "exercises.exerciseId": 1 });
+RoutineSchema.index({ "exercises.alternatives.exerciseId": 1 });
 RoutineSchema.index({ ownerId: 1, progressScopeId: 1 });
 RoutineSchema.index({ ownerId: 1, isArchived: 1, updatedAt: -1 });
 RoutineSchema.index({ ownerId: 1, kind: 1, isArchived: 1 });

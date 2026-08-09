@@ -23,7 +23,7 @@ const canMutateTraining = async (req, training) => {
   if (String(training.ownerId) === String(req.user.id)) return true;
   if (!(await ensureCanAccessOwner(req, training.ownerId))) return false;
   return (
-    req.user.role === "Entrenador" &&
+    ["Admin", "Entrenador"].includes(req.user.role) &&
     training.sessionType === "supervised" &&
     String(training.supervisedBy || "") === String(req.user.id)
   );

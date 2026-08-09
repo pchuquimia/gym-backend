@@ -10,10 +10,11 @@ import Routine from "../models/Routine.js";
 import Session from "../models/Session.js";
 import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
+import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode profile.avatarPhotoId createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
@@ -83,7 +84,7 @@ router.patch(
       if (req.body.assignedTrainerId) {
         const trainerExists = await User.exists({
           _id: req.body.assignedTrainerId,
-          role: "Entrenador",
+          role: { $in: ["Admin", "Entrenador"] },
           isActive: true,
         });
         if (!trainerExists) {
@@ -138,60 +139,11 @@ router.patch(
         trainerChanged &&
         current.assignedTrainerId
       ) {
-        const previousPlans = await TrainingPlan.find(
-          {
-            athleteId: req.params.id,
-            coachId: current.assignedTrainerId,
-            status: "active",
-          },
-          "weeklySchedule.routineId",
-        ).lean();
-        const previousPlanIds = previousPlans.map((plan) => String(plan._id));
-        const previousRoutineIds = previousPlans.flatMap((plan) =>
-          (plan.weeklySchedule || [])
-            .map((day) => day.routineId)
-            .filter(Boolean),
-        );
-        await TrainingPlan.updateMany(
-          { _id: { $in: previousPlanIds } },
-          { $set: { status: "paused" } },
-        );
-        if (
-          effectiveTrainerId &&
-          (previousPlanIds.length || previousRoutineIds.length)
-        ) {
-          await Routine.updateMany(
-            {
-              ownerId: req.params.id,
-              $or: [
-                { trainingPlanId: { $in: previousPlanIds } },
-                { _id: { $in: previousRoutineIds } },
-              ],
-            },
-            { $set: { isArchived: true } },
-          );
-        }
-        if (
-          !effectiveTrainerId &&
-          (previousPlanIds.length || previousRoutineIds.length)
-        ) {
-          await Routine.updateMany(
-            {
-              ownerId: req.params.id,
-              $or: [
-                { trainingPlanId: { $in: previousPlanIds } },
-                { _id: { $in: previousRoutineIds } },
-              ],
-            },
-            {
-              $set: {
-                trainingPlanId: null,
-                assignmentType: "personal",
-                isArchived: false,
-              },
-            },
-          );
-        }
+        await transitionAthleteCoach({
+          athleteId: req.params.id,
+          previousCoachId: current.assignedTrainerId,
+          nextCoachId: effectiveTrainerId,
+        });
       }
       const trainerLosesAccess =
         current.role === "Entrenador" &&

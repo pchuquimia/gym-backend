@@ -218,6 +218,7 @@ const register = asyncHandler(async (req, res) => {
     email,
     password,
     role: "Cliente",
+    trainingMode: "independent",
     emailVerificationRequired: verificationRequired,
     emailVerificationToken: verificationRequired
       ? crypto.createHash("sha256").update(verificationToken).digest("hex")

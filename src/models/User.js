@@ -58,6 +58,14 @@ const UserSchema = new mongoose.Schema(
       default: "independent",
       index: true,
     },
+    coachCode: {
+      type: String,
+      default: undefined,
+      unique: true,
+      sparse: true,
+      uppercase: true,
+      trim: true,
+    },
     profile: {
       birthDate: { type: String, default: "" },
       weight: { type: Number, default: 82.5 },
@@ -155,6 +163,8 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
         ? "coach_managed"
         : this.trainingMode || "independent",
     assignedTrainerId: this.assignedTrainerId || null,
+    coachCode:
+      ["Admin", "Entrenador"].includes(this.role) ? this.coachCode || null : null,
     isActive: this.isActive,
     lastLoginAt: this.lastLoginAt,
     profile: this.profile,

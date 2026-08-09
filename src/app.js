@@ -19,6 +19,7 @@ import usersRoutes from "./routes/users.js";
 import coachRoutes from "./routes/coach.js";
 import plansRoutes from "./routes/plans.js";
 import planTemplatesRoutes from "./routes/planTemplates.js";
+import analyticsRoutes from "./routes/analytics.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -103,6 +104,7 @@ app.use("/api/routines", routinesRoutes);
 app.use("/api/sessions", sessionsRoutes);
 app.use("/api/photos", photosRoutes);
 app.use("/api/trainings", trainingsRoutes);
+app.use("/api/analytics", analyticsRoutes);
 app.use("/api/preferences", preferencesRoutes);
 
 app.use(notFound);

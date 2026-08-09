@@ -101,7 +101,7 @@ export const getAccessibleOwnerFilter = async (req, baseFilter = {}) => {
 export const ensureCanAccessOwner = async (req, ownerId) => {
   if (!ownerId) return false;
   if (String(ownerId) === req.user?.id) return true;
-  if (req.user?.role !== "Entrenador") return false;
+  if (!["Admin", "Entrenador"].includes(req.user?.role)) return false;
   const athlete = await User.exists({
     _id: ownerId,
     role: "Cliente",

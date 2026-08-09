@@ -47,7 +47,7 @@ router.delete("/:id", async (req, res, next) => {
     if (!current) return res.status(404).json({ error: "Not found" });
     const ownsSession = String(current.ownerId) === String(req.user.id);
     const supervisedByCoach =
-      req.user.role === "Entrenador" &&
+      ["Admin", "Entrenador"].includes(req.user.role) &&
       current.sessionType === "supervised" &&
       String(current.supervisedBy || "") === String(req.user.id) &&
       (await ensureCanAccessOwner(req, current.ownerId));
