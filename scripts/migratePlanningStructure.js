@@ -2,7 +2,6 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import Routine from "../src/models/Routine.js";
 import User from "../src/models/User.js";
-import { ensureDefaultPlanTemplates } from "../src/utils/defaultPlanTemplates.js";
 
 const apply = process.argv.includes("--apply");
 const mongoUri = process.env.MONGO_URI;
@@ -49,8 +48,7 @@ try {
     console.log("Simulacion terminada. Ejecuta con --apply para guardar.");
   } else {
     if (operations.length) await Routine.bulkWrite(operations, { ordered: false });
-    await ensureDefaultPlanTemplates();
-    console.log("Estructura de planificacion migrada y planes base creados.");
+    console.log("Estructura de planificacion migrada.");
   }
 } finally {
   await mongoose.disconnect();

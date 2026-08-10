@@ -270,6 +270,75 @@ const sameDraftStructure = (plan, candidate) => {
   );
 };
 
+const findCoachSourceRoutines = ({ coachId, sourceIds, sourcePlanId }) => {
+  if (!sourceIds.length) return [];
+  const availability = [{ isArchived: { $ne: true } }];
+  if (sourcePlanId) {
+    availability.push({ trainingPlanId: String(sourcePlanId) });
+  }
+  return Routine.find({
+    _id: { $in: sourceIds },
+    ownerId: String(coachId),
+    $or: availability,
+  }).lean();
+};
+
+router.get("/plan-catalog", async (req, res, next) => {
+  try {
+    const plans = await TrainingPlan.find({
+      athleteId: req.user.id,
+      coachId: null,
+      status: { $ne: "cancelled" },
+      $or: [
+        { createdById: req.user.id },
+        { createdById: null },
+        { createdById: { $exists: false } },
+      ],
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+    const routineIds = [
+      ...new Set(
+        plans.flatMap((plan) =>
+          (plan.weeklySchedule || [])
+            .filter((day) => day.type === "training")
+            .map((day) => String(day.routineId || day.sourceRoutineId || ""))
+            .filter(Boolean),
+        ),
+      ),
+    ];
+    const routines = routineIds.length
+      ? await Routine.find({
+          _id: { $in: routineIds },
+          ownerId: req.user.id,
+        }).lean()
+      : [];
+    const availableRoutineIds = new Set(
+      routines.map((routine) => String(routine._id)),
+    );
+    const catalogPlans = plans.map((plan) => ({
+      ...plan,
+      sourcePlanId: String(plan._id),
+      catalogSource: "training_plan",
+      weeklySchedule: (plan.weeklySchedule || []).map((day) => {
+        const routineId = String(day.routineId || day.sourceRoutineId || "");
+        return {
+          ...day,
+          sourceRoutineId:
+            day.type === "training" && availableRoutineIds.has(routineId)
+              ? routineId
+              : null,
+        };
+      }),
+    }));
+
+    res.set("Cache-Control", "private, no-store");
+    res.json({ plans: catalogPlans, routines });
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get("/athletes", async (req, res, next) => {
   try {
     const athletes = await User.find(
@@ -469,16 +538,39 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     );
     if (duplicateDraft) {
       return res.status(409).json({
-        error: "Ya existe un borrador identico para este atleta",
+        error: "Ya existe una planificación inactiva idéntica para este atleta",
         planId: duplicateDraft._id,
       });
     }
 
+    if (req.body.planTemplateId && req.body.sourcePlanId) {
+      return res.status(400).json({
+        error: "Selecciona una sola fuente para la planificacion",
+      });
+    }
+    const sourcePlan = req.body.sourcePlanId
+      ? await TrainingPlan.findOne({
+          _id: String(req.body.sourcePlanId),
+          athleteId: req.user.id,
+          coachId: null,
+          status: { $ne: "cancelled" },
+          $or: [
+            { createdById: req.user.id },
+            { createdById: null },
+            { createdById: { $exists: false } },
+          ],
+        }).lean()
+      : null;
+    if (req.body.sourcePlanId && !sourcePlan) {
+      return res
+        .status(400)
+        .json({ error: "Planificacion del catalogo no disponible" });
+    }
     const planTemplate = req.body.planTemplateId
       ? await PlanTemplate.findOne({
           _id: String(req.body.planTemplateId),
           isArchived: { $ne: true },
-          $or: [{ visibility: "system" }, { ownerId: req.user.id }],
+          ownerId: req.user.id,
         }).lean()
       : null;
     if (req.body.planTemplateId && !planTemplate) {
@@ -488,17 +580,11 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
     const sourceIds = [
       ...new Set(schedule.map((day) => day.sourceRoutineId).filter(Boolean)),
     ];
-    const sources = sourceIds.length
-      ? await Routine.find({
-          _id: { $in: sourceIds },
-          $or: [
-            { ownerId: req.user.id, kind: "template" },
-            { ownerId: req.user.id, kind: { $exists: false } },
-            { visibility: "system", kind: "template" },
-          ],
-          isArchived: { $ne: true },
-        }).lean()
-      : [];
+    const sources = await findCoachSourceRoutines({
+      coachId: req.user.id,
+      sourceIds,
+      sourcePlanId: sourcePlan?._id,
+    });
     if (sources.length !== sourceIds.length) {
       return res
         .status(400)
@@ -520,6 +606,10 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
       planTemplateVersion: planTemplate?.version || null,
       planTemplateSnapshot: planTemplate
         ? { name: planTemplate.name, version: planTemplate.version }
+        : undefined,
+      sourcePlanId: sourcePlan?._id || null,
+      sourcePlanSnapshot: sourcePlan
+        ? { name: sourcePlan.name, updatedAt: sourcePlan.updatedAt }
         : undefined,
       notes: req.body.notes,
       weeklySchedule: [],
@@ -760,15 +850,11 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     const sourceIds = [
       ...new Set(schedule.map((day) => day.sourceRoutineId).filter(Boolean)),
     ];
-    const sources = await Routine.find({
-      _id: { $in: sourceIds },
-      $or: [
-        { ownerId: req.user.id, kind: "template" },
-        { ownerId: req.user.id, kind: { $exists: false } },
-        { visibility: "system", kind: "template" },
-      ],
-      isArchived: { $ne: true },
-    }).lean();
+    const sources = await findCoachSourceRoutines({
+      coachId: req.user.id,
+      sourceIds,
+      sourcePlanId: plan.sourcePlanId,
+    });
     if (sources.length !== sourceIds.length) {
       return res
         .status(400)
@@ -957,7 +1043,6 @@ router.post("/athletes/:athleteId/routines", async (req, res, next) => {
       $or: [
         { ownerId: req.user.id, kind: "template" },
         { ownerId: req.user.id, kind: { $exists: false } },
-        { visibility: "system", kind: "template" },
       ],
     }).lean();
     if (!source) {

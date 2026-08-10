@@ -519,7 +519,22 @@ router.post("/", async (req, res, next) => {
       }, 0);
     payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0;
 
-    const training = await Training.create(payload);
+    let training;
+    try {
+      training = await Training.create(payload);
+    } catch (createError) {
+      if (createError?.code === 11000 && payload._id) {
+        const existing = await Training.findOne({
+          _id: String(payload._id),
+          ownerId,
+        });
+        if (existing) {
+          res.set("Idempotent-Replay", "true");
+          return res.status(200).json(existing);
+        }
+      }
+      throw createError;
+    }
     if (payload.routineId) {
       try {
         const plan = payload.trainingPlanId

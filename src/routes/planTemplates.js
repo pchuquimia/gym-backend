@@ -3,7 +3,6 @@ import { Router } from "express";
 import { protect } from "../middleware/authMiddleware.js";
 import PlanTemplate from "../models/PlanTemplate.js";
 import Routine from "../models/Routine.js";
-import { ensureDefaultPlanTemplates } from "../utils/defaultPlanTemplates.js";
 
 const router = Router();
 router.use(protect);
@@ -67,7 +66,6 @@ const hasValidRoutineSources = async (schedule, ownerId) => {
     _id: { $in: ids },
     $or: [
       { ownerId, kind: { $in: ["template", null] } },
-      { visibility: "system", kind: "template" },
     ],
     isArchived: { $ne: true },
   });
@@ -76,13 +74,9 @@ const hasValidRoutineSources = async (schedule, ownerId) => {
 
 router.get("/", async (req, res, next) => {
   try {
-    await ensureDefaultPlanTemplates();
-    const ownerFilter =
-      req.user.role === "Admin"
-        ? {}
-        : { $or: [{ visibility: "system" }, { ownerId: req.user.id }] };
     const templates = await PlanTemplate.find({
-      ...ownerFilter,
+      ownerId: req.user.id,
+      visibility: "private",
       isArchived: { $ne: true },
     })
       .sort({ visibility: -1, level: 1, name: 1 })
@@ -101,15 +95,14 @@ router.post("/", async (req, res, next) => {
     }
     const parsed = readPayload(req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
-    const isSystem = req.body.visibility === "system" && req.user.role === "Admin";
     if (!(await hasValidRoutineSources(parsed.value.weeklySchedule, req.user.id))) {
-      return res.status(400).json({ error: "Una rutina base no esta disponible" });
+      return res.status(400).json({ error: "Una rutina seleccionada no esta disponible" });
     }
     const template = await PlanTemplate.create({
       _id: `plan_template_${crypto.randomUUID()}`,
       ...parsed.value,
-      ownerId: isSystem ? null : req.user.id,
-      visibility: isSystem ? "system" : "private",
+      ownerId: req.user.id,
+      visibility: "private",
       version: 1,
     });
     res.status(201).json(template);
@@ -130,7 +123,7 @@ router.put("/:id", async (req, res, next) => {
     if (parsed.error) return res.status(400).json({ error: parsed.error });
     const sourceOwnerId = template.ownerId || req.user.id;
     if (!(await hasValidRoutineSources(parsed.value.weeklySchedule, sourceOwnerId))) {
-      return res.status(400).json({ error: "Una rutina base no esta disponible" });
+      return res.status(400).json({ error: "Una rutina seleccionada no esta disponible" });
     }
     Object.assign(template, parsed.value);
     template.version += 1;

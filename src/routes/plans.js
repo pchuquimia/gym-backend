@@ -20,8 +20,9 @@ const getVisibleTemplate = async (req, id) => {
   if (!id) return null;
   return PlanTemplate.findOne({
     _id: String(id),
+    ownerId: req.user.id,
+    visibility: "private",
     isArchived: { $ne: true },
-    $or: [{ visibility: "system" }, { ownerId: req.user.id }],
   }).lean();
 };
 
@@ -131,6 +132,12 @@ router.get("/", async (req, res, next) => {
     if (req.user.role === "Entrenador") {
       filter.coachId =
         athleteId === String(req.user.id) ? null : String(req.user.id);
+    }
+    if (
+      req.user.role === "Cliente" &&
+      req.user.trainingMode === "coach_managed"
+    ) {
+      filter.status = { $in: ["active", "completed"] };
     }
     const plans = await TrainingPlan.find(filter)
       .sort({ status: 1, updatedAt: -1 })

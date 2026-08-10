@@ -36,6 +36,11 @@ const TrainingPlanSchema = new mongoose.Schema(
       name: { type: String, default: "" },
       version: { type: Number, default: null },
     },
+    sourcePlanId: { type: String, default: null, index: true },
+    sourcePlanSnapshot: {
+      name: { type: String, default: "" },
+      updatedAt: { type: Date, default: null },
+    },
     level: {
       type: String,
       enum: ["beginner", "intermediate", "advanced"],

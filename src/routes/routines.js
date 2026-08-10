@@ -59,17 +59,6 @@ router.get("/", async (req, res, next) => {
     const filter = await getAccessibleOwnerFilter(req, {
       isArchived: { $ne: true },
     });
-    const requestedOwnerId = String(req.query.athleteId || req.user.id);
-    const includeSystemTemplates =
-      ["Admin", "Entrenador"].includes(req.user.role) &&
-      requestedOwnerId === req.user.id;
-    if (includeSystemTemplates) {
-      delete filter.ownerId;
-      filter.$or = [
-        { ownerId: req.user.id },
-        { visibility: "system", kind: "template" },
-      ];
-    }
     if (["template", "personal", "assigned"].includes(req.query.kind)) {
       filter.kind = req.query.kind;
     }
@@ -210,11 +199,6 @@ router.delete("/:id", async (req, res, next) => {
   try {
     const current = await Routine.findById(req.params.id).lean();
     if (!current) return res.status(404).json({ error: "Not found" });
-    if (current.visibility === "system") {
-      return res.status(403).json({
-        error: "Las rutinas del sistema no se pueden eliminar",
-      });
-    }
     if (!(await canManageRoutine(req, current))) {
       return res.status(403).json({
         error: "Tu coach administra la planificación de tus rutinas",
