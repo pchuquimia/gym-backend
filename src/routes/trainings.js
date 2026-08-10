@@ -201,6 +201,40 @@ const calculateTimingSummary = (events = []) => {
   };
 };
 
+// GET /api/trainings/routine-counts
+router.get("/routine-counts", async (req, res, next) => {
+  try {
+    const ownerFilter = await getAccessibleOwnerFilter(req);
+    const counts = await Training.aggregate([
+      {
+        $match: {
+          ...ownerFilter,
+          routineId: { $type: "string", $ne: "" },
+        },
+      },
+      {
+        $group: {
+          _id: "$routineId",
+          count: { $sum: 1 },
+          lastPerformedAt: { $max: "$date" },
+        },
+      },
+      { $sort: { count: -1, _id: 1 } },
+    ]);
+
+    res.set("Cache-Control", "private, no-store");
+    res.json(
+      counts.map((item) => ({
+        routineId: item._id,
+        count: item.count,
+        lastPerformedAt: item.lastPerformedAt || null,
+      })),
+    );
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/trainings/summary?from=&to=&routineId=
 router.get("/summary", async (req, res, next) => {
   try {

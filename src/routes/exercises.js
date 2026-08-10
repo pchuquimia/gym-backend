@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Router } from "express";
+import rateLimit from "express-rate-limit";
 import multer from "multer";
 import {
   authorizeRoles,
@@ -33,6 +34,10 @@ import {
   listExerciseMigrationCandidates,
   migrateExercise,
 } from "../services/exerciseMigrationService.js";
+import {
+  generateExerciseAiImage,
+  getExerciseAiImageStatus,
+} from "../services/exerciseAiImageService.js";
 
 const router = Router();
 
@@ -64,6 +69,16 @@ const upload = multer({
   },
 });
 
+const aiImageLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: "Alcanzaste el limite temporal de generaciones. Intenta mas tarde.",
+  },
+});
+
 const slugify = (text = "") =>
   text
     .toString()
@@ -75,6 +90,28 @@ const slugify = (text = "") =>
 
 const escapeRegex = (value = "") =>
   String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const SEARCH_CHARACTER_PATTERNS = {
+  a: "[aáàäâã]",
+  e: "[eéèëê]",
+  i: "[iíìïî]",
+  n: "[nñ]",
+  o: "[oóòöôõ]",
+  u: "[uúùüû]",
+};
+
+const buildAccentInsensitivePattern = (value = "") => {
+  const normalized = String(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+  return Array.from(normalized)
+    .map((character) => {
+      if (/\s/.test(character)) return "\\s+";
+      return SEARCH_CHARACTER_PATTERNS[character] || escapeRegex(character);
+    })
+    .join("");
+};
 
 const SEARCH_SYNONYMS = new Map([
   ["press banca", "bench press"],
@@ -100,7 +137,9 @@ const expandSearchTerms = (value = "") => {
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
   return Array.from(
-    new Set([term, SEARCH_SYNONYMS.get(normalized)].filter(Boolean)),
+    new Set(
+      [term, normalized, SEARCH_SYNONYMS.get(normalized)].filter(Boolean),
+    ),
   );
 };
 
@@ -409,6 +448,34 @@ router.delete(
           performedBy: req.user.id,
         }),
       );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get("/admin/ai-image/status", authorizeRoles("Admin"), (_req, res) => {
+  res.set("Cache-Control", "private, no-store");
+  res.json(getExerciseAiImageStatus());
+});
+
+router.post(
+  "/admin/:id/ai-image",
+  authorizeRoles("Admin"),
+  aiImageLimiter,
+  async (req, res, next) => {
+    try {
+      const exercise = await Exercise.findById(req.params.id).lean();
+      if (!exercise) {
+        return res.status(404).json({ error: "Ejercicio no encontrado" });
+      }
+      const result = await generateExerciseAiImage({
+        exercise,
+        prompt: req.body.prompt,
+        userId: req.user.id,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -879,11 +946,18 @@ router.get("/", async (req, res, next) => {
       filter.branches = { $in: [req.query.branch, "general"] };
     }
     if (req.query.q) {
-      const terms = expandSearchTerms(req.query.q).map(escapeRegex);
+      const terms = Array.from(
+        new Set(
+          expandSearchTerms(req.query.q).map(buildAccentInsensitivePattern),
+        ),
+      );
       const searchableFields = [
         "name",
+        "slug",
         "localizedNames.es",
         "localizedNames.en",
+        "nameSpanish",
+        "nameEnglish",
         "aliases",
         "categories",
         "bodyRegion",
@@ -896,6 +970,8 @@ router.get("/", async (req, res, next) => {
         "equipment",
         "goals",
         "tags",
+        "description",
+        "instructions",
         "muscle",
         "primaryMuscle",
       ];

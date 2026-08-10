@@ -46,11 +46,12 @@ export const uploadExerciseMedia = async (filePath, options = {}) => {
   const result = await cloudinary.uploader.upload(filePath, {
     public_id: publicId,
     resource_type: "image",
+    format: "webp",
     overwrite: true,
     invalidate: true,
     transformation: [
       { width: 1600, height: 1600, crop: "limit" },
-      { quality: "auto:eco", fetch_format: "auto" },
+      { quality: "auto:good", flags: "strip_profile" },
     ],
   });
   return {
