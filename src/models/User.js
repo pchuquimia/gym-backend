@@ -35,6 +35,21 @@ const UserSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    isDemo: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    demoWorkspaceId: {
+      type: String,
+      default: null,
+      index: true,
+    },
+    demoExpiresAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
     failedLoginAttempts: {
       type: Number,
       default: 0,
@@ -163,9 +178,12 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
         ? "coach_managed"
         : this.trainingMode || "independent",
     assignedTrainerId: this.assignedTrainerId || null,
-    coachCode:
-      ["Admin", "Entrenador"].includes(this.role) ? this.coachCode || null : null,
+    coachCode: ["Admin", "Entrenador"].includes(this.role)
+      ? this.coachCode || null
+      : null,
     isActive: this.isActive,
+    isDemo: Boolean(this.isDemo),
+    demoExpiresAt: this.isDemo ? this.demoExpiresAt || null : null,
     lastLoginAt: this.lastLoginAt,
     profile: this.profile,
     security: this.security,

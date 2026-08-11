@@ -14,15 +14,18 @@ import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode profile.avatarPhotoId createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
 router.use(protect);
 
-router.get("/", authorizeRoles("Admin"), async (_req, res, next) => {
+router.get("/", authorizeRoles("Admin"), async (req, res, next) => {
   try {
-    const users = await User.find({}, ADMIN_USER_FIELDS)
+    const filter = req.user.isDemo
+      ? { isDemo: true, demoWorkspaceId: req.user.demoWorkspaceId }
+      : {};
+    const users = await User.find(filter, ADMIN_USER_FIELDS)
       .sort({ createdAt: -1 })
       .lean();
     res.set("Cache-Control", "no-store");
@@ -37,8 +40,13 @@ router.get(
   authorizeRoles("Entrenador", "Admin"),
   async (req, res, next) => {
     try {
-      const filter =
-        req.user.role === "Admin"
+      const filter = req.user.isDemo
+        ? {
+            role: "Cliente",
+            isDemo: true,
+            demoWorkspaceId: req.user.demoWorkspaceId,
+          }
+        : req.user.role === "Admin"
           ? { role: "Cliente" }
           : { role: "Cliente", assignedTrainerId: req.user.id, isActive: true };
       const users = await User.find(filter, CLIENT_DIRECTORY_FIELDS)

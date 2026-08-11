@@ -3,6 +3,7 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
+import { createDemoWorkspace } from "../services/demoWorkspaceService.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { clearAuthCookie, setAuthCookie } from "../utils/authCookies.js";
 import {
@@ -10,6 +11,11 @@ import {
   sendPasswordResetEmail,
   sendVerificationEmail,
 } from "../utils/email.js";
+import {
+  DEMO_ROLES,
+  isDemoModeEnabled,
+  isDemoRole,
+} from "../utils/demoMode.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -289,6 +295,42 @@ const login = asyncHandler(async (req, res) => {
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
   res.json(authResponse(user, token));
+});
+
+const demoStatus = (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({
+    enabled: isDemoModeEnabled(),
+    roles: isDemoModeEnabled() ? Object.keys(DEMO_ROLES) : [],
+  });
+};
+
+const demoLogin = asyncHandler(async (req, res) => {
+  if (!isDemoModeEnabled()) {
+    const err = new Error("La demostracion publica no esta habilitada");
+    err.statusCode = 404;
+    throw err;
+  }
+  const role = String(req.body.role || "").trim();
+  if (!isDemoRole(role)) {
+    const err = new Error("Rol de demostracion invalido");
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const { user, expiresAt } = await createDemoWorkspace(role);
+  const session = createSession(req);
+  user.activeSessions = [session];
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  const token = signToken(user, session.sessionId);
+  setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
+  res.status(201).json({
+    ...authResponse(user, token),
+    demo: { expiresAt },
+  });
 });
 
 const verifyEmail = asyncHandler(async (req, res) => {
@@ -624,6 +666,8 @@ const logoutAll = asyncHandler(async (req, res) => {
 export {
   register,
   login,
+  demoLogin,
+  demoStatus,
   verifyEmail,
   requestPasswordReset,
   resetPassword,

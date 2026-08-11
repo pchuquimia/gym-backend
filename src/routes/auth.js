@@ -3,6 +3,8 @@ import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import {
   changePassword,
+  demoLogin,
+  demoStatus,
   devAdminLogin,
   getProfile,
   getProfileSummary,
@@ -33,6 +35,14 @@ const authLimiter = rateLimit({
   message: { error: "Demasiados intentos. Intenta mas tarde." },
 });
 
+const demoLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Demasiados accesos demo. Espera unos minutos." },
+});
+
 const emailRule = () =>
   body("email").trim().isEmail().withMessage("Email invalido").normalizeEmail();
 
@@ -43,6 +53,18 @@ const validateLogin = (req, res, next) => {
 };
 
 router.post("/dev-admin", devAdminLogin);
+router.get("/demo/status", demoStatus);
+router.post(
+  "/demo",
+  demoLimiter,
+  [
+    body("role")
+      .isIn(["athlete", "coach", "admin"])
+      .withMessage("Rol demo invalido"),
+    validate,
+  ],
+  demoLogin,
+);
 
 router.post(
   "/register",

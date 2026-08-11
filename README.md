@@ -35,13 +35,13 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 
 3. Configura como mínimo:
 
-   | Variable | Descripción |
-   | --- | --- |
-   | `MONGO_URI` | Cadena de conexión a MongoDB. |
+   | Variable     | Descripción                                  |
+   | ------------ | -------------------------------------------- |
+   | `MONGO_URI`  | Cadena de conexión a MongoDB.                |
    | `JWT_SECRET` | Secreto aleatorio de al menos 32 caracteres. |
-   | `CLIENT_URL` | Origen permitido del frontend. |
-   | `PORT` | Puerto HTTP; por defecto `4000`. |
-   | `NODE_ENV` | `development` o `production`. |
+   | `CLIENT_URL` | Origen permitido del frontend.               |
+   | `PORT`       | Puerto HTTP; por defecto `4000`.             |
+   | `NODE_ENV`   | `development` o `production`.                |
 
 4. Inicia la API:
 
@@ -59,51 +59,60 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 
 ## Variables opcionales
 
-| Grupo | Variables |
-| --- | --- |
-| Cookies | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN` |
-| CORS | `CLIENT_URL`, `CLIENT_URLS` |
-| Autenticación | `AUTH_EXPOSE_TOKEN`, `EMAIL_VERIFICATION_REQUIRED` |
-| Correo | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` |
-| Cloudinary | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
-| Imágenes con IA | `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` |
+| Grupo           | Variables                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| Cookies         | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN`                       |
+| CORS            | `CLIENT_URL`, `CLIENT_URLS`                                                                 |
+| Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`                                                         |
+| Autenticación   | `AUTH_EXPOSE_TOKEN`, `EMAIL_VERIFICATION_REQUIRED`                                          |
+| Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
+| Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
+| Imágenes con IA | `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL`                                                      |
 
 `DEV_ADMIN_LOGIN` debe utilizarse únicamente en desarrollo. No habilites accesos automáticos en producción.
 
 ## Módulos de la API
 
-| Ruta base | Responsabilidad |
-| --- | --- |
-| `/api/auth` | Registro, login, perfil, sesiones y recuperación de acceso. |
-| `/api/users` | Administración de usuarios y roles. |
-| `/api/coach` | Asignaciones, atletas, planes y rutinas supervisadas. |
-| `/api/exercises` | Catálogo, filtros, medios y ejercicios personalizados. |
-| `/api/routines` | Rutinas propias y asignadas. |
-| `/api/plans` | Planificaciones activas, archivadas y cíclicas. |
-| `/api/trainings` | Registro, historial y duración de entrenamientos. |
-| `/api/analytics` | Resúmenes y análisis derivados. |
-| `/api/weigh-ins` | Seguimiento de peso. |
-| `/api/photos` | Fotografías de progreso y perfil. |
-| `/api/preferences` | Preferencias de sede y experiencia. |
+| Ruta base          | Responsabilidad                                             |
+| ------------------ | ----------------------------------------------------------- |
+| `/api/auth`        | Registro, login, perfil, sesiones y recuperación de acceso. |
+| `/api/users`       | Administración de usuarios y roles.                         |
+| `/api/coach`       | Asignaciones, atletas, planes y rutinas supervisadas.       |
+| `/api/exercises`   | Catálogo, filtros, medios y ejercicios personalizados.      |
+| `/api/routines`    | Rutinas propias y asignadas.                                |
+| `/api/plans`       | Planificaciones activas, archivadas y cíclicas.             |
+| `/api/trainings`   | Registro, historial y duración de entrenamientos.           |
+| `/api/analytics`   | Resúmenes y análisis derivados.                             |
+| `/api/weigh-ins`   | Seguimiento de peso.                                        |
+| `/api/photos`      | Fotografías de progreso y perfil.                           |
+| `/api/preferences` | Preferencias de sede y experiencia.                         |
 
 Las rutas privadas pasan por autenticación JWT. El acceso a datos de atletas se valida contra la relación real con el entrenador; ser administrador no concede acceso automático a sesiones ajenas.
 
+## Demo publica aislada
+
+Activa `DEMO_MODE=true` para mostrar accesos temporales como atleta, coach y administrador. Cada acceso crea un workspace independiente con planificacion, rutinas, sesiones, pesajes y fechas relativas al dia actual. `DEMO_WORKSPACE_HOURS` define su vigencia entre 1 y 168 horas; el valor recomendado es `12`.
+
+Las cuentas demo no pueden modificar usuarios, credenciales, relaciones de coach, imagenes, plantillas globales ni el catalogo compartido. El administrador demo solo recibe usuarios ficticios de su workspace. Los workspaces vencidos se eliminan durante el siguiente acceso demo, incluidos sus entrenamientos y documentos asociados.
+
+La demo necesita un catalogo de ejercicios ya importado. En el proveedor de despliegue configura `DEMO_MODE=true`; no se requiere una variable adicional en el frontend.
+
 ## Scripts operativos
 
-| Comando | Uso |
-| --- | --- |
-| `npm run dev` | Inicia la API. |
-| `npm test` | Ejecuta pruebas Jest de API y logica de carga. |
-| `npm run test:watch` | Ejecuta Jest en modo observacion. |
-| `npm run test:postman` | Ejecuta con Newman la coleccion Postman local. |
-| `npm run admin:init` | Crea o actualiza el administrador inicial. |
-| `npm run progress:backfill-scopes` | Completa ámbitos históricos de progreso. |
-| `npm run plans:backfill` | Normaliza planificaciones existentes. |
-| `npm run exercises:normalize-catalog` | Normaliza el catálogo de ejercicios. |
-| `npm run import:exercises-excel` | Importa ejercicios desde Excel. |
-| `npm run import:exercises-dataset` | Importa el dataset externo configurado. |
-| `npm run sync:cloudinary-exercises` | Sincroniza imágenes del catálogo con Cloudinary. |
-| `npm run upload:exercises-dataset-media` | Publica medios del dataset en Cloudinary. |
+| Comando                                  | Uso                                              |
+| ---------------------------------------- | ------------------------------------------------ |
+| `npm run dev`                            | Inicia la API.                                   |
+| `npm test`                               | Ejecuta pruebas Jest de API y logica de carga.   |
+| `npm run test:watch`                     | Ejecuta Jest en modo observacion.                |
+| `npm run test:postman`                   | Ejecuta con Newman la coleccion Postman local.   |
+| `npm run admin:init`                     | Crea o actualiza el administrador inicial.       |
+| `npm run progress:backfill-scopes`       | Completa ámbitos históricos de progreso.         |
+| `npm run plans:backfill`                 | Normaliza planificaciones existentes.            |
+| `npm run exercises:normalize-catalog`    | Normaliza el catálogo de ejercicios.             |
+| `npm run import:exercises-excel`         | Importa ejercicios desde Excel.                  |
+| `npm run import:exercises-dataset`       | Importa el dataset externo configurado.          |
+| `npm run sync:cloudinary-exercises`      | Sincroniza imágenes del catálogo con Cloudinary. |
+| `npm run upload:exercises-dataset-media` | Publica medios del dataset en Cloudinary.        |
 
 Los scripts de migración modifican datos persistentes. Ejecuta una copia de seguridad y valida primero en un entorno de prueba.
 

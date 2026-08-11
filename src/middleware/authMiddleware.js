@@ -1,5 +1,6 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { getDemoRestriction } from "../utils/demoMode.js";
 
 const getTokenFromRequest = (req) => {
   if (req.cookies?.jwt) return req.cookies.jwt;
@@ -28,6 +29,11 @@ export const protect = async (req, _res, next) => {
       err.statusCode = 401;
       return next(err);
     }
+    if (user.isDemo && user.demoExpiresAt && user.demoExpiresAt <= new Date()) {
+      const err = new Error("La sesion demo ha vencido");
+      err.statusCode = 401;
+      return next(err);
+    }
     if (decoded.sid) {
       const hasSession = (user.activeSessions || []).some(
         (session) => session.sessionId === decoded.sid,
@@ -45,6 +51,9 @@ export const protect = async (req, _res, next) => {
       email: user.email,
       role: user.role,
       isActive: user.isActive,
+      isDemo: Boolean(user.isDemo),
+      demoWorkspaceId: user.isDemo ? user.demoWorkspaceId || null : null,
+      demoExpiresAt: user.isDemo ? user.demoExpiresAt || null : null,
       assignedTrainerId: user.assignedTrainerId || null,
       trainingMode:
         user.role === "Cliente" && user.assignedTrainerId
@@ -55,6 +64,16 @@ export const protect = async (req, _res, next) => {
       },
       sessionId: decoded.sid || null,
     };
+
+    if (req.user.isDemo) {
+      const restriction = getDemoRestriction(req);
+      if (restriction) {
+        const err = new Error(restriction);
+        err.statusCode = 403;
+        err.code = "DEMO_ACTION_RESTRICTED";
+        return next(err);
+      }
+    }
     next();
   } catch (_err) {
     const err = new Error("No autenticado");
@@ -107,6 +126,12 @@ export const ensureCanAccessOwner = async (req, ownerId) => {
     role: "Cliente",
     assignedTrainerId: req.user.id,
     isActive: true,
+    ...(req.user.isDemo
+      ? {
+          isDemo: true,
+          demoWorkspaceId: req.user.demoWorkspaceId,
+        }
+      : {}),
   });
   return Boolean(athlete);
 };

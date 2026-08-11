@@ -120,7 +120,7 @@ router.get("/", async (req, res, next) => {
   try {
     const athleteId = String(req.query.athleteId || req.user.id).trim();
     if (
-      req.user.role !== "Admin" &&
+      (req.user.role !== "Admin" || req.user.isDemo) &&
       !(await ensureCanAccessOwner(req, athleteId))
     ) {
       return res
@@ -153,8 +153,7 @@ router.post("/", async (req, res, next) => {
   try {
     if (req.user.role === "Entrenador") {
       return res.status(403).json({
-        error:
-          "Los coaches crean plantillas y las asignan desde Mis atletas",
+        error: "Los coaches crean plantillas y las asignan desde Mis atletas",
       });
     }
     if (

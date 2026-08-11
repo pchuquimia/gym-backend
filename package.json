@@ -9,6 +9,7 @@
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "test:postman": "newman run postman/Apex-Performance.postman_collection.json -e postman/Apex-Performance.postman_environment.json --bail",
+    "demo:verify": "node scripts/verifyDemoWorkspace.js",
     "admin:init": "node scripts/createAdminAndAssignData.js",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
