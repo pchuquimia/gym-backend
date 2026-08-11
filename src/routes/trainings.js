@@ -6,6 +6,7 @@ import {
   protect,
 } from "../middleware/authMiddleware.js";
 import Training from "../models/Training.js";
+import Exercise from "../models/Exercise.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
@@ -13,6 +14,10 @@ import {
   getExerciseLanguage,
   localizeExerciseReferences,
 } from "../utils/exerciseLocalization.js";
+import {
+  classifyExerciseLoad,
+  getTrainingLoadMetrics,
+} from "../utils/trainingLoad.js";
 
 const router = Router();
 
@@ -59,20 +64,51 @@ const toIsoWeek = (iso) => {
   return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
 };
 
-const getEntryVolume = (entry) => {
-  if (!entry) return 0;
-  const weight = Number(entry.weightKg ?? entry.weight ?? entry.kg ?? 0);
-  const reps = Number(entry.reps ?? 0);
-  return weight * reps;
-};
+const enrichTrainingExercises = async (exercises = []) => {
+  if (!Array.isArray(exercises) || !exercises.length) return [];
+  const ids = Array.from(
+    new Set(exercises.map((exercise) => String(exercise.exerciseId || "")).filter(Boolean)),
+  );
+  const catalog = ids.length
+    ? await Exercise.find(
+        { _id: { $in: ids } },
+        "_id primaryMuscleGroup primaryMuscles secondaryMuscles stabilizerMuscles equipment loadType name",
+      ).lean()
+    : [];
+  const byId = new Map(catalog.map((exercise) => [String(exercise._id), exercise]));
 
-const getSetVolume = (set) => {
-  if (!set) return 0;
-  const entries =
-    Array.isArray(set.entries) && set.entries.length ? set.entries : null;
-  if (entries)
-    return entries.reduce((acc, entry) => acc + getEntryVolume(entry), 0);
-  return getEntryVolume(set);
+  return exercises.map((exercise) => {
+    const metadata = byId.get(String(exercise.exerciseId || "")) || {};
+    const enriched = {
+      ...exercise,
+      primaryMuscleGroup:
+        exercise.primaryMuscleGroup ||
+        metadata.primaryMuscleGroup ||
+        exercise.muscleGroup ||
+        "",
+      primaryMuscles:
+        exercise.primaryMuscles?.length
+          ? exercise.primaryMuscles
+          : metadata.primaryMuscles || [],
+      secondaryMuscles:
+        exercise.secondaryMuscles?.length
+          ? exercise.secondaryMuscles
+          : metadata.secondaryMuscles || [],
+      stabilizerMuscles:
+        exercise.stabilizerMuscles?.length
+          ? exercise.stabilizerMuscles
+          : metadata.stabilizerMuscles || [],
+      equipment:
+        exercise.equipment?.length ? exercise.equipment : metadata.equipment || [],
+      loadType: exercise.loadType || metadata.loadType || "",
+    };
+    enriched.loadType = classifyExerciseLoad({
+      ...metadata,
+      ...enriched,
+      exerciseName: exercise.exerciseName || metadata.name,
+    });
+    return enriched;
+  });
 };
 
 const getOrderContext = (plannedOrder, actualOrder, isExtra = false) => {
@@ -115,7 +151,6 @@ const buildOrderSignature = (exercises = []) =>
     .join("|");
 
 const resolveTrainingProgressScope = async (req, payload, current = null) => {
-  if (payload.progressScopeId) return payload.progressScopeId;
   if (current?.progressScopeId) return current.progressScopeId;
   if (!payload.routineId) return "";
 
@@ -152,34 +187,60 @@ const normalizeTimeEvents = (events = []) =>
 
 const calculateTimingSummary = (events = []) => {
   let running = false;
+  let resting = false;
   let activeExerciseId = null;
   let lastAt = null;
+  let pauseStartedAt = null;
   let durationSeconds = 0;
+  let restSeconds = 0;
+  let pauseSeconds = 0;
   const exerciseMap = new Map();
+  const exerciseRestMap = new Map();
+  const normalizedEvents = normalizeTimeEvents(events);
+  const hasRestEvents = normalizedEvents.some((event) =>
+    ["rest_start", "rest_end"].includes(event.type),
+  );
 
   const accrue = (nextAt) => {
     if (!running || lastAt == null || nextAt <= lastAt) return;
     const delta = Math.floor((nextAt - lastAt) / 1000);
     if (delta <= 0) return;
     durationSeconds += delta;
+    if (resting) restSeconds += delta;
     if (activeExerciseId) {
       exerciseMap.set(
         activeExerciseId,
         (exerciseMap.get(activeExerciseId) || 0) + delta,
       );
+      if (resting) {
+        exerciseRestMap.set(
+          activeExerciseId,
+          (exerciseRestMap.get(activeExerciseId) || 0) + delta,
+        );
+      }
     }
   };
 
-  normalizeTimeEvents(events).forEach((event) => {
+  normalizedEvents.forEach((event) => {
     const at = parseEventTime(event.at);
     accrue(at);
     if (event.type === "session_start" || event.type === "session_resume") {
+      if (pauseStartedAt != null && at > pauseStartedAt) {
+        pauseSeconds += Math.floor((at - pauseStartedAt) / 1000);
+      }
       running = true;
+      resting = false;
+      pauseStartedAt = null;
       lastAt = at;
       return;
     }
     if (event.type === "session_pause" || event.type === "session_end") {
+      if (pauseStartedAt != null && at > pauseStartedAt) {
+        pauseSeconds += Math.floor((at - pauseStartedAt) / 1000);
+      }
       running = false;
+      resting = false;
+      pauseStartedAt = event.type === "session_pause" ? at : null;
       lastAt = at;
       return;
     }
@@ -187,16 +248,39 @@ const calculateTimingSummary = (events = []) => {
       if (!running) running = true;
       activeExerciseId = event.exerciseId || null;
       lastAt = at;
+      return;
+    }
+    if (event.type === "rest_start" && running) {
+      resting = true;
+      lastAt = at;
+      return;
+    }
+    if (event.type === "rest_end") {
+      resting = false;
+      lastAt = at;
     }
   });
 
   return {
     durationSeconds,
+    workSeconds: hasRestEvents
+      ? Math.max(0, durationSeconds - restSeconds)
+      : null,
+    restSeconds: hasRestEvents ? restSeconds : null,
+    pauseSeconds,
+    hasRestEvents,
     exerciseDurations: Array.from(exerciseMap.entries()).map(
-      ([exerciseId, seconds]) => ({
-        exerciseId,
-        durationSeconds: seconds,
-      }),
+      ([exerciseId, seconds]) => {
+        const exerciseRestSeconds = exerciseRestMap.get(exerciseId) || 0;
+        return {
+          exerciseId,
+          durationSeconds: seconds,
+          workSeconds: hasRestEvents
+            ? Math.max(0, seconds - exerciseRestSeconds)
+            : null,
+          restSeconds: hasRestEvents ? exerciseRestSeconds : null,
+        };
+      },
     ),
   };
 };
@@ -262,14 +346,7 @@ router.get("/summary", async (req, res, next) => {
     trainings.forEach((t) => {
       const date = t.date || t.createdAt;
       if (!date) return;
-      const vol =
-        typeof t.totalVolume === "number"
-          ? t.totalVolume
-          : (t.exercises || []).reduce((acc, ex) => {
-              const sets = Array.isArray(ex.sets) ? ex.sets : [];
-              const v = sets.reduce((s, set) => s + getSetVolume(set), 0);
-              return acc + v;
-            }, 0);
+      const vol = getTrainingLoadMetrics(t.exercises).recordedKg;
       totalVolume += vol;
       const wk = toIsoWeek(date);
       if (!wk) return;
@@ -499,7 +576,9 @@ router.post("/", async (req, res, next) => {
       payload.scheduleOverride = undefined;
     }
     payload.progressScopeId = await resolveTrainingProgressScope(req, payload);
-    payload.exercises = normalizeExerciseOrders(payload.exercises);
+    payload.exercises = normalizeExerciseOrders(
+      await enrichTrainingExercises(payload.exercises),
+    );
     payload.orderSignature =
       String(payload.orderSignature || "").trim() ||
       buildOrderSignature(payload.exercises);
@@ -509,15 +588,12 @@ router.post("/", async (req, res, next) => {
       payload.durationSeconds = timingSummary.durationSeconds;
       payload.exerciseDurations = timingSummary.exerciseDurations;
     }
-    // calcular volumen total si vienen sets
-    const totalVolume =
-      Array.isArray(payload.exercises) &&
-      payload.exercises.reduce((acc, ex) => {
-        const sets = Array.isArray(ex.sets) ? ex.sets : [];
-        const vol = sets.reduce((s, set) => s + getSetVolume(set), 0);
-        return acc + vol;
-      }, 0);
-    payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0;
+    payload.workSeconds = timingSummary.workSeconds;
+    payload.restSeconds = timingSummary.restSeconds;
+    payload.pauseSeconds = timingSummary.pauseSeconds;
+    const loadMetrics = getTrainingLoadMetrics(payload.exercises);
+    payload.totalVolume = loadMetrics.recordedKg;
+    payload.volumeBreakdown = loadMetrics;
 
     let training;
     try {
@@ -653,7 +729,9 @@ router.put("/:id", async (req, res, next) => {
       payload,
       current,
     );
-    payload.exercises = normalizeExerciseOrders(payload.exercises);
+    payload.exercises = normalizeExerciseOrders(
+      await enrichTrainingExercises(payload.exercises),
+    );
     payload.orderSignature =
       String(payload.orderSignature || "").trim() ||
       buildOrderSignature(payload.exercises);
@@ -666,14 +744,12 @@ router.put("/:id", async (req, res, next) => {
       payload.durationSeconds = timingSummary.durationSeconds;
       payload.exerciseDurations = timingSummary.exerciseDurations;
     }
-    const totalVolume =
-      Array.isArray(payload.exercises) &&
-      payload.exercises.reduce((acc, ex) => {
-        const sets = Array.isArray(ex.sets) ? ex.sets : [];
-        const vol = sets.reduce((s, set) => s + getSetVolume(set), 0);
-        return acc + vol;
-      }, 0);
-    payload.totalVolume = Number.isFinite(totalVolume) ? totalVolume : 0;
+    payload.workSeconds = timingSummary.workSeconds;
+    payload.restSeconds = timingSummary.restSeconds;
+    payload.pauseSeconds = timingSummary.pauseSeconds;
+    const loadMetrics = getTrainingLoadMetrics(payload.exercises);
+    payload.totalVolume = loadMetrics.recordedKg;
+    payload.volumeBreakdown = loadMetrics;
     const updated = await Training.findByIdAndUpdate(req.params.id, payload, {
       new: true,
     });

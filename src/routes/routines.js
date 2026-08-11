@@ -37,7 +37,6 @@ const canManageRoutine = async (req, routine) => {
 };
 
 const resolveProgressScope = async (req, payload, ownerId) => {
-  if (payload.progressScopeId) return payload.progressScopeId;
   if (payload.progressMode === "inherit" && payload.sourceRoutineId) {
     const source = await Routine.findById(
       payload.sourceRoutineId,
@@ -45,6 +44,7 @@ const resolveProgressScope = async (req, payload, ownerId) => {
     ).lean();
     if (
       source &&
+      String(source.ownerId || "") === String(ownerId || "") &&
       (await ensureCanAccessOwner(req, source.ownerId || ownerId)) &&
       source.progressScopeId
     ) {
@@ -179,11 +179,9 @@ router.put("/:id", async (req, res, next) => {
     payload.isAvailableForTraining = current.isAvailableForTraining !== false;
     payload.progressMode =
       payload.progressMode === "inherit" ? "inherit" : "fresh";
-    if (!payload.progressScopeId) {
-      payload.progressScopeId =
-        current.progressScopeId ||
-        (await resolveProgressScope(req, payload, payload.ownerId));
-    }
+    payload.progressScopeId =
+      current.progressScopeId ||
+      (await resolveProgressScope(req, payload, payload.ownerId));
     const routine = await Routine.findByIdAndUpdate(req.params.id, payload, {
       new: true,
     });

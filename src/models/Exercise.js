@@ -54,6 +54,11 @@ const ExerciseSchema = new mongoose.Schema(
     movementPattern: { type: String, default: "" },
     movementPatterns: { type: [String], default: [] },
     equipment: { type: [String], default: [] },
+    loadType: {
+      type: String,
+      enum: ["", "external", "machine", "bodyweight", "assisted", "cardio", "unknown"],
+      default: "",
+    },
     exerciseType: { type: String, default: "" },
     laterality: { type: String, default: "" },
     kineticChain: { type: String, default: "" },

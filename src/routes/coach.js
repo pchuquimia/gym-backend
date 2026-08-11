@@ -1105,6 +1105,8 @@ router.post(
       if (!source) {
         return res.status(404).json({ error: "Rutina no encontrada" });
       }
+      const progressMode =
+        req.body.progressMode === "inherit" ? "inherit" : "fresh";
       const routine = await Routine.create({
         _id: `routine_${crypto.randomUUID()}`,
         name: `${source.name} (Copia)`,
@@ -1117,8 +1119,11 @@ router.post(
         branch: req.body.branch || "general",
         exercises: source.exercises || [],
         ownerId: athlete._id.toString(),
-        progressMode: "fresh",
-        progressScopeId: `scope_${crypto.randomUUID()}`,
+        progressMode,
+        progressScopeId:
+          progressMode === "inherit" && source.progressScopeId
+            ? source.progressScopeId
+            : `scope_${crypto.randomUUID()}`,
         sourceRoutineId: source.sourceRoutineId || source._id,
         sourceRoutineVersion: Number(source.sourceRoutineVersion || 1),
         kind: "assigned",
