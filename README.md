@@ -64,7 +64,7 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Cookies         | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN`                       |
 | CORS            | `CLIENT_URL`, `CLIENT_URLS`                                                                 |
 | Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`, `DEMO_HISTORY_TRAININGS`, `DEMO_CLIENT_URL`            |
-| Autenticación   | `AUTH_EXPOSE_TOKEN`, `EMAIL_VERIFICATION_REQUIRED`                                          |
+| Autenticación   | `EMAIL_VERIFICATION_REQUIRED`                                                               |
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
 | Imágenes con IA | `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL`                                                      |

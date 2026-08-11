@@ -33,16 +33,10 @@ const signToken = (user, sessionId) =>
 const sanitizeUser = (user) =>
   typeof user.toSafeJSON === "function" ? user.toSafeJSON() : user;
 
-const shouldExposeToken = () =>
-  ["true", "1", "yes"].includes(
-    String(process.env.AUTH_EXPOSE_TOKEN || "").toLowerCase(),
-  );
-
-const authResponse = (user, token) => {
-  const payload = { user: sanitizeUser(user) };
-  if (shouldExposeToken()) payload.token = token;
-  return payload;
-};
+const authResponse = (user, token) => ({
+  user: sanitizeUser(user),
+  token,
+});
 
 const parseDevice = (userAgent = "") => {
   const ua = String(userAgent);
@@ -274,6 +268,7 @@ const register = asyncHandler(async (req, res) => {
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
   res.status(201).json(authResponse(user, token));
 });
 
@@ -314,6 +309,7 @@ const login = asyncHandler(async (req, res) => {
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
 });
 
@@ -390,6 +386,7 @@ const verifyEmail = asyncHandler(async (req, res) => {
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
 });
 
