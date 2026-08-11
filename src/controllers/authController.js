@@ -108,6 +108,21 @@ const createSession = (req) => {
   };
 };
 
+const persistLoginSession = (userId, session, fields = {}) =>
+  User.updateOne(
+    { _id: userId },
+    {
+      $set: fields,
+      $push: {
+        activeSessions: {
+          $each: [session],
+          $position: 0,
+          $slice: 10,
+        },
+      },
+    },
+  );
+
 const invalidCredentials = () => {
   const err = new Error("Credenciales inválidas");
   err.statusCode = 401;
@@ -286,12 +301,16 @@ const login = asyncHandler(async (req, res) => {
     throw err;
   }
 
+  const lastLoginAt = new Date();
+  const session = createSession(req);
+  await persistLoginSession(user._id, session, {
+    failedLoginAttempts: 0,
+    lockUntil: null,
+    lastLoginAt,
+  });
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
-  user.lastLoginAt = new Date();
-  const session = createSession(req);
-  user.activeSessions = [session, ...(user.activeSessions || [])].slice(0, 10);
-  await user.save();
+  user.lastLoginAt = lastLoginAt;
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
@@ -405,14 +424,20 @@ const devAdminLogin = asyncHandler(async (req, res) => {
     });
   }
 
+  const lastLoginAt = new Date();
+  const session = createSession(req);
+  await persistLoginSession(user._id, session, {
+    role: "Admin",
+    isActive: true,
+    failedLoginAttempts: 0,
+    lockUntil: null,
+    lastLoginAt,
+  });
   user.role = "Admin";
   user.isActive = true;
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
-  user.lastLoginAt = new Date();
-  const session = createSession(req);
-  user.activeSessions = [session, ...(user.activeSessions || [])].slice(0, 10);
-  await user.save();
+  user.lastLoginAt = lastLoginAt;
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);

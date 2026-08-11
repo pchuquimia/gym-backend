@@ -63,7 +63,7 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | --------------- | ------------------------------------------------------------------------------------------- |
 | Cookies         | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN`                       |
 | CORS            | `CLIENT_URL`, `CLIENT_URLS`                                                                 |
-| Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`, `DEMO_CLIENT_URL`                                      |
+| Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`, `DEMO_HISTORY_TRAININGS`, `DEMO_CLIENT_URL`            |
 | Autenticación   | `AUTH_EXPOSE_TOKEN`, `EMAIL_VERIFICATION_REQUIRED`                                          |
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
@@ -92,6 +92,8 @@ Las rutas privadas pasan por autenticación JWT. El acceso a datos de atletas se
 ## Demo publica aislada
 
 Activa `DEMO_MODE=true` para mostrar accesos temporales como atleta, coach y administrador. Cada acceso crea un workspace independiente con planificacion, rutinas, sesiones, pesajes y fechas relativas al dia actual. `DEMO_WORKSPACE_HOURS` define su vigencia entre 1 y 168 horas; el valor recomendado es `12`.
+
+`DEMO_HISTORY_TRAININGS` controla el historial de la cuenta principal entre 40 y 240 sesiones. El valor recomendado `200` genera aproximadamente un ano de actividad, cuatro planes, cuatro rutinas y 120 pesajes; los atletas secundarios usan una muestra reducida de 80 sesiones.
 
 Las cuentas demo no pueden modificar usuarios, credenciales, relaciones de coach, imagenes, plantillas globales ni el catalogo compartido. El administrador demo solo recibe usuarios ficticios de su workspace. Los workspaces vencidos se eliminan durante el siguiente acceso demo, incluidos sus entrenamientos y documentos asociados.
 

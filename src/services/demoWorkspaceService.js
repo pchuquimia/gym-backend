@@ -10,6 +10,12 @@ import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
 import { DEMO_ROLES, getDemoLifetimeHours } from "../utils/demoMode.js";
+import {
+  buildDemoTrainingOffsets,
+  buildDemoWeightOffsets,
+  demoProgressionKg,
+  getDemoHistoryTrainingCount,
+} from "../utils/demoHistory.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ROLE_LABELS = {
@@ -53,21 +59,26 @@ const routineExercise = (exercise, sets = 3) => ({
   imagePublicId: exercise.imagePublicId || "",
 });
 
-const buildSets = (exerciseIndex, trainingIndex) =>
+const buildSets = (exerciseIndex, trainingIndex, totalTrainings) =>
   [0, 1, 2].map((setIndex) => {
-    const weightKg =
-      20 + exerciseIndex * 5 + trainingIndex * 2 + setIndex * 2.5;
+    const rawWeight =
+      22.5 +
+      exerciseIndex * 7.5 +
+      demoProgressionKg(trainingIndex, totalTrainings) +
+      setIndex * 1.25;
+    const weightKg = Math.round(rawWeight * 2) / 2;
+    const done = !(trainingIndex % 19 === 0 && setIndex === 2);
     return {
       weightKg,
-      reps: Math.max(6, 12 - setIndex),
-      done: true,
+      reps: Math.max(6, 12 - setIndex - (trainingIndex % 4 === 3 ? 2 : 0)),
+      done,
       order: setIndex + 1,
       seriesType: "serie",
       entries: [],
     };
   });
 
-const buildTrainingExercises = (routine, trainingIndex) =>
+const buildTrainingExercises = (routine, trainingIndex, totalTrainings) =>
   routine.exercises.map((exercise, exerciseIndex) => ({
     exerciseId: exercise.exerciseId,
     exerciseName: exercise.name,
@@ -78,7 +89,7 @@ const buildTrainingExercises = (routine, trainingIndex) =>
     plannedOrder: exerciseIndex + 1,
     actualOrder: exerciseIndex + 1,
     movementMode: exercise.movementMode,
-    sets: buildSets(exerciseIndex, trainingIndex),
+    sets: buildSets(exerciseIndex, trainingIndex, totalTrainings),
   }));
 
 const trainingVolume = (exercises) =>
@@ -86,7 +97,7 @@ const trainingVolume = (exercises) =>
     (total, exercise) =>
       total +
       exercise.sets.reduce(
-        (subtotal, set) => subtotal + set.weightKg * set.reps,
+        (subtotal, set) => subtotal + (set.done ? set.weightKg * set.reps : 0),
         0,
       ),
     0,
@@ -99,11 +110,11 @@ const loadCatalogExercises = async () => {
     mergedIntoExerciseId: null,
   })
     .sort({ image: -1, name: 1 })
-    .limit(12)
+    .limit(16)
     .lean();
   if (exercises.length) return exercises;
   return Exercise.find({ isActive: { $ne: false } })
-    .limit(12)
+    .limit(16)
     .lean();
 };
 
@@ -149,13 +160,17 @@ const seedOwnerWorkspace = async ({
   compact = false,
 }) => {
   const ownerId = owner._id.toString();
-  const selected = exercises.slice(0, compact ? 6 : 9);
-  const groups = [
-    selected.slice(0, 3),
-    selected.slice(3, 6),
-    selected.slice(6, 9),
+  const selected = exercises.slice(0, compact ? 9 : 12);
+  const groups = Array.from(
+    { length: Math.ceil(selected.length / 3) },
+    (_, index) => selected.slice(index * 3, index * 3 + 3),
+  );
+  const routineNames = [
+    "Empuje y torso",
+    "Jale y espalda",
+    "Piernas completas",
+    "Full body",
   ];
-  const routineNames = ["Empuje y torso", "Piernas completas", "Full body"];
   const routines = await Routine.insertMany(
     groups
       .filter((group) => group.length)
@@ -163,11 +178,11 @@ const seedOwnerWorkspace = async ({
         _id: demoId(workspaceId, `${ownerId.slice(-5)}_routine_${index + 1}`),
         name: routineNames[index],
         description: "Rutina de demostracion con datos ficticios.",
-        goal: index === 1 ? "Fuerza" : "Hipertrofia",
+        goal: index === 2 ? "Fuerza" : "Hipertrofia",
         level: "intermediate",
-        tags: [index === 1 ? "fuerza" : "hipertrofia", "demo"],
-        branch: index === 1 ? "miraflores" : "sopocachi",
-        exerciseOrderMode: index === 2 ? "free" : "muscle_blocks",
+        tags: [index === 2 ? "fuerza" : "hipertrofia", "demo"],
+        branch: index % 2 ? "miraflores" : "sopocachi",
+        exerciseOrderMode: index === 3 ? "free" : "muscle_blocks",
         exercises: group.map((exercise) => routineExercise(exercise)),
         ownerId,
         progressScopeId: demoId(
@@ -183,32 +198,21 @@ const seedOwnerWorkspace = async ({
   );
 
   const today = new Date();
-  const planStart = addDays(mondayOf(today), -14);
   const scheduleTypes = [
     "training",
-    "rest",
     "training",
     "recovery",
     "training",
     "rest",
+    "training",
     "rest",
   ];
-  const plan = await TrainingPlan.create({
-    name: "Plan demo de 8 semanas",
-    athleteId: ownerId,
-    createdById: ownerId,
-    coachId: owner.assignedTrainerId || null,
-    level: "intermediate",
-    goal: "Fuerza e hipertrofia",
-    durationWeeks: 8,
-    startDate: planStart,
-    scheduleMode: "fixed",
-    status: "active",
-    weeklySchedule: scheduleTypes.map((type, index) => {
+  const buildSchedule = () =>
+    scheduleTypes.map((type, index) => {
+      const trainingIndexes = [0, 1, 3, 5];
+      const routineIndex = trainingIndexes.indexOf(index);
       const routine =
-        type === "training"
-          ? routines[index === 0 ? 0 : index === 2 ? 1 : 2]
-          : null;
+        type === "training" ? routines[routineIndex % routines.length] : null;
       return {
         slotId: `slot_${index + 1}`,
         order: index + 1,
@@ -220,34 +224,112 @@ const seedOwnerWorkspace = async ({
         routineId: routine?._id || null,
         sourceRoutineId: routine?._id || null,
       };
-    }),
-  });
+    });
+
+  const planSpecs = [
+    {
+      name: "Fundamentos y tecnica",
+      startOffset: -364,
+      durationWeeks: 12,
+      level: "beginner",
+      goal: "Base tecnica",
+      status: "completed",
+    },
+    {
+      name: "Hipertrofia base",
+      startOffset: -252,
+      durationWeeks: 12,
+      level: "intermediate",
+      goal: "Hipertrofia",
+      status: "completed",
+    },
+    {
+      name: "Fuerza progresiva",
+      startOffset: -140,
+      durationWeeks: 12,
+      level: "intermediate",
+      goal: "Fuerza",
+      status: "completed",
+    },
+    {
+      name: "Rendimiento actual",
+      startOffset: -14,
+      durationWeeks: 8,
+      level: "intermediate",
+      goal: "Fuerza e hipertrofia",
+      status: "active",
+    },
+  ];
+  const plans = [];
+  for (const spec of planSpecs) {
+    plans.push(
+      await TrainingPlan.create({
+        name: spec.name,
+        athleteId: ownerId,
+        createdById: owner.assignedTrainerId || ownerId,
+        coachId: owner.assignedTrainerId || null,
+        level: spec.level,
+        goal: spec.goal,
+        durationWeeks: spec.durationWeeks,
+        startDate: addDays(mondayOf(today), spec.startOffset),
+        scheduleMode: "fixed",
+        status: spec.status,
+        weeklySchedule: buildSchedule(),
+      }),
+    );
+  }
+  const plan = plans.at(-1);
 
   await Routine.updateMany(
     { _id: { $in: routines.map((routine) => routine._id) } },
     { $set: { trainingPlanId: plan._id.toString(), assignmentType: "plan" } },
   );
 
-  const offsets = compact ? [-8, -3] : [-13, -9, -6, -2];
+  const fullTrainingCount = getDemoHistoryTrainingCount();
+  const trainingCount = compact
+    ? Math.min(80, Math.max(40, Math.round(fullTrainingCount * 0.4)))
+    : fullTrainingCount;
+  const offsets = buildDemoTrainingOffsets(trainingCount, today);
+  const slotIds = ["slot_1", "slot_2", "slot_4", "slot_6"];
   const trainings = offsets.map((offset, trainingIndex) => {
-    const routine = routines[trainingIndex % routines.length];
-    const trainingExercises = buildTrainingExercises(routine, trainingIndex);
+    const routineIndex = trainingIndex % routines.length;
+    const routine = routines[routineIndex];
+    const trainingExercises = buildTrainingExercises(
+      routine,
+      trainingIndex,
+      trainingCount,
+    );
     const totalVolume = trainingVolume(trainingExercises);
+    const completedSets = trainingExercises.reduce(
+      (total, exercise) =>
+        total + exercise.sets.filter((set) => set.done).length,
+      0,
+    );
+    const recordedSets = trainingExercises.length * 3;
+    const trainingDate = dateKey(addDays(today, offset));
+    const matchingPlan = plans.find(
+      (candidate) =>
+        trainingDate >= dateKey(candidate.startDate) &&
+        trainingDate <= dateKey(candidate.endDate),
+    );
+    const durationSeconds = 2700 + (trainingIndex % 7) * 240;
+    const restSeconds = 600 + (trainingIndex % 4) * 90;
+    const pauseSeconds = 90 + (trainingIndex % 3) * 45;
     return {
       _id: demoId(
         workspaceId,
         `${ownerId.slice(-5)}_training_${trainingIndex + 1}`,
       ),
-      date: dateKey(addDays(today, offset)),
-      durationSeconds: 3000 + trainingIndex * 240,
-      workSeconds: 2100 + trainingIndex * 180,
-      restSeconds: 720,
-      pauseSeconds: 180,
+      date: trainingDate,
+      durationSeconds,
+      workSeconds: durationSeconds - restSeconds - pauseSeconds,
+      restSeconds,
+      pauseSeconds,
       totalVolume,
       volumeBreakdown: {
-        recordedSets: trainingExercises.length * 3,
-        completedSets: trainingExercises.length * 3,
-        incompleteSets: 0,
+        recordedSets,
+        completedSets,
+        incompleteSets: recordedSets - completedSets,
         externalKg: totalVolume,
         machineKg: 0,
         unknownKg: 0,
@@ -260,8 +342,8 @@ const seedOwnerWorkspace = async ({
       },
       routineId: routine._id,
       routineName: routine.name,
-      trainingPlanId: plan._id.toString(),
-      trainingPlanSlotId: `slot_${(trainingIndex % 3) * 2 + 1}`,
+      trainingPlanId: matchingPlan?._id?.toString() || null,
+      trainingPlanSlotId: matchingPlan ? slotIds[routineIndex] : null,
       progressScopeId: routine.progressScopeId,
       branch: routine.branch,
       ownerId,
@@ -295,12 +377,21 @@ const seedOwnerWorkspace = async ({
   );
   if (sessionRows.length) await Session.insertMany(sessionRows);
 
+  const weightEntryCount = compact ? 48 : 120;
+  const weightOffsets = buildDemoWeightOffsets(weightEntryCount, today);
+  const targetWeight = Number(owner.profile?.weight || 75);
   await WeightEntry.insertMany(
-    [-12, -7, -3, 0].map((offset, index) => ({
+    weightOffsets.map((offset, index) => ({
       ownerId,
       dateKey: dateKey(addDays(today, offset)),
-      weightKg: Number((75.6 - index * 0.25).toFixed(1)),
-      note: index === 3 ? "Pesaje demo de hoy" : "",
+      weightKg: Number(
+        (
+          targetWeight +
+          3.6 * (1 - index / Math.max(1, weightOffsets.length - 1)) +
+          Math.sin(index * 0.82) * 0.28
+        ).toFixed(1),
+      ),
+      note: index === weightOffsets.length - 1 ? "Pesaje demo de hoy" : "",
       recordedBy: ownerId,
       source: "self",
     })),
@@ -312,7 +403,7 @@ const seedOwnerWorkspace = async ({
     allowedBranches: ["sopocachi", "miraflores"],
   });
 
-  return { plan, routines, trainings };
+  return { plan, plans, routines, trainings };
 };
 
 export const cleanupExpiredDemoWorkspaces = async () => {
