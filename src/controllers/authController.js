@@ -399,12 +399,18 @@ const devAdminLogin = asyncHandler(async (req, res) => {
     String(process.env.DEV_ADMIN_LOGIN || "").toLowerCase() === "true";
   const host = req.hostname;
   const ip = req.ip || "";
+  const isPrivateNetworkAddress = (value = "") =>
+    /^(::ffff:)?(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(
+      String(value),
+    );
   const isLocal =
     host === "localhost" ||
     host === "127.0.0.1" ||
     ip === "::1" ||
     ip === "127.0.0.1" ||
-    ip === "::ffff:127.0.0.1";
+    ip === "::ffff:127.0.0.1" ||
+    isPrivateNetworkAddress(host) ||
+    isPrivateNetworkAddress(ip);
 
   if (!isDevAdminEnabled || !isLocal) {
     const err = new Error("No autorizado");
@@ -425,21 +431,26 @@ const devAdminLogin = asyncHandler(async (req, res) => {
   }
 
   const lastLoginAt = new Date();
-  const session = createSession(req);
-  await persistLoginSession(user._id, session, {
-    role: "Admin",
-    isActive: true,
-    failedLoginAttempts: 0,
-    lockUntil: null,
-    lastLoginAt,
-  });
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $set: {
+        role: "Admin",
+        isActive: true,
+        failedLoginAttempts: 0,
+        lockUntil: null,
+        lastLoginAt,
+      },
+    },
+  );
   user.role = "Admin";
   user.isActive = true;
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
   user.lastLoginAt = lastLoginAt;
 
-  const token = signToken(user, session.sessionId);
+  // Development access must not evict real device sessions on repeated reloads.
+  const token = signToken(user, null);
   setAuthCookie(res, token);
   res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
