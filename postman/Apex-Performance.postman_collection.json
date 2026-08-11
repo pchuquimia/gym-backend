@@ -1,0 +1,83 @@
+{
+  "info": {
+    "_postman_id": "c3d72663-a926-4615-981c-3c341659031b",
+    "name": "Apex Performance API",
+    "description": "Pruebas de contrato para la API local. Ejecutar en orden para conservar la cookie de la sesion administrativa de desarrollo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 - Health",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/health" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('API disponible', function () { pm.response.to.have.status(200); });",
+          "pm.test('Contrato health valido', function () { pm.expect(pm.response.json()).to.eql({ ok: true }); });"
+        ] }
+      }]
+    },
+    {
+      "name": "02 - Autenticacion admin local",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{}" },
+        "url": "{{baseUrl}}/api/auth/dev-admin"
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Admin de desarrollo autenticado', function () { pm.response.to.have.status(200); });",
+          "var authResponseBody = pm.response.json();",
+          "pm.test('Respuesta contiene usuario admin', function () { pm.expect(authResponseBody.user.role).to.eql('Admin'); });",
+          "if (authResponseBody.token) pm.environment.set('token', authResponseBody.token);"
+        ] }
+      }]
+    },
+    {
+      "name": "03 - Usuario actual",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/auth/me" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Sesion vigente', function () { pm.response.to.have.status(200); });",
+          "pm.test('Usuario seguro', function () { var currentUserBody = pm.response.json(); pm.expect(currentUserBody.user).to.be.an('object'); pm.expect(currentUserBody.user).not.to.have.property('password'); });"
+        ] }
+      }]
+    },
+    {
+      "name": "04 - Catalogo de ejercicios",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/exercises?page=1&limit=5&language=es" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Catalogo accesible', function () { pm.response.to.have.status(200); });",
+          "pm.test('Catalogo en arreglo', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+        ] }
+      }]
+    },
+    {
+      "name": "05 - Rutinas propias",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/routines" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Rutinas protegidas accesibles', function () { pm.response.to.have.status(200); });",
+          "pm.test('Rutinas en arreglo', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+        ] }
+      }]
+    },
+    {
+      "name": "06 - Historial de entrenamientos",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/trainings" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": [
+          "pm.test('Historial protegido accesible', function () { pm.response.to.have.status(200); });",
+          "pm.test('Historial en arreglo', function () { pm.expect(pm.response.json()).to.be.an('array'); });"
+        ] }
+      }]
+    }
+  ]
+}

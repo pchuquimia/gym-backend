@@ -93,6 +93,9 @@ Las rutas privadas pasan por autenticación JWT. El acceso a datos de atletas se
 | Comando | Uso |
 | --- | --- |
 | `npm run dev` | Inicia la API. |
+| `npm test` | Ejecuta pruebas Jest de API y logica de carga. |
+| `npm run test:watch` | Ejecuta Jest en modo observacion. |
+| `npm run test:postman` | Ejecuta con Newman la coleccion Postman local. |
 | `npm run admin:init` | Crea o actualiza el administrador inicial. |
 | `npm run progress:backfill-scopes` | Completa ámbitos históricos de progreso. |
 | `npm run plans:backfill` | Normaliza planificaciones existentes. |
@@ -103,6 +106,20 @@ Las rutas privadas pasan por autenticación JWT. El acceso a datos de atletas se
 | `npm run upload:exercises-dataset-media` | Publica medios del dataset en Cloudinary. |
 
 Los scripts de migración modifican datos persistentes. Ejecuta una copia de seguridad y valida primero en un entorno de prueba.
+
+## Pruebas automatizadas
+
+- **Jest** valida la clasificacion de carga, tonelaje, series completadas y utilidades del backend.
+- **Supertest** verifica el contrato HTTP basico de Express sin abrir un puerto adicional.
+- **Postman/Newman** valida salud, autenticacion local, usuario actual, catalogo, rutinas e historial contra la API real.
+
+Para ejecutar Postman, inicia primero el backend en `http://localhost:4000` y luego usa:
+
+```powershell
+npm run test:postman
+```
+
+La coleccion y el entorno importables en Postman se encuentran en `postman/`. El flujo de autenticacion administrativa es exclusivo de desarrollo y no debe ejecutarse contra produccion.
 
 ## Estructura
 
