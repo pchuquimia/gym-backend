@@ -63,7 +63,7 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | --------------- | ------------------------------------------------------------------------------------------- |
 | Cookies         | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN`                       |
 | CORS            | `CLIENT_URL`, `CLIENT_URLS`                                                                 |
-| Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`                                                         |
+| Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`, `DEMO_CLIENT_URL`                                      |
 | Autenticación   | `AUTH_EXPOSE_TOKEN`, `EMAIL_VERIFICATION_REQUIRED`                                          |
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
@@ -95,7 +95,7 @@ Activa `DEMO_MODE=true` para mostrar accesos temporales como atleta, coach y adm
 
 Las cuentas demo no pueden modificar usuarios, credenciales, relaciones de coach, imagenes, plantillas globales ni el catalogo compartido. El administrador demo solo recibe usuarios ficticios de su workspace. Los workspaces vencidos se eliminan durante el siguiente acceso demo, incluidos sus entrenamientos y documentos asociados.
 
-La demo necesita un catalogo de ejercicios ya importado. En el proveedor de despliegue configura `DEMO_MODE=true`; no se requiere una variable adicional en el frontend.
+La demo necesita un catalogo de ejercicios ya importado. Configura `DEMO_CLIENT_URL` con la direccion exacta del frontend dedicado; ese origen se agrega a CORS y es el unico que puede iniciar demos en produccion.
 
 ## Scripts operativos
 

@@ -1,6 +1,7 @@
 import {
   getDemoLifetimeHours,
   getDemoRestriction,
+  isDemoRequestOriginAllowed,
   isDemoModeEnabled,
   isDemoRole,
 } from "../src/utils/demoMode.js";
@@ -8,12 +9,18 @@ import {
 describe("public demo safety", () => {
   const previousMode = process.env.DEMO_MODE;
   const previousLifetime = process.env.DEMO_WORKSPACE_HOURS;
+  const previousClientUrl = process.env.DEMO_CLIENT_URL;
+  const previousNodeEnv = process.env.NODE_ENV;
 
   afterEach(() => {
     if (previousMode === undefined) delete process.env.DEMO_MODE;
     else process.env.DEMO_MODE = previousMode;
     if (previousLifetime === undefined) delete process.env.DEMO_WORKSPACE_HOURS;
     else process.env.DEMO_WORKSPACE_HOURS = previousLifetime;
+    if (previousClientUrl === undefined) delete process.env.DEMO_CLIENT_URL;
+    else process.env.DEMO_CLIENT_URL = previousClientUrl;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
   });
 
   test("solo habilita roles publicos conocidos", () => {
@@ -62,5 +69,19 @@ describe("public demo safety", () => {
         path: "/",
       }),
     ).toBe("");
+  });
+
+  test("en produccion limita la demo al frontend dedicado", () => {
+    process.env.NODE_ENV = "production";
+    process.env.DEMO_CLIENT_URL = "https://demo.apex.test";
+    const requestFrom = (origin) => ({ get: () => origin });
+
+    expect(
+      isDemoRequestOriginAllowed(requestFrom("https://demo.apex.test")),
+    ).toBe(true);
+    expect(
+      isDemoRequestOriginAllowed(requestFrom("https://app.apex.test")),
+    ).toBe(false);
+    expect(isDemoRequestOriginAllowed(requestFrom(""))).toBe(false);
   });
 });

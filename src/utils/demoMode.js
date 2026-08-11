@@ -21,6 +21,31 @@ export const DEMO_ROLES = Object.freeze({
 export const isDemoRole = (value) =>
   Object.prototype.hasOwnProperty.call(DEMO_ROLES, String(value || ""));
 
+const normalizeOrigin = (value) =>
+  String(value || "")
+    .trim()
+    .replace(/\/$/, "");
+
+export const getDemoAllowedOrigins = () =>
+  String(process.env.DEMO_CLIENT_URL || "")
+    .split(",")
+    .map(normalizeOrigin)
+    .filter(Boolean);
+
+export const isDemoRequestOriginAllowed = (req) => {
+  const allowedOrigins = getDemoAllowedOrigins();
+  if (!allowedOrigins.length) return true;
+
+  const origin = normalizeOrigin(req.get?.("origin"));
+  if (!origin) return process.env.NODE_ENV !== "production";
+  if (allowedOrigins.includes(origin)) return true;
+
+  return (
+    process.env.NODE_ENV !== "production" &&
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)
+  );
+};
+
 const blockedAuthPaths = new Set([
   "/account",
   "/profile",

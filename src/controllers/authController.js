@@ -13,6 +13,7 @@ import {
 } from "../utils/email.js";
 import {
   DEMO_ROLES,
+  isDemoRequestOriginAllowed,
   isDemoModeEnabled,
   isDemoRole,
 } from "../utils/demoMode.js";
@@ -297,11 +298,12 @@ const login = asyncHandler(async (req, res) => {
   res.json(authResponse(user, token));
 });
 
-const demoStatus = (_req, res) => {
+const demoStatus = (req, res) => {
+  const enabled = isDemoModeEnabled() && isDemoRequestOriginAllowed(req);
   res.set("Cache-Control", "no-store");
   res.json({
-    enabled: isDemoModeEnabled(),
-    roles: isDemoModeEnabled() ? Object.keys(DEMO_ROLES) : [],
+    enabled,
+    roles: enabled ? Object.keys(DEMO_ROLES) : [],
   });
 };
 
@@ -309,6 +311,13 @@ const demoLogin = asyncHandler(async (req, res) => {
   if (!isDemoModeEnabled()) {
     const err = new Error("La demostracion publica no esta habilitada");
     err.statusCode = 404;
+    throw err;
+  }
+  if (!isDemoRequestOriginAllowed(req)) {
+    const err = new Error(
+      "Este acceso demo solo esta disponible desde el sitio autorizado",
+    );
+    err.statusCode = 403;
     throw err;
   }
   const role = String(req.body.role || "").trim();
