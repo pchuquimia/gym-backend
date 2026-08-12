@@ -47,4 +47,47 @@ describe("trainingLoad", () => {
     expect(metrics.incompleteSets).toBe(1);
     expect(metrics.recordedKg).toBe(1300);
   });
+
+  test("calcula tonelaje con peso por lado y peso de barra", () => {
+    const metrics = getTrainingLoadMetrics([
+      {
+        name: "Press con barra",
+        equipment: ["Barra"],
+        weightBasis: "per_side",
+        barWeightKg: 20,
+        sets: [{ entries: [{ done: true, kg: 10, reps: 10 }] }],
+      },
+    ]);
+
+    expect(metrics.externalKg).toBe(400);
+  });
+
+  test("calcula tonelaje por cantidad de mancuernas", () => {
+    const metrics = getTrainingLoadMetrics([
+      {
+        name: "Press con mancuernas",
+        equipment: ["Mancuernas"],
+        weightBasis: "per_implement",
+        implementCount: 2,
+        sets: [{ entries: [{ done: true, kg: 12, reps: 10 }] }],
+      },
+    ]);
+
+    expect(metrics.externalKg).toBe(240);
+  });
+
+  test("suma el lastre corporal como carga externa", () => {
+    const metrics = getTrainingLoadMetrics([
+      {
+        name: "Dominada lastrada",
+        equipment: ["Peso corporal"],
+        loadType: "bodyweight",
+        weightBasis: "additional",
+        sets: [{ entries: [{ done: true, kg: 10, reps: 8 }] }],
+      },
+    ]);
+
+    expect(metrics.externalKg).toBe(80);
+    expect(metrics.bodyweightSets).toBe(1);
+  });
 });

@@ -13,7 +13,7 @@ router.get("/intelligence", async (req, res, next) => {
     const filter = await getAccessibleOwnerFilter(req);
     const trainings = await Training.find(
       filter,
-      "date routineName durationSeconds totalVolume exercises.exerciseId exercises.exerciseName exercises.muscleGroup exercises.sets",
+      "date routineName durationSeconds totalVolume exercises.exerciseId exercises.exerciseName exercises.muscleGroup exercises.weightBasis exercises.barWeightKg exercises.implementCount exercises.sets",
     )
       .sort({ date: -1 })
       .limit(RECORD_LIMIT)

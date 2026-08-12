@@ -14,6 +14,7 @@
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
     "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",
+    "exercises:backfill-weight-config": "node scripts/backfillExerciseWeightConfig.js --apply",
     "exercises:normalize-catalog": "node scripts/normalizeExerciseCatalog.js",
     "plans:backfill": "node scripts/backfillTrainingPlans.js",
     "plans:migrate-structure": "node scripts/migratePlanningStructure.js --apply",

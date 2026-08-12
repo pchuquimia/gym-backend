@@ -3,6 +3,7 @@ import { spawnSync } from "child_process";
 import path from "path";
 import mongoose from "mongoose";
 import Exercise from "../src/models/Exercise.js";
+import { inferWeightConfig } from "../src/utils/weightConfig.js";
 
 const DEFAULT_XLSX_PATH = "C:\\Users\\ipouk\\Desktop\\ejercicios.xlsx";
 const args = process.argv.slice(2);
@@ -500,7 +501,10 @@ async function main() {
   let updated = 0;
   for (const payload of payloads) {
     const existing = await Exercise.exists({ _id: payload._id });
-    const setPayload = { ...payload };
+    const setPayload = {
+      ...payload,
+      weightConfig: inferWeightConfig(payload),
+    };
     if (existing) delete setPayload.createdBy;
     await Exercise.updateOne(
       { _id: payload._id },

@@ -1,3 +1,5 @@
+import { getEffectiveWeightKg } from "./weightConfig.js";
+
 const LOAD_TYPES = new Set([
   "external",
   "machine",
@@ -95,12 +97,15 @@ export const hasRecordedSetData = (set = {}) => {
   });
 };
 
-export const getCompletedSetVolume = (set = {}) => {
+export const getCompletedSetVolume = (set = {}, weightConfig = {}) => {
   if (!isCompletedSet(set)) return 0;
   const entries =
     Array.isArray(set.entries) && set.entries.length ? set.entries : [set];
   return entries.reduce((sum, entry) => {
-    const weight = Number(entry.weightKg ?? entry.weight ?? entry.kg ?? 0);
+    const weight = getEffectiveWeightKg(
+      entry.weightKg ?? entry.weight ?? entry.kg,
+      weightConfig,
+    );
     const reps = Number(entry.reps ?? entry.repetitions ?? 0);
     return sum +
       (Number.isFinite(weight) && Number.isFinite(reps) && weight > 0 && reps > 0
@@ -128,7 +133,7 @@ export const getTrainingLoadMetrics = (exercises = []) => {
     const recordedSets = (exercise.sets || []).filter(hasRecordedSetData);
     const completedSets = recordedSets.filter(isCompletedSet);
     const recordedKg = completedSets.reduce(
-      (sum, set) => sum + getCompletedSetVolume(set),
+      (sum, set) => sum + getCompletedSetVolume(set, exercise),
       0,
     );
     const loadType = classifyExerciseLoad(exercise);
@@ -144,6 +149,9 @@ export const getTrainingLoadMetrics = (exercises = []) => {
       total.assistedSets += completedSets.length;
     } else if (loadType === "bodyweight") {
       total.bodyweightSets += completedSets.length;
+      if (exercise.weightBasis === "additional") {
+        total.externalKg += recordedKg;
+      }
     } else if (loadType === "cardio") {
       total.cardioSets += completedSets.length;
     } else {

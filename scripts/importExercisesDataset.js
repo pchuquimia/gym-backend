@@ -2,6 +2,7 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import Exercise from "../src/models/Exercise.js";
 import CatalogSwitchState from "../src/models/CatalogSwitchState.js";
+import { inferWeightConfig } from "../src/utils/weightConfig.js";
 import {
   DATASET_COMMIT,
   DATASET_PROVIDER,
@@ -136,6 +137,7 @@ const importDataset = async () => {
   await connect();
   const operations = exercises.map((exercise) => {
     const { _id, createdBy, isActive, ...set } = exercise;
+    set.weightConfig = inferWeightConfig(exercise);
     return {
       updateOne: {
         filter: {

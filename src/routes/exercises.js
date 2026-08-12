@@ -38,6 +38,7 @@ import {
   generateExerciseAiImage,
   getExerciseAiImageStatus,
 } from "../services/exerciseAiImageService.js";
+import { inferWeightConfig } from "../utils/weightConfig.js";
 
 const router = Router();
 
@@ -371,6 +372,12 @@ const normalizePayload = (body, req, current = null) => {
         ? "unilateral"
         : "bilateral"
       : current?.movementMode || "bilateral";
+  payload.weightConfig = inferWeightConfig({
+    ...payload,
+    weightConfig: hasField("weightConfig")
+      ? payload.weightConfig
+      : current?.weightConfig,
+  });
   payload.isActive =
     typeof payload.isActive === "boolean"
       ? payload.isActive
@@ -844,7 +851,7 @@ router.get("/", async (req, res, next) => {
     );
     const fields = req.query.fields
       ? req.query.fields.split(",").join(" ")
-      : "name localizedNames slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
+      : "name localizedNames slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
     const scope = await getVisibleExerciseScope(req);

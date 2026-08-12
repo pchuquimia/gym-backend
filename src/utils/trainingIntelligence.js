@@ -1,3 +1,5 @@
+import { getEffectiveWeightKg } from "./weightConfig.js";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const finite = (value) => {
@@ -70,13 +72,16 @@ const pearson = (left = [], right = []) => {
   return denominator ? round(numerator / denominator, 2) : null;
 };
 
-const entriesFromSet = (set = {}) => {
+const entriesFromSet = (set = {}, weightConfig = {}) => {
   const source = Array.isArray(set.entries) && set.entries.length
     ? set.entries
     : [set];
   return source
     .map((entry) => ({
-      weight: finite(entry.weightKg ?? entry.weight ?? entry.kg),
+      weight: getEffectiveWeightKg(
+        entry.weightKg ?? entry.weight ?? entry.kg,
+        weightConfig,
+      ),
       reps: finite(entry.reps ?? entry.repetitions),
       done: entry.done,
     }))
@@ -98,7 +103,7 @@ const sessionMetric = (training = {}) => {
 
   (training.exercises || []).forEach((exercise) => {
     (exercise.sets || []).forEach((set) => {
-      const entries = entriesFromSet(set);
+      const entries = entriesFromSet(set, exercise);
       if (!entries.length) return;
       sets += 1;
       entries.forEach((entry) => {

@@ -28,6 +28,26 @@ const ExerciseSourceSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const WeightConfigSchema = new mongoose.Schema(
+  {
+    basis: {
+      type: String,
+      enum: [
+        "total",
+        "per_side",
+        "per_implement",
+        "machine",
+        "additional",
+        "assistance",
+      ],
+      required: true,
+    },
+    barWeightKg: { type: Number, min: 0, default: 0 },
+    implementCount: { type: Number, min: 1, max: 4, default: 1 },
+  },
+  { _id: false },
+);
+
 const ExerciseSchema = new mongoose.Schema(
   {
     _id: { type: String }, // usamos slug/id string para alinear con frontend
@@ -59,6 +79,7 @@ const ExerciseSchema = new mongoose.Schema(
       enum: ["", "external", "machine", "bodyweight", "assisted", "cardio", "unknown"],
       default: "",
     },
+    weightConfig: { type: WeightConfigSchema, default: undefined },
     exerciseType: { type: String, default: "" },
     laterality: { type: String, default: "" },
     kineticChain: { type: String, default: "" },

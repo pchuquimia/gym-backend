@@ -18,6 +18,7 @@ import {
   classifyExerciseLoad,
   getTrainingLoadMetrics,
 } from "../utils/trainingLoad.js";
+import { toTrainingWeightConfig } from "../utils/weightConfig.js";
 
 const router = Router();
 
@@ -72,7 +73,7 @@ const enrichTrainingExercises = async (exercises = []) => {
   const catalog = ids.length
     ? await Exercise.find(
         { _id: { $in: ids } },
-        "_id primaryMuscleGroup primaryMuscles secondaryMuscles stabilizerMuscles equipment loadType name",
+        "_id primaryMuscleGroup primaryMuscles secondaryMuscles stabilizerMuscles equipment loadType weightConfig movementMode name",
       ).lean()
     : [];
   const byId = new Map(catalog.map((exercise) => [String(exercise._id), exercise]));
@@ -101,6 +102,20 @@ const enrichTrainingExercises = async (exercises = []) => {
       equipment:
         exercise.equipment?.length ? exercise.equipment : metadata.equipment || [],
       loadType: exercise.loadType || metadata.loadType || "",
+      ...(exercise.weightBasis
+        ? {
+            weightBasis: exercise.weightBasis,
+            barWeightKg: Math.max(0, Number(exercise.barWeightKg || 0)),
+            implementCount: Math.min(
+              4,
+              Math.max(1, Number(exercise.implementCount || 1)),
+            ),
+          }
+        : toTrainingWeightConfig({
+            ...metadata,
+            ...exercise,
+            weightConfig: metadata.weightConfig,
+          })),
     };
     enriched.loadType = classifyExerciseLoad({
       ...metadata,
