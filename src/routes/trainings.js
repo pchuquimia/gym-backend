@@ -9,15 +9,22 @@ import Training from "../models/Training.js";
 import Exercise from "../models/Exercise.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
+import Session from "../models/Session.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import {
   getExerciseLanguage,
   localizeExerciseReferences,
 } from "../utils/exerciseLocalization.js";
+import { buildTrainingHistoryScopeFilter } from "../utils/trainingHistoryFilter.js";
+import {
+  buildExerciseHistoryMatch,
+  matchesExerciseHistoryTarget,
+} from "../utils/exerciseHistory.js";
 import {
   classifyExerciseLoad,
   getTrainingLoadMetrics,
 } from "../utils/trainingLoad.js";
+import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
 import { toTrainingWeightConfig } from "../utils/weightConfig.js";
 
 const router = Router();
@@ -68,7 +75,11 @@ const toIsoWeek = (iso) => {
 const enrichTrainingExercises = async (exercises = []) => {
   if (!Array.isArray(exercises) || !exercises.length) return [];
   const ids = Array.from(
-    new Set(exercises.map((exercise) => String(exercise.exerciseId || "")).filter(Boolean)),
+    new Set(
+      exercises
+        .map((exercise) => String(exercise.exerciseId || ""))
+        .filter(Boolean),
+    ),
   );
   const catalog = ids.length
     ? await Exercise.find(
@@ -76,7 +87,9 @@ const enrichTrainingExercises = async (exercises = []) => {
         "_id primaryMuscleGroup primaryMuscles secondaryMuscles stabilizerMuscles equipment loadType weightConfig movementMode name",
       ).lean()
     : [];
-  const byId = new Map(catalog.map((exercise) => [String(exercise._id), exercise]));
+  const byId = new Map(
+    catalog.map((exercise) => [String(exercise._id), exercise]),
+  );
 
   return exercises.map((exercise) => {
     const metadata = byId.get(String(exercise.exerciseId || "")) || {};
@@ -87,20 +100,18 @@ const enrichTrainingExercises = async (exercises = []) => {
         metadata.primaryMuscleGroup ||
         exercise.muscleGroup ||
         "",
-      primaryMuscles:
-        exercise.primaryMuscles?.length
-          ? exercise.primaryMuscles
-          : metadata.primaryMuscles || [],
-      secondaryMuscles:
-        exercise.secondaryMuscles?.length
-          ? exercise.secondaryMuscles
-          : metadata.secondaryMuscles || [],
-      stabilizerMuscles:
-        exercise.stabilizerMuscles?.length
-          ? exercise.stabilizerMuscles
-          : metadata.stabilizerMuscles || [],
-      equipment:
-        exercise.equipment?.length ? exercise.equipment : metadata.equipment || [],
+      primaryMuscles: exercise.primaryMuscles?.length
+        ? exercise.primaryMuscles
+        : metadata.primaryMuscles || [],
+      secondaryMuscles: exercise.secondaryMuscles?.length
+        ? exercise.secondaryMuscles
+        : metadata.secondaryMuscles || [],
+      stabilizerMuscles: exercise.stabilizerMuscles?.length
+        ? exercise.stabilizerMuscles
+        : metadata.stabilizerMuscles || [],
+      equipment: exercise.equipment?.length
+        ? exercise.equipment
+        : metadata.equipment || [],
       loadType: exercise.loadType || metadata.loadType || "",
       ...(exercise.weightBasis
         ? {
@@ -334,6 +345,209 @@ router.get("/routine-counts", async (req, res, next) => {
   }
 });
 
+// GET /api/trainings/exercise-counts?athleteId=
+// Conteo ligero para localizar ejercicios con historial sin descargar sus series.
+router.get("/exercise-counts", async (req, res, next) => {
+  try {
+    const ownerFilter = await getAccessibleOwnerFilter(req);
+    const [trainingRows, sessionRows] = await Promise.all([
+      Training.aggregate([
+        { $match: ownerFilter },
+        { $unwind: "$exercises" },
+        {
+          $match: {
+            "exercises.exerciseId": { $nin: [null, ""] },
+            "exercises.sets.0": { $exists: true },
+          },
+        },
+        {
+          $group: {
+            _id: "$exercises.exerciseId",
+            recordIds: { $addToSet: { $toString: "$_id" } },
+            lastDate: { $max: "$date" },
+            historicalGroup: {
+              $first: {
+                $ifNull: [
+                  "$exercises.primaryMuscleGroup",
+                  "$exercises.muscleGroup",
+                ],
+              },
+            },
+          },
+        },
+      ]).option({ maxTimeMS: 10000 }),
+      Session.aggregate([
+        {
+          $match: {
+            ...ownerFilter,
+            exerciseId: { $nin: [null, ""] },
+            "sets.0": { $exists: true },
+          },
+        },
+        {
+          $group: {
+            _id: "$exerciseId",
+            recordIds: { $addToSet: { $toString: "$_id" } },
+            lastDate: { $max: "$date" },
+          },
+        },
+      ]).option({ maxTimeMS: 10000 }),
+    ]);
+
+    const exerciseIds = Array.from(
+      new Set(
+        [...trainingRows, ...sessionRows]
+          .map((row) => String(row._id || ""))
+          .filter(Boolean),
+      ),
+    );
+    const catalog = exerciseIds.length
+      ? await Exercise.find(
+          { _id: { $in: exerciseIds } },
+          "_id primaryMuscleGroup muscle primaryMuscle",
+        ).lean()
+      : [];
+    const catalogGroups = new Map(
+      catalog.map((exercise) => [
+        String(exercise._id),
+        exercise.primaryMuscleGroup ||
+          exercise.muscle ||
+          exercise.primaryMuscle ||
+          "Sin grupo",
+      ]),
+    );
+    const counts = new Map();
+    const getCount = (exerciseId) => {
+      if (!counts.has(exerciseId)) {
+        counts.set(exerciseId, {
+          exerciseId,
+          trainingRecordIds: new Set(),
+          legacyRecordIds: new Set(),
+          lastDate: null,
+          historicalGroup: "",
+        });
+      }
+      return counts.get(exerciseId);
+    };
+
+    trainingRows.forEach((row) => {
+      const exerciseId = String(row._id || "");
+      if (!exerciseId) return;
+      const count = getCount(exerciseId);
+      row.recordIds.forEach((id) => count.trainingRecordIds.add(String(id)));
+      count.lastDate =
+        !count.lastDate || String(row.lastDate) > String(count.lastDate)
+          ? row.lastDate
+          : count.lastDate;
+      count.historicalGroup = row.historicalGroup || "";
+    });
+    sessionRows.forEach((row) => {
+      const exerciseId = String(row._id || "");
+      if (!exerciseId) return;
+      const count = getCount(exerciseId);
+      row.recordIds.forEach((id) => count.legacyRecordIds.add(String(id)));
+      count.lastDate =
+        !count.lastDate || String(row.lastDate) > String(count.lastDate)
+          ? row.lastDate
+          : count.lastDate;
+    });
+
+    const groupRecordIds = new Map();
+    const allRecordIds = new Set();
+    const exercises = Array.from(counts.values())
+      .map((count) => {
+        const group =
+          catalogGroups.get(count.exerciseId) ||
+          count.historicalGroup ||
+          "Sin grupo";
+        if (!groupRecordIds.has(group)) groupRecordIds.set(group, new Set());
+        const groupIds = groupRecordIds.get(group);
+        count.trainingRecordIds.forEach((id) => {
+          const key = `training:${id}`;
+          groupIds.add(key);
+          allRecordIds.add(key);
+        });
+        count.legacyRecordIds.forEach((id) => {
+          const key = `session:${id}`;
+          groupIds.add(key);
+          allRecordIds.add(key);
+        });
+        return {
+          exerciseId: count.exerciseId,
+          group,
+          count: count.trainingRecordIds.size + count.legacyRecordIds.size,
+          trainingCount: count.trainingRecordIds.size,
+          legacyCount: count.legacyRecordIds.size,
+          lastDate: count.lastDate,
+        };
+      })
+      .sort(
+        (left, right) =>
+          right.count - left.count ||
+          left.exerciseId.localeCompare(right.exerciseId),
+      );
+    const groups = Array.from(groupRecordIds, ([group, recordIds]) => ({
+      group,
+      count: recordIds.size,
+    })).sort(
+      (left, right) =>
+        right.count - left.count || left.group.localeCompare(right.group, "es"),
+    );
+
+    res.set("Cache-Control", "private, no-store");
+    res.json({
+      totalSessions: allRecordIds.size,
+      exercises,
+      groups,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// GET /api/trainings/exercise-history?exerciseId=&exerciseName=&athleteId=
+router.get("/exercise-history", async (req, res, next) => {
+  try {
+    const exerciseId = String(req.query.exerciseId || "").trim();
+    const exerciseName = String(req.query.exerciseName || "").trim();
+    if (!exerciseId && !exerciseName) {
+      return res.status(400).json({
+        error: "Se requiere exerciseId o exerciseName",
+      });
+    }
+
+    const exerciseMatch = buildExerciseHistoryMatch({
+      exerciseId,
+      exerciseName,
+    });
+    const filter = await getAccessibleOwnerFilter(req, exerciseMatch);
+    const trainings = await Training.find(
+      filter,
+      "date createdAt routineId routineName trainingPlanId trainingPlanSlotId progressScopeId branch exercises.exerciseId exercises.exerciseName exercises.movementMode exercises.weightBasis exercises.barWeightKg exercises.implementCount exercises.equipment exercises.sets.seriesType exercises.sets.weightKg exercises.sets.reps exercises.sets.done exercises.sets.entries.weightKg exercises.sets.entries.reps exercises.sets.entries.done exercises.sets.entries.completedAt",
+    )
+      .sort({ date: -1, createdAt: -1 })
+      .maxTimeMS(10000)
+      .lean();
+
+    const items = trainings
+      .map((training) => ({
+        ...training,
+        exercises: (training.exercises || []).filter((exercise) =>
+          matchesExerciseHistoryTarget(exercise, {
+            exerciseId,
+            exerciseName,
+          }),
+        ),
+      }))
+      .filter((training) => training.exercises.length > 0);
+
+    res.set("Cache-Control", "private, no-store");
+    res.json({ count: items.length, items });
+  } catch (error) {
+    next(error);
+  }
+});
+
 // GET /api/trainings/summary?from=&to=&routineId=
 router.get("/summary", async (req, res, next) => {
   try {
@@ -431,6 +645,7 @@ router.get("/", async (req, res, next) => {
       : null; // null = all fields
     const routineId = req.query.routineId;
     const progressScopeId = req.query.progressScopeId;
+    const includeTrainingPlanId = req.query.includeTrainingPlanId;
     const excludeProgressScopeId = req.query.excludeProgressScopeId;
 
     const filter = await getAccessibleOwnerFilter(req);
@@ -442,12 +657,14 @@ router.get("/", async (req, res, next) => {
     if (routineId) {
       filter.routineId = routineId;
     }
-    if (progressScopeId || excludeProgressScopeId) {
-      filter.progressScopeId = {};
-      if (progressScopeId) filter.progressScopeId.$eq = progressScopeId;
-      if (excludeProgressScopeId)
-        filter.progressScopeId.$ne = excludeProgressScopeId;
-    }
+    Object.assign(
+      filter,
+      buildTrainingHistoryScopeFilter({
+        progressScopeId,
+        includeTrainingPlanId,
+        excludeProgressScopeId,
+      }),
+    );
 
     const trainings = await Training.find(filter, fields || undefined)
       .sort({ date: -1 })
@@ -653,7 +870,9 @@ router.post("/", async (req, res, next) => {
             )
           : currentIndex;
         const selected = schedule[selectedIndex];
-        const acceptedOverride = Boolean(payload.scheduleOverride?.acknowledged);
+        const acceptedOverride = Boolean(
+          payload.scheduleOverride?.acknowledged,
+        );
         if (
           plan &&
           selected?.type === "training" &&
@@ -715,6 +934,54 @@ router.patch(
         { new: true, runValidators: true },
       );
       res.json(training);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// PATCH /api/trainings/:id/exercises/:exerciseId/config
+// Corrección administrativa de la interpretación de carga de un registro histórico.
+router.patch(
+  "/:id/exercises/:exerciseId/config",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const training = await Training.findById(req.params.id);
+      if (!training) return res.status(404).json({ error: "No encontrado" });
+      if (!(await ensureCanAccessOwner(req, training.ownerId))) {
+        return res.status(403).json({ error: "No autorizado" });
+      }
+
+      const exerciseIndex = training.exercises.findIndex(
+        (exercise) =>
+          String(exercise.exerciseId || "") === String(req.params.exerciseId),
+      );
+      if (exerciseIndex < 0) {
+        return res.status(404).json({
+          error: "El ejercicio no pertenece a este entrenamiento",
+        });
+      }
+
+      const exercise = training.exercises[exerciseIndex];
+      const config = normalizeHistoricalExerciseConfig(req.body, exercise);
+      Object.assign(exercise, config);
+      training.markModified("exercises");
+
+      const loadMetrics = getTrainingLoadMetrics(training.exercises);
+      training.totalVolume = loadMetrics.recordedKg;
+      training.volumeBreakdown = loadMetrics;
+      await training.save();
+
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        trainingId: training.id,
+        date: training.date,
+        routineName: training.routineName,
+        exercise,
+        totalVolume: training.totalVolume,
+        volumeBreakdown: training.volumeBreakdown,
+      });
     } catch (err) {
       next(err);
     }

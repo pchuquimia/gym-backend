@@ -4,8 +4,19 @@ import ExerciseMigration from "../models/ExerciseMigration.js";
 import Routine from "../models/Routine.js";
 import Session from "../models/Session.js";
 import Training from "../models/Training.js";
+import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
 
 export const DATASET_PROVIDER = "hasaneyldrm";
+const MIGRATION_CATALOG_PAGE_SIZE = 200;
+const MIGRATION_CATALOG_CONCURRENCY = 8;
+const MIGRATION_CANDIDATES_CACHE_TTL_MS = 5 * 60 * 1000;
+const MIGRATION_CATALOG_FIELDS =
+  "name localizedNames primaryMuscleGroup primaryMuscle muscle equipment image thumb media.thumbnail.url media.image.url source.provider isActive mergedIntoExerciseId createdAt";
+let migrationCandidatesCache = null;
+
+export const clearExerciseMigrationCandidatesCache = () => {
+  migrationCandidatesCache = null;
+};
 
 const idOf = (value) => String(value || "");
 const sameId = (left, right) => idOf(left) === idOf(right);
@@ -39,11 +50,36 @@ const currentCatalogFilter = {
   isActive: { $ne: false },
 };
 
+const migrationCatalogFilter = {
+  type: "system",
+  $or: [
+    { "source.provider": { $ne: DATASET_PROVIDER } },
+    {
+      "source.provider": DATASET_PROVIDER,
+      isActive: { $ne: false },
+    },
+  ],
+};
+
+const loadMigrationCatalogDocuments = () =>
+  loadInConcurrentPages({
+    pageSize: MIGRATION_CATALOG_PAGE_SIZE,
+    concurrency: MIGRATION_CATALOG_CONCURRENCY,
+    fetchPage: ({ skip, limit }) =>
+      Exercise.find(migrationCatalogFilter, MIGRATION_CATALOG_FIELDS)
+        .sort({ _id: 1 })
+        .skip(skip)
+        .limit(limit)
+        .batchSize(limit)
+        .maxTimeMS(10000)
+        .lean(),
+  });
+
 const isLegacyExercise = (exercise) =>
   Boolean(
     exercise &&
-      exercise.type === "system" &&
-      exercise.source?.provider !== DATASET_PROVIDER,
+    exercise.type === "system" &&
+    exercise.source?.provider !== DATASET_PROVIDER,
   );
 
 const cleanAlternative = (alternative, legacyId, target) => {
@@ -146,7 +182,11 @@ const firstPositive = (...values) => {
 };
 
 const mergeSetupNotes = (left = "", right = "") =>
-  [...new Set([left, right].map((value) => String(value || "").trim()).filter(Boolean))]
+  [
+    ...new Set(
+      [left, right].map((value) => String(value || "").trim()).filter(Boolean),
+    ),
+  ]
     .join("; ")
     .slice(0, 240);
 
@@ -205,8 +245,10 @@ const mergeDuration = (left, right) => {
       left.durationOverrideSeconds !== undefined) ||
     (right.durationOverrideSeconds !== null &&
       right.durationOverrideSeconds !== undefined);
-  const effectiveLeft = Number(left.durationOverrideSeconds ?? leftDuration) || 0;
-  const effectiveRight = Number(right.durationOverrideSeconds ?? rightDuration) || 0;
+  const effectiveLeft =
+    Number(left.durationOverrideSeconds ?? leftDuration) || 0;
+  const effectiveRight =
+    Number(right.durationOverrideSeconds ?? rightDuration) || 0;
   return {
     exerciseId: left.exerciseId,
     durationSeconds: leftDuration + rightDuration,
@@ -307,7 +349,9 @@ const buildReferenceMap = async (exerciseIds) => {
         ],
       },
       "exercises.exerciseId exercises.alternatives.exerciseId",
-    ).lean(),
+    )
+      .batchSize(500)
+      .lean(),
     Training.find(
       {
         $or: [
@@ -317,7 +361,9 @@ const buildReferenceMap = async (exerciseIds) => {
         ],
       },
       "exercises.exerciseId timeEvents.exerciseId exerciseDurations.exerciseId",
-    ).lean(),
+    )
+      .batchSize(500)
+      .lean(),
     Session.aggregate([
       { $match: { exerciseId: { $in: [...idSet] } } },
       { $group: { _id: "$exerciseId", count: { $sum: 1 } } },
@@ -339,7 +385,9 @@ const buildReferenceMap = async (exerciseIds) => {
     const ids = new Set([
       ...(training.exercises || []).map((item) => idOf(item.exerciseId)),
       ...(training.timeEvents || []).map((item) => idOf(item.exerciseId)),
-      ...(training.exerciseDurations || []).map((item) => idOf(item.exerciseId)),
+      ...(training.exerciseDurations || []).map((item) =>
+        idOf(item.exerciseId),
+      ),
     ]);
     ids.forEach((exerciseId) => {
       if (map.has(exerciseId)) map.get(exerciseId).trainings += 1;
@@ -378,27 +426,26 @@ const compareMigrationCandidates = (left, right) => {
   });
 };
 
-export const listExerciseMigrationCandidates = async () => {
-  const [legacyExercises, targetExercises, recent] = await Promise.all([
-    Exercise.find(legacyCatalogFilter)
-      .select(
-        "name localizedNames primaryMuscleGroup primaryMuscle muscle equipment image thumb imagePublicId media source isActive mergedIntoExerciseId createdAt",
-      )
-      .sort({ "localizedNames.es": 1, name: 1 })
-      .lean(),
-    Exercise.find(currentCatalogFilter)
-      .select(
-        "name localizedNames primaryMuscleGroup primaryMuscle muscle equipment image thumb imagePublicId media source isActive createdAt",
-      )
-      .sort({ "localizedNames.es": 1, name: 1 })
-      .lean(),
-    ExerciseMigration.find({})
-      .sort({ createdAt: -1 })
-      .limit(8)
-      .lean(),
+const loadExerciseMigrationCandidates = async () => {
+  const [catalogExercises, recent, legacyData] = await Promise.all([
+    loadMigrationCatalogDocuments(),
+    ExerciseMigration.find({}).sort({ createdAt: -1 }).limit(8).lean(),
+    Exercise.distinct("_id", legacyCatalogFilter).then(
+      async (legacyExerciseIds) => ({
+        legacyExerciseIds,
+        referenceMap: await buildReferenceMap(legacyExerciseIds),
+      }),
+    ),
   ]);
-  const referenceMap = await buildReferenceMap(
-    legacyExercises.map((exercise) => exercise._id),
+  const { legacyExerciseIds, referenceMap } = legacyData;
+  const legacyIdSet = new Set(legacyExerciseIds.map(idOf));
+  const legacyExercises = catalogExercises.filter((exercise) =>
+    legacyIdSet.has(idOf(exercise._id)),
+  );
+  const targetExercises = catalogExercises.filter(
+    (exercise) =>
+      exercise.source?.provider === DATASET_PROVIDER &&
+      exercise.isActive !== false,
   );
   const legacy = legacyExercises
     .map((exercise) =>
@@ -409,12 +456,17 @@ export const listExerciseMigrationCandidates = async () => {
     provider: DATASET_PROVIDER,
     summary: {
       legacy: legacy.length,
-      withReferences: legacy.filter((item) => item.references?.total > 0).length,
+      withReferences: legacy.filter((item) => item.references?.total > 0)
+        .length,
       removable: legacy.filter((item) => item.references?.total === 0).length,
       targets: targetExercises.length,
     },
     legacy,
-    targets: targetExercises.map((exercise) => serializeExercise(exercise)),
+    targets: targetExercises
+      .map((exercise) => serializeExercise(exercise))
+      .sort((left, right) =>
+        left.name.localeCompare(right.name, "es", { sensitivity: "base" }),
+      ),
     recent: recent.map((item) => ({
       id: idOf(item._id),
       operation: item.operation,
@@ -425,6 +477,38 @@ export const listExerciseMigrationCandidates = async () => {
       createdAt: item.createdAt,
     })),
   };
+};
+
+export const listExerciseMigrationCandidates = async () => {
+  if (
+    migrationCandidatesCache?.value &&
+    migrationCandidatesCache.expiresAt > Date.now()
+  ) {
+    return migrationCandidatesCache.value;
+  }
+  if (
+    migrationCandidatesCache?.promise &&
+    migrationCandidatesCache.expiresAt > Date.now()
+  ) {
+    return migrationCandidatesCache.promise;
+  }
+
+  const promise = loadExerciseMigrationCandidates();
+  migrationCandidatesCache = {
+    expiresAt: Date.now() + MIGRATION_CANDIDATES_CACHE_TTL_MS,
+    promise,
+  };
+  try {
+    const value = await promise;
+    migrationCandidatesCache = {
+      expiresAt: Date.now() + MIGRATION_CANDIDATES_CACHE_TTL_MS,
+      value,
+    };
+    return value;
+  } catch (error) {
+    clearExerciseMigrationCandidatesCache();
+    throw error;
+  }
 };
 
 const migrateRoutineDocuments = async (legacyId, target) => {
@@ -488,9 +572,7 @@ const preserveLegacyMetadata = async (legacy, target) => {
   ].filter(Boolean);
   const update = { $addToSet: { aliases: { $each: aliases } } };
   const hasMedia =
-    legacy.media?.image?.url ||
-    legacy.media?.animation?.url ||
-    legacy.image;
+    legacy.media?.image?.url || legacy.media?.animation?.url || legacy.image;
   if (hasMedia) {
     update.$addToSet.alternateMedia = {
       sourceExerciseId: idOf(legacy._id),
@@ -514,7 +596,9 @@ export const migrateExercise = async ({
     throw error;
   }
   if (sameId(legacyExerciseId, targetExerciseId)) {
-    const error = new Error("El ejercicio de origen y destino deben ser distintos");
+    const error = new Error(
+      "El ejercicio de origen y destino deben ser distintos",
+    );
     error.statusCode = 400;
     throw error;
   }
@@ -524,30 +608,35 @@ export const migrateExercise = async ({
     Exercise.findOne({ _id: targetExerciseId, ...currentCatalogFilter }).lean(),
   ]);
   if (!legacy || !isLegacyExercise(legacy)) {
-    const error = new Error("El ejercicio antiguo no pertenece al catalogo legado");
+    const error = new Error(
+      "El ejercicio antiguo no pertenece al catalogo legado",
+    );
     error.statusCode = 404;
     throw error;
   }
   if (!target) {
-    const error = new Error("El ejercicio destino no pertenece al catalogo importado activo");
+    const error = new Error(
+      "El ejercicio destino no pertenece al catalogo importado activo",
+    );
     error.statusCode = 404;
     throw error;
   }
 
   const before = await getExerciseReferenceCounts(legacyExerciseId);
-  const [routinesModified, trainingsModified, sessionsResult] = await Promise.all([
-    migrateRoutineDocuments(legacyExerciseId, target),
-    migrateTrainingDocuments(legacyExerciseId, target),
-    Session.updateMany(
-      { exerciseId: legacyExerciseId },
-      {
-        $set: {
-          exerciseId: idOf(target._id),
-          exerciseName: targetName(target),
+  const [routinesModified, trainingsModified, sessionsResult] =
+    await Promise.all([
+      migrateRoutineDocuments(legacyExerciseId, target),
+      migrateTrainingDocuments(legacyExerciseId, target),
+      Session.updateMany(
+        { exerciseId: legacyExerciseId },
+        {
+          $set: {
+            exerciseId: idOf(target._id),
+            exerciseName: targetName(target),
+          },
         },
-      },
-    ),
-  ]);
+      ),
+    ]);
 
   await CatalogSwitchState.updateMany(
     { "previousExercises.exerciseId": legacyExerciseId },
@@ -590,6 +679,7 @@ export const migrateExercise = async ({
     sourceDeleted: Boolean(deleteLegacy),
     performedBy,
   });
+  clearExerciseMigrationCandidatesCache();
 
   return {
     ok: true,
@@ -636,6 +726,7 @@ export const deleteLegacyExercise = async ({ exerciseId, performedBy }) => {
     sourceDeleted: true,
     performedBy,
   });
+  clearExerciseMigrationCandidatesCache();
   return {
     ok: true,
     sourceDeleted: true,

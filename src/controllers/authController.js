@@ -427,24 +427,28 @@ const devAdminLogin = asyncHandler(async (req, res) => {
     });
   }
 
-  const lastLoginAt = new Date();
-  await User.updateOne(
-    { _id: user._id },
-    {
-      $set: {
-        role: "Admin",
-        isActive: true,
-        failedLoginAttempts: 0,
-        lockUntil: null,
-        lastLoginAt,
+  const needsRepair =
+    user.role !== "Admin" ||
+    !user.isActive ||
+    Number(user.failedLoginAttempts || 0) !== 0 ||
+    Boolean(user.lockUntil);
+  if (needsRepair) {
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          role: "Admin",
+          isActive: true,
+          failedLoginAttempts: 0,
+          lockUntil: null,
+        },
       },
-    },
-  );
+    );
+  }
   user.role = "Admin";
   user.isActive = true;
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
-  user.lastLoginAt = lastLoginAt;
 
   // Development access must not evict real device sessions on repeated reloads.
   const token = signToken(user, null);

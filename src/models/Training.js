@@ -183,6 +183,7 @@ TrainingSchema.index({ date: -1 });
 TrainingSchema.index({ ownerId: 1, date: -1 });
 TrainingSchema.index({ routineId: 1, date: -1 });
 TrainingSchema.index({ trainingPlanId: 1, trainingPlanSlotId: 1, date: -1 });
+TrainingSchema.index({ ownerId: 1, trainingPlanId: 1, date: -1 });
 TrainingSchema.index({ progressScopeId: 1, date: -1 });
 TrainingSchema.index({ progressScopeId: 1, orderSignature: 1, date: -1 });
 TrainingSchema.index({ branch: 1, date: -1 });

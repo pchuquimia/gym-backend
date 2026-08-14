@@ -39,8 +39,64 @@ import {
   getExerciseAiImageStatus,
 } from "../services/exerciseAiImageService.js";
 import { inferWeightConfig } from "../utils/weightConfig.js";
+import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
 
 const router = Router();
+const EXERCISE_FACET_PAGE_SIZE = 200;
+const EXERCISE_FACET_CONCURRENCY = 8;
+const EXERCISE_FACET_CACHE_TTL_MS = 5 * 60 * 1000;
+const EXERCISE_FACET_CACHE_MAX_ENTRIES = 8;
+const EXERCISE_FACET_FIELDS =
+  "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image type ownerId";
+const exerciseFacetCache = new Map();
+
+const clearExerciseFacetCache = () => exerciseFacetCache.clear();
+
+const loadExerciseFacetDocuments = async (filter) => {
+  return loadInConcurrentPages({
+    pageSize: EXERCISE_FACET_PAGE_SIZE,
+    concurrency: EXERCISE_FACET_CONCURRENCY,
+    fetchPage: ({ skip, limit }) =>
+      Exercise.find(filter, EXERCISE_FACET_FIELDS)
+        .sort({ _id: 1 })
+        .skip(skip)
+        .limit(limit)
+        .batchSize(limit)
+        .maxTimeMS(10000)
+        .lean(),
+  });
+};
+
+const loadCachedExerciseFacetDocuments = async (cacheKey, filter) => {
+  const cached = exerciseFacetCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    exerciseFacetCache.delete(cacheKey);
+    exerciseFacetCache.set(cacheKey, cached);
+    return cached.value || cached.promise;
+  }
+  if (cached) exerciseFacetCache.delete(cacheKey);
+
+  const promise = loadExerciseFacetDocuments(filter);
+  exerciseFacetCache.set(cacheKey, {
+    expiresAt: Date.now() + EXERCISE_FACET_CACHE_TTL_MS,
+    promise,
+  });
+  while (exerciseFacetCache.size > EXERCISE_FACET_CACHE_MAX_ENTRIES) {
+    exerciseFacetCache.delete(exerciseFacetCache.keys().next().value);
+  }
+
+  try {
+    const value = await promise;
+    exerciseFacetCache.set(cacheKey, {
+      expiresAt: Date.now() + EXERCISE_FACET_CACHE_TTL_MS,
+      value,
+    });
+    return value;
+  } catch (error) {
+    exerciseFacetCache.delete(cacheKey);
+    throw error;
+  }
+};
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -437,6 +493,7 @@ router.post(
         deleteLegacy: req.body.deleteLegacy !== false,
         performedBy: req.user.id,
       });
+      clearExerciseFacetCache();
       res.json(result);
     } catch (error) {
       next(error);
@@ -449,12 +506,12 @@ router.delete(
   authorizeRoles("Admin"),
   async (req, res, next) => {
     try {
-      res.json(
-        await deleteLegacyExercise({
-          exerciseId: String(req.params.id || "").trim(),
-          performedBy: req.user.id,
-        }),
-      );
+      const result = await deleteLegacyExercise({
+        exerciseId: String(req.params.id || "").trim(),
+        performedBy: req.user.id,
+      });
+      clearExerciseFacetCache();
+      res.json(result);
     } catch (error) {
       next(error);
     }
@@ -481,6 +538,7 @@ router.post(
         prompt: req.body.prompt,
         userId: req.user.id,
       });
+      clearExerciseFacetCache();
       res.set("Cache-Control", "private, no-store");
       res.json(result);
     } catch (error) {
@@ -554,6 +612,7 @@ router.post(
         { arrayFilters: [{ "alternative.exerciseId": exercise._id }] },
       );
 
+      clearExerciseFacetCache();
       res.set("Cache-Control", "private, no-store");
       res.json({
         exercise: localizeExerciseDocument(exercise, getExerciseLanguage(req)),
@@ -652,6 +711,7 @@ router.post(
       exercise.updatedBy = req.user.id;
       await exercise.save();
 
+      clearExerciseFacetCache();
       res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
     } catch (err) {
       next(err);
@@ -667,12 +727,10 @@ router.get("/facets", async (req, res, next) => {
       isActive: { $ne: false },
       ...scope,
     };
-    const exercises = await Exercise.find(
+    const exercises = await loadCachedExerciseFacetDocuments(
+      JSON.stringify(scope),
       filter,
-      "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image type ownerId",
-    )
-      .maxTimeMS(10000)
-      .lean();
+    );
 
     const counts = (values) =>
       Object.entries(
@@ -776,7 +834,7 @@ router.get("/facets", async (req, res, next) => {
       ),
     };
 
-    res.set("Cache-Control", "private, no-store");
+    res.set("Cache-Control", "private, max-age=300");
     const personalCount = exercises.filter(
       (exercise) => exercise.type === "custom" && Boolean(exercise.ownerId),
     ).length;
@@ -992,20 +1050,27 @@ router.get("/", async (req, res, next) => {
     }
     if (andFilters.length) filter.$and = andFilters;
 
-    const exercises = await Exercise.find(filter, fields)
+    const exercisesQuery = Exercise.find(filter, fields)
       .sort({ type: -1, name: 1 })
       .skip((page - 1) * limit)
       .limit(limit)
+      .batchSize(limit)
       .maxTimeMS(10000)
       .lean();
+
+    const includeMeta = req.query.meta === "true";
+    const [exercises, total] = await Promise.all([
+      exercisesQuery,
+      includeMeta
+        ? Exercise.countDocuments(filter).maxTimeMS(10000)
+        : Promise.resolve(null),
+    ]);
 
     const localizedExercises = exercises.map((exercise) =>
       localizeExerciseDocument(exercise, getExerciseLanguage(req)),
     );
-    const includeMeta = req.query.meta === "true";
-    res.set("Cache-Control", "private, no-store");
+    res.set("Cache-Control", "private, max-age=60");
     if (includeMeta) {
-      const total = await Exercise.countDocuments(filter);
       res.json({
         page,
         limit,
@@ -1041,6 +1106,7 @@ router.post("/", blockManagedAthleteWrites, async (req, res, next) => {
       payload._id = `${payload.slug}-${String(payload.ownerId).slice(-6)}-${Date.now()}`;
     }
     const exercise = await Exercise.create(payload);
+    clearExerciseFacetCache();
     res
       .status(201)
       .json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
@@ -1064,6 +1130,7 @@ router.put("/:id", blockManagedAthleteWrites, async (req, res, next) => {
       new: true,
       runValidators: true,
     });
+    clearExerciseFacetCache();
     res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
   } catch (err) {
     next(err);
@@ -1081,9 +1148,11 @@ router.delete("/:id", blockManagedAthleteWrites, async (req, res, next) => {
       current.isActive = false;
       current.updatedBy = req.user.id;
       await current.save();
+      clearExerciseFacetCache();
       return res.json({ ok: true, softDeleted: true });
     }
     await Exercise.findByIdAndDelete(req.params.id);
+    clearExerciseFacetCache();
     res.json({ ok: true });
   } catch (err) {
     next(err);

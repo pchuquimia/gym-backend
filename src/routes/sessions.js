@@ -1,10 +1,12 @@
 import { Router } from "express";
 import {
+  authorizeRoles,
   ensureCanAccessOwner,
   getAccessibleOwnerFilter,
   protect,
 } from "../middleware/authMiddleware.js";
 import Session from "../models/Session.js";
+import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
 
 const router = Router();
 
@@ -36,6 +38,27 @@ router.post("/", async (req, res, next) => {
       supervisedBy: isSupervised ? req.user.id : null,
     });
     res.status(201).json(session);
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch("/:id/config", authorizeRoles("Admin"), async (req, res, next) => {
+  try {
+    const session = await Session.findById(req.params.id);
+    if (!session) return res.status(404).json({ error: "No encontrado" });
+    if (!(await ensureCanAccessOwner(req, session.ownerId))) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+
+    Object.assign(
+      session,
+      normalizeHistoricalExerciseConfig(req.body, session),
+    );
+    await session.save();
+
+    res.set("Cache-Control", "private, no-store");
+    res.json(session);
   } catch (err) {
     next(err);
   }
