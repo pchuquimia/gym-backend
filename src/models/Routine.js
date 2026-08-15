@@ -91,6 +91,13 @@ const RoutineSchema = new mongoose.Schema(
     },
     isArchived: { type: Boolean, default: false, index: true },
     isAvailableForTraining: { type: Boolean, default: true, index: true },
+    archivedAt: { type: Date, default: null },
+    archivedBy: { type: String, default: null },
+    archiveReason: {
+      type: String,
+      enum: [null, "user", "plan_lifecycle"],
+      default: null,
+    },
   },
   { timestamps: true, versionKey: false },
 );

@@ -46,7 +46,7 @@ const normalizeSchedule = (value, scheduleMode = "fixed") => {
       order: type === "training" ? trainingOrder : index + 1,
       dayIndex,
       type,
-      focus: String(day.focus || "").trim(),
+      focus: type === "training" ? String(day.focus || "").trim() : "",
       sourceRoutineId: day.sourceRoutineId || null,
       routineId: day.routineId || null,
     };
@@ -142,8 +142,47 @@ router.get("/", async (req, res, next) => {
     const plans = await TrainingPlan.find(filter)
       .sort({ status: 1, updatedAt: -1 })
       .lean();
+    const routineIds = Array.from(
+      new Set(
+        plans.flatMap((plan) =>
+          (plan.weeklySchedule || [])
+            .filter((day) => day.type === "training" && day.routineId)
+            .map((day) => String(day.routineId)),
+        ),
+      ),
+    );
+    const existingRoutineIds = new Set(
+      (
+        await Routine.find({ _id: { $in: routineIds } }, "_id").lean()
+      ).map((routine) => String(routine._id)),
+    );
+    const plansWithIntegrity = plans.map((plan) => {
+      const trainingDays = (plan.weeklySchedule || []).filter(
+        (day) => day.type === "training",
+      );
+      const missingSlots = trainingDays
+        .filter(
+          (day) =>
+            !day.routineId || !existingRoutineIds.has(String(day.routineId)),
+        )
+        .map((day) => ({
+          slotId: day.slotId,
+          dayIndex: day.dayIndex,
+          focus: day.focus,
+          routineId: day.routineId || null,
+        }));
+      return {
+        ...plan,
+        integrity: {
+          valid: missingSlots.length === 0,
+          configured: trainingDays.length - missingSlots.length,
+          required: trainingDays.length,
+          missingSlots,
+        },
+      };
+    });
     res.set("Cache-Control", "private, no-store");
-    res.json(plans);
+    res.json(plansWithIntegrity);
   } catch (err) {
     next(err);
   }
@@ -362,17 +401,31 @@ router.patch("/:id/status", async (req, res, next) => {
         .json({ error: "Completa todas las rutinas antes de activar el plan" });
     }
     if (["active", "scheduled"].includes(nextStatus)) {
-      const validRoutineCount = await Routine.countDocuments({
+      const validRoutines = await Routine.find({
         _id: { $in: routineIds },
         ownerId: req.user.id,
         $or: [
           { isArchived: { $ne: true } },
           { trainingPlanId: String(plan._id) },
         ],
-      });
-      if (validRoutineCount !== new Set(routineIds.map(String)).size) {
+      }, "_id").lean();
+      const validRoutineIds = new Set(
+        validRoutines.map((routine) => String(routine._id)),
+      );
+      const missingDays = (plan.weeklySchedule || []).filter(
+        (day) =>
+          day.type === "training" &&
+          (!day.routineId || !validRoutineIds.has(String(day.routineId))),
+      );
+      if (missingDays.length) {
         return res.status(409).json({
-          error: "Una de las rutinas del plan ya no esta disponible",
+          error: `Hay ${missingDays.length} ${missingDays.length === 1 ? "bloque sin una rutina disponible" : "bloques sin rutinas disponibles"}`,
+          code: "PLAN_ROUTINES_MISSING",
+          missingSlots: missingDays.map((day) => ({
+            slotId: day.slotId,
+            dayIndex: day.dayIndex,
+            focus: day.focus,
+          })),
         });
       }
     }

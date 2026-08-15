@@ -6,6 +6,7 @@ import {
   protect,
 } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
+import RoutineAuditLog from "../models/RoutineAuditLog.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import {
   getExerciseLanguage,
@@ -56,9 +57,11 @@ const resolveProgressScope = async (req, payload, ownerId) => {
 
 router.get("/", async (req, res, next) => {
   try {
-    const filter = await getAccessibleOwnerFilter(req, {
-      isArchived: { $ne: true },
-    });
+    const includeArchived = req.query.includeArchived === "true";
+    const filter = await getAccessibleOwnerFilter(
+      req,
+      includeArchived ? {} : { isArchived: { $ne: true } },
+    );
     if (["template", "personal", "assigned"].includes(req.query.kind)) {
       filter.kind = req.query.kind;
     }
@@ -97,6 +100,9 @@ router.post("/", async (req, res, next) => {
     payload.version = 1;
     payload.isArchived = false;
     payload.isAvailableForTraining = true;
+    payload.archivedAt = null;
+    payload.archivedBy = null;
+    payload.archiveReason = null;
     let plan = null;
     let planSlot = null;
     if (payload.trainingPlanId || payload.trainingPlanSlotId) {
@@ -177,6 +183,9 @@ router.put("/:id", async (req, res, next) => {
     payload.assignedAt = current.assignedAt || null;
     payload.isArchived = current.isArchived === true;
     payload.isAvailableForTraining = current.isAvailableForTraining !== false;
+    payload.archivedAt = current.archivedAt || null;
+    payload.archivedBy = current.archivedBy || null;
+    payload.archiveReason = current.archiveReason || null;
     payload.progressMode =
       payload.progressMode === "inherit" ? "inherit" : "fresh";
     payload.progressScopeId =
@@ -184,6 +193,51 @@ router.put("/:id", async (req, res, next) => {
       (await resolveProgressScope(req, payload, payload.ownerId));
     const routine = await Routine.findByIdAndUpdate(req.params.id, payload, {
       new: true,
+    });
+    res.json(
+      await localizeExerciseReferences(routine, getExerciseLanguage(req)),
+    );
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch("/:id/restore", async (req, res, next) => {
+  try {
+    const current = await Routine.findById(req.params.id).lean();
+    if (!current) return res.status(404).json({ error: "Rutina no encontrada" });
+    if (!(await canManageRoutine(req, current))) {
+      return res.status(403).json({
+        error: "Tu coach administra la planificaciÃ³n de tus rutinas",
+      });
+    }
+    if (current.isArchived !== true) {
+      return res.json(current);
+    }
+    if (current.archiveReason !== "user") {
+      return res.status(409).json({
+        error: "Esta rutina se controla desde el estado de su planificacion",
+      });
+    }
+    const routine = await Routine.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          isArchived: false,
+          isAvailableForTraining: true,
+          archivedAt: null,
+          archivedBy: null,
+          archiveReason: null,
+        },
+      },
+      { new: true },
+    );
+    await RoutineAuditLog.create({
+      routineId: String(current._id),
+      ownerId: String(current.ownerId),
+      actorId: String(req.user.id),
+      action: "restored",
+      snapshot: { name: current.name },
     });
     res.json(
       await localizeExerciseReferences(routine, getExerciseLanguage(req)),
@@ -202,50 +256,57 @@ router.delete("/:id", async (req, res, next) => {
         error: "Tu coach administra la planificación de tus rutinas",
       });
     }
-    if (current.trainingPlanId) {
-      const immutablePlan = await TrainingPlan.exists({
-        _id: current.trainingPlanId,
-        status: { $in: ["completed", "cancelled"] },
+    if (current.isArchived === true && current.archiveReason === "user") {
+      return res.json({
+        ok: true,
+        archived: true,
+        archivedAt: current.archivedAt,
       });
-      if (immutablePlan) {
-        return res.status(409).json({
-          error: "Esta rutina pertenece al historial de un plan finalizado",
-        });
-      }
     }
     const affectedPlans = await TrainingPlan.find(
       {
         athleteId: current.ownerId,
         "weeklySchedule.routineId": current._id,
-        status: { $in: ["draft", "scheduled", "active", "paused"] },
       },
-      "_id",
+      "_id name status weeklySchedule",
     ).lean();
-    const affectedPlanIds = affectedPlans.map((plan) => String(plan._id));
-    await Routine.findByIdAndDelete(req.params.id);
-    await TrainingPlan.updateMany(
-      { _id: { $in: affectedPlanIds } },
-      {
-        $set: {
-          "weeklySchedule.$[day].routineId": null,
-          "weeklySchedule.$[day].sourceRoutineId": null,
-          status: "draft",
-        },
-      },
-      {
-        arrayFilters: [{ "day.routineId": current._id }],
-      },
-    );
-    if (affectedPlanIds.length) {
-      await Routine.updateMany(
-        {
-          ownerId: current.ownerId,
-          trainingPlanId: { $in: affectedPlanIds },
-        },
-        { $set: { isAvailableForTraining: false } },
-      );
+    if (affectedPlans.length) {
+      return res.status(409).json({
+        code: "ROUTINE_IN_USE",
+        error:
+          "La rutina sigue asignada. Reemplazala en la planificacion antes de archivarla.",
+        affectedPlans: affectedPlans.map((plan) => ({
+          id: String(plan._id),
+          name: plan.name,
+          status: plan.status,
+          slots: (plan.weeklySchedule || [])
+            .filter((day) => String(day.routineId || "") === String(current._id))
+            .map((day) => ({ slotId: day.slotId, dayIndex: day.dayIndex })),
+        })),
+      });
     }
-    res.json({ ok: true });
+    const archivedAt = new Date();
+    await Routine.findByIdAndUpdate(req.params.id, {
+      $set: {
+        isArchived: true,
+        isAvailableForTraining: false,
+        archivedAt,
+        archivedBy: String(req.user.id),
+        archiveReason: "user",
+      },
+    });
+    await RoutineAuditLog.create({
+      routineId: String(current._id),
+      ownerId: String(current.ownerId),
+      actorId: String(req.user.id),
+      action: "archived",
+      snapshot: {
+        name: current.name,
+        progressScopeId: current.progressScopeId,
+        exerciseCount: current.exercises?.length || 0,
+      },
+    });
+    res.json({ ok: true, archived: true, archivedAt });
   } catch (err) {
     next(err);
   }
