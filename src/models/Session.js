@@ -1,19 +1,22 @@
 import mongoose from "mongoose";
+import { isoDateKey } from "./schemaValidation.js";
 
 const SetSchema = new mongoose.Schema(
   {
-    reps: { type: Number, default: 0 },
-    weight: { type: Number, default: 0 },
+    reps: { type: Number, min: 0, default: 0 },
+    weight: { type: Number, min: 0, default: 0 },
     note: { type: String, default: "" },
-    durationSeconds: { type: Number, default: 0 },
+    durationSeconds: { type: Number, min: 0, default: 0 },
   },
   { _id: false },
 );
 
 const SessionSchema = new mongoose.Schema(
   {
-    date: { type: String, required: true }, // yyyy-mm-dd
-    trainingId: { type: String, default: null },
+    date: isoDateKey(),
+    trainingId: { type: String, default: null, index: true },
+    historicalTrainingId: { type: String, default: null },
+    detachedAt: { type: Date, default: null },
     exerciseId: { type: String, required: true },
     exerciseName: { type: String, required: true },
     movementMode: {
@@ -39,11 +42,11 @@ const SessionSchema = new mongoose.Schema(
     routineId: { type: String, default: null },
     routineName: { type: String, default: "" },
     sets: [SetSchema],
-    trainingDurationSeconds: { type: Number, default: 0 },
-    exerciseDurationSeconds: { type: Number, default: 0 },
+    trainingDurationSeconds: { type: Number, min: 0, default: 0 },
+    exerciseDurationSeconds: { type: Number, min: 0, default: 0 },
     photoUrl: { type: String, default: "" },
     photoType: { type: String, enum: ["gym", "home", ""], default: "" },
-    ownerId: { type: String, default: null },
+    ownerId: { type: String, required: true },
     sessionType: {
       type: String,
       enum: ["personal", "supervised"],
@@ -52,13 +55,14 @@ const SessionSchema = new mongoose.Schema(
     startedBy: { type: String, default: null },
     supervisedBy: { type: String, default: null, index: true },
   },
-  { timestamps: true, versionKey: false },
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 SessionSchema.index({ exerciseId: 1, date: -1 });
 SessionSchema.index({ routineId: 1, date: -1 });
 SessionSchema.index({ date: -1 });
 SessionSchema.index({ ownerId: 1, date: -1 });
+SessionSchema.index({ ownerId: 1, date: -1, _id: -1 });
 SessionSchema.index({ ownerId: 1, exerciseId: 1, date: -1 });
 
 export default mongoose.model("Session", SessionSchema);

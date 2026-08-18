@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 
+mongoose.set("runValidators", true);
+mongoose.set("strictQuery", true);
+
 export const getMongoConnectionOptions = () => {
   const configuredPoolSize = Number(process.env.MONGO_MAX_POOL_SIZE || 10);
   const configuredMinPoolSize = Number(process.env.MONGO_MIN_POOL_SIZE || 2);
@@ -12,6 +15,8 @@ export const getMongoConnectionOptions = () => {
     socketTimeoutMS: 15_000,
     maxIdleTimeMS: 60_000,
     heartbeatFrequencyMS: 10_000,
+    waitQueueTimeoutMS: 5_000,
+    appName: "apex-performance-api",
     maxPoolSize,
     minPoolSize: Number.isFinite(configuredMinPoolSize)
       ? Math.max(0, Math.min(configuredMinPoolSize, maxPoolSize))

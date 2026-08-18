@@ -56,7 +56,7 @@ const exerciseFacetCache = new Map();
 const exerciseListCache = new Map();
 let systemCatalogVersionCache = null;
 const SYSTEM_CATALOG_FILTER = {
-  isActive: { $ne: false },
+  isActive: true,
   $or: [{ type: "system" }, { ownerId: null }, { ownerId: { $exists: false } }],
 };
 const VERSIONED_CATALOG_FIELDS =
@@ -611,7 +611,7 @@ router.get("/catalog/custom", async (req, res, next) => {
       : VERSIONED_CATALOG_FIELDS;
     const exercises = await measureDatabase(res, () =>
       Exercise.find(
-        { ownerId, type: "custom", isActive: { $ne: false } },
+        { ownerId, type: "custom", isActive: true },
         fields,
       )
         .sort({ updatedAt: -1, _id: 1 })
@@ -894,7 +894,7 @@ router.get("/facets", async (req, res, next) => {
     const scope = await getVisibleExerciseScope(req);
     if (!scope) return res.status(403).json({ error: "No autorizado" });
     const filter = {
-      isActive: { $ne: false },
+      isActive: true,
       ...scope,
     };
     const exercises = await loadCachedExerciseFacetDocuments(
@@ -1086,7 +1086,7 @@ router.get("/", async (req, res, next) => {
     if (!scope) return res.status(403).json({ error: "No autorizado" });
     andFilters.push(scope);
 
-    if (req.query.active !== "false") filter.isActive = { $ne: false };
+    if (req.query.active !== "false") filter.isActive = true;
     if (req.query.type === "custom") {
       filter.type = "custom";
       filter.ownerId = { $type: "string", $ne: "" };

@@ -24,6 +24,11 @@ import {
   classifyExerciseLoad,
   getTrainingLoadMetrics,
 } from "../utils/trainingLoad.js";
+import {
+  buildTrainingRegistrationKey,
+  normalizeTrainingDateKey,
+  validateTrainingSubmission,
+} from "../utils/trainingSubmission.js";
 import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
 import { toTrainingWeightConfig } from "../utils/weightConfig.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
@@ -47,25 +52,6 @@ const canMutateTraining = async (req, training) => {
     training.sessionType === "supervised" &&
     String(training.supervisedBy || "") === String(req.user.id)
   );
-};
-
-const toLocalISODate = (value) => {
-  if (!value) return null;
-  if (typeof value === "string") return value.slice(0, 10);
-  if (value instanceof Date) {
-    const offset = value.getTimezoneOffset() * 60000;
-    return new Date(value.getTime() - offset).toISOString().slice(0, 10);
-  }
-  try {
-    const d = new Date(value);
-    if (!Number.isNaN(d.getTime())) {
-      const offset = d.getTimezoneOffset() * 60000;
-      return new Date(d.getTime() - offset).toISOString().slice(0, 10);
-    }
-  } catch (_e) {
-    return null;
-  }
-  return null;
 };
 
 const toIsoWeek = (iso) => {
@@ -789,8 +775,21 @@ router.post("/", async (req, res, next) => {
     delete payload.id;
     delete payload.durationOverrideSeconds;
     // normalizar fecha a string local yyyy-mm-dd para evitar corrimientos por zona horaria
-    const normalizedDate = toLocalISODate(payload.date);
-    payload.date = normalizedDate || toLocalISODate(new Date()) || payload.date;
+    const normalizedDate = payload.date
+      ? normalizeTrainingDateKey(payload.date)
+      : normalizeTrainingDateKey(new Date());
+    if (!normalizedDate) {
+      return res.status(400).json({
+        error: "La fecha del entrenamiento no es valida",
+        code: "INVALID_TRAINING_DATE",
+      });
+    }
+    payload.date = normalizedDate;
+    payload.registrationKey = buildTrainingRegistrationKey({
+      ownerId,
+      date: payload.date,
+      routineId: payload.routineId,
+    });
     if (linkedPlan && linkedPlanSlot) {
       const date = new Date(`${payload.date}T00:00:00Z`);
       const mondayDayIndex = ((date.getUTCDay() + 6) % 7) + 1;
@@ -840,7 +839,17 @@ router.post("/", async (req, res, next) => {
     payload.workSeconds = timingSummary.workSeconds;
     payload.restSeconds = timingSummary.restSeconds;
     payload.pauseSeconds = timingSummary.pauseSeconds;
-    const loadMetrics = getTrainingLoadMetrics(payload.exercises);
+    const submission = validateTrainingSubmission({
+      date: payload.date,
+      exercises: payload.exercises,
+    });
+    if (!submission.ok) {
+      return res.status(submission.status).json({
+        error: submission.error,
+        code: submission.code,
+      });
+    }
+    const loadMetrics = submission.loadMetrics;
     payload.totalVolume = loadMetrics.recordedKg;
     payload.volumeBreakdown = loadMetrics;
 
@@ -858,8 +867,24 @@ router.post("/", async (req, res, next) => {
           return res.status(200).json(existing);
         }
       }
+      if (createError?.code === 11000 && payload.routineId) {
+        const existing = await Training.findOne({
+          ownerId,
+          date: payload.date,
+          routineId: payload.routineId,
+        }).lean();
+        if (existing) {
+          return res.status(409).json({
+            error:
+              "Ya existe un entrenamiento para esta rutina en la fecha seleccionada",
+            code: "DUPLICATE_TRAINING",
+            existingTrainingId: String(existing._id),
+          });
+        }
+      }
       throw createError;
     }
+    const registrationWarnings = [];
     if (payload.routineId) {
       try {
         const plan = payload.trainingPlanId
@@ -900,24 +925,62 @@ router.post("/", async (req, res, next) => {
           plan.cycleProgress?.lastTrainingId !== String(training._id)
         ) {
           const nextIndex = (selectedIndex + 1) % schedule.length;
-          plan.cycleProgress = plan.cycleProgress || {};
-          plan.cycleProgress.currentIndex = nextIndex;
-          plan.cycleProgress.completedCycles =
-            Number(plan.cycleProgress.completedCycles || 0) +
-            (nextIndex === 0 ? 1 : 0);
-          plan.cycleProgress.lastAdvancedAt = new Date();
-          plan.cycleProgress.lastTrainingId = String(training._id);
-          await plan.save();
+          const advancedPlan = await TrainingPlan.findOneAndUpdate(
+            {
+              _id: plan._id,
+              athleteId: ownerId,
+              status: "active",
+              "cycleProgress.currentIndex": currentIndex,
+              "cycleProgress.lastTrainingId": {
+                $ne: String(training._id),
+              },
+            },
+            {
+              $set: {
+                "cycleProgress.currentIndex": nextIndex,
+                "cycleProgress.lastAdvancedAt": new Date(),
+                "cycleProgress.lastTrainingId": String(training._id),
+              },
+              $inc: {
+                "cycleProgress.completedCycles": nextIndex === 0 ? 1 : 0,
+              },
+            },
+            { new: true, runValidators: true },
+          );
+          if (!advancedPlan) {
+            const latestPlan = await TrainingPlan.findById(
+              plan._id,
+              "cycleProgress",
+            ).lean();
+            if (
+              latestPlan?.cycleProgress?.lastTrainingId !== String(training._id)
+            ) {
+              const conflict = new Error(
+                "El plan cambio mientras se registraba el entrenamiento",
+              );
+              conflict.code = "PLAN_CYCLE_CONFLICT";
+              throw conflict;
+            }
+          }
         }
       } catch (cycleError) {
         console.error(
           "No se pudo avanzar el ciclo de entrenamiento",
           cycleError,
         );
+        registrationWarnings.push({
+          code: cycleError?.code || "PLAN_CYCLE_NOT_ADVANCED",
+          message:
+            "El entrenamiento se guardo, pero no se pudo avanzar el ciclo del plan",
+        });
       }
     }
     await enqueueAthleteMetricRefresh(training.ownerId, training.date);
-    res.status(201).json(training);
+    const responseBody = training.toObject();
+    if (registrationWarnings.length) {
+      responseBody.registrationWarnings = registrationWarnings;
+    }
+    res.status(201).json(responseBody);
   } catch (err) {
     next(err);
   }
@@ -1024,8 +1087,21 @@ router.put("/:id", async (req, res, next) => {
     payload.sessionType = current.sessionType || "personal";
     payload.startedBy = current.startedBy || current.ownerId || req.user.id;
     payload.supervisedBy = current.supervisedBy || null;
-    const normalizedDate = toLocalISODate(payload.date);
-    payload.date = normalizedDate || payload.date;
+    const normalizedDate = normalizeTrainingDateKey(
+      payload.date || current.date,
+    );
+    if (!normalizedDate) {
+      return res.status(400).json({
+        error: "La fecha del entrenamiento no es valida",
+        code: "INVALID_TRAINING_DATE",
+      });
+    }
+    payload.date = normalizedDate;
+    payload.registrationKey = buildTrainingRegistrationKey({
+      ownerId: current.ownerId,
+      date: payload.date,
+      routineId: payload.routineId || current.routineId,
+    });
     payload.progressScopeId = await resolveTrainingProgressScope(
       req,
       payload,
@@ -1049,11 +1125,22 @@ router.put("/:id", async (req, res, next) => {
     payload.workSeconds = timingSummary.workSeconds;
     payload.restSeconds = timingSummary.restSeconds;
     payload.pauseSeconds = timingSummary.pauseSeconds;
-    const loadMetrics = getTrainingLoadMetrics(payload.exercises);
+    const submission = validateTrainingSubmission({
+      date: payload.date,
+      exercises: payload.exercises,
+    });
+    if (!submission.ok) {
+      return res.status(submission.status).json({
+        error: submission.error,
+        code: submission.code,
+      });
+    }
+    const loadMetrics = submission.loadMetrics;
     payload.totalVolume = loadMetrics.recordedKg;
     payload.volumeBreakdown = loadMetrics;
     const updated = await Training.findByIdAndUpdate(req.params.id, payload, {
       new: true,
+      runValidators: true,
     });
     if (!updated) return res.status(404).json({ error: "Not found" });
     await Promise.all(
@@ -1074,9 +1161,25 @@ router.delete("/:id", async (req, res, next) => {
     if (!(await canMutateTraining(req, current))) {
       return res.status(403).json({ error: "No autorizado" });
     }
-    await Training.findByIdAndDelete(req.params.id);
+    const dbSession = await Training.startSession();
+    let deletedSessions = 0;
+    try {
+      await dbSession.withTransaction(async () => {
+        const sessionResult = await Session.deleteMany(
+          { trainingId: String(current._id) },
+          { session: dbSession },
+        );
+        deletedSessions = sessionResult.deletedCount;
+        await Training.deleteOne(
+          { _id: current._id, ownerId: current.ownerId },
+          { session: dbSession },
+        );
+      });
+    } finally {
+      await dbSession.endSession();
+    }
     await enqueueAthleteMetricRefresh(current.ownerId, current.date);
-    res.json({ ok: true });
+    res.json({ ok: true, deletedSessions });
   } catch (err) {
     next(err);
   }

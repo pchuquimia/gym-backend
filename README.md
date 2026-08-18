@@ -199,6 +199,9 @@ npm start
 
 El proveedor de despliegue debe inyectar las variables de entorno; el archivo `.env` no forma parte del repositorio.
 
+La politica de validacion, migraciones reversibles, respaldos y recuperacion se
+documenta en [DATABASE_OPERATIONS.md](./DATABASE_OPERATIONS.md).
+
 ## Repositorio relacionado
 
 Frontend: [pchuquimia/gym-frontend](https://github.com/pchuquimia/gym-frontend)

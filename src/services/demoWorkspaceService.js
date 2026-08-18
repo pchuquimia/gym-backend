@@ -106,14 +106,14 @@ const trainingVolume = (exercises) =>
 const loadCatalogExercises = async () => {
   const exercises = await Exercise.find({
     type: "system",
-    isActive: { $ne: false },
+    isActive: true,
     mergedIntoExerciseId: null,
   })
     .sort({ image: -1, name: 1 })
     .limit(16)
     .lean();
   if (exercises.length) return exercises;
-  return Exercise.find({ isActive: { $ne: false } })
+  return Exercise.find({ isActive: true })
     .limit(16)
     .lean();
 };

@@ -1,9 +1,10 @@
 import mongoose from "mongoose";
+import { isoDateKey } from "./schemaValidation.js";
 
 const AthleteIntelligenceSnapshotSchema = new mongoose.Schema(
   {
     ownerId: { type: String, required: true },
-    dateKey: { type: String, required: true },
+    dateKey: isoDateKey(),
     variant: {
       type: String,
       enum: ["basic", "advanced"],

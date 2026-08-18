@@ -198,6 +198,7 @@ router.put("/:id", async (req, res, next) => {
       (await resolveProgressScope(req, payload, payload.ownerId));
     const routine = await Routine.findByIdAndUpdate(req.params.id, payload, {
       new: true,
+      runValidators: true,
     });
     res.json(
       await localizeExerciseReferences(routine, getExerciseLanguage(req)),

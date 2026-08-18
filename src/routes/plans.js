@@ -11,6 +11,7 @@ import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
 } from "../utils/trainingPlanLifecycle.js";
+import { persistPlanStatus } from "../services/trainingPlanTransactionService.js";
 
 const router = Router();
 
@@ -429,72 +430,61 @@ router.patch("/:id/status", async (req, res, next) => {
         });
       }
     }
-    if (nextStatus === "active") {
-      const previous = await TrainingPlan.find({
-        _id: { $ne: plan._id },
-        athleteId: req.user.id,
-        status: "active",
-      }).lean();
-      const previousIds = previous.map((item) => String(item._id));
-      await TrainingPlan.updateMany(
-        { _id: { $in: previousIds } },
-        { $set: { status: "paused" } },
-      );
-      await Routine.updateMany(
-        { ownerId: req.user.id, trainingPlanId: { $in: previousIds } },
-        { $set: { isArchived: true, isAvailableForTraining: false } },
-      );
-    }
-    if (nextStatus === "scheduled") {
-      const otherScheduled = await TrainingPlan.find(
-        {
-          _id: { $ne: plan._id },
-          athleteId: req.user.id,
-          status: "scheduled",
-        },
-        "_id",
-      ).lean();
-      await TrainingPlan.updateMany(
-        { _id: { $in: otherScheduled.map((item) => item._id) } },
-        { $set: { status: "paused" } },
-      );
-    }
-    plan.status = nextStatus;
-    await plan.save();
-    await Routine.updateMany(
-      { ownerId: req.user.id, trainingPlanId: String(plan._id) },
-      {
-        $set: {
-          isArchived: ["scheduled", "cancelled", "completed"].includes(
-            nextStatus,
-          ),
-          isAvailableForTraining: nextStatus === "active",
-        },
-      },
-    );
-    res.json(plan);
+    const updatedPlan = await persistPlanStatus({
+      planId: plan._id,
+      athleteId: req.user.id,
+      coachId: null,
+      status: nextStatus,
+      expectedUpdatedAt: plan.updatedAt,
+    });
+    res.json(updatedPlan);
   } catch (err) {
     next(err);
   }
 });
 
 router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
+  let dbSession;
   try {
-    const plan = await TrainingPlan.findById(req.params.id).lean();
-    if (!plan) return res.status(404).json({ error: "Plan no encontrado" });
-    const [routineResult] = await Promise.all([
-      Routine.updateMany(
+    dbSession = await TrainingPlan.startSession();
+    let archivedRoutines = 0;
+    let plan = null;
+    await dbSession.withTransaction(async () => {
+      plan = await TrainingPlan.findById(req.params.id).session(dbSession);
+      if (!plan) {
+        const error = new Error("Plan no encontrado");
+        error.status = 404;
+        throw error;
+      }
+      plan.status = "cancelled";
+      await plan.save({ session: dbSession });
+      const routineResult = await Routine.updateMany(
         {
           ownerId: plan.athleteId,
           trainingPlanId: String(plan._id),
         },
-        { $set: { isArchived: true, isAvailableForTraining: false } },
-      ),
-      TrainingPlan.findByIdAndDelete(plan._id),
-    ]);
-    res.json({ ok: true, archivedRoutines: routineResult.modifiedCount });
+        {
+          $set: {
+            isArchived: true,
+            isAvailableForTraining: false,
+            archivedAt: new Date(),
+            archiveReason: "plan_lifecycle",
+          },
+        },
+        { session: dbSession, runValidators: true },
+      );
+      archivedRoutines = routineResult.modifiedCount;
+    });
+    res.json({
+      ok: true,
+      disposition: "archived",
+      planId: String(plan._id),
+      archivedRoutines,
+    });
   } catch (err) {
     next(err);
+  } finally {
+    if (dbSession) await dbSession.endSession();
   }
 });
 

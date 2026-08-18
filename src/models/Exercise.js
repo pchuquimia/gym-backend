@@ -150,6 +150,10 @@ const ExerciseSchema = new mongoose.Schema(
   { timestamps: true, versionKey: false },
 );
 
+ExerciseSchema.path("ownerId").validate(function validateCustomOwner(value) {
+  return this.type !== "custom" || Boolean(String(value || "").trim());
+}, "Los ejercicios personalizados requieren propietario");
+
 ExerciseSchema.index({ name: 1 });
 ExerciseSchema.index({ "localizedNames.es": 1 });
 ExerciseSchema.index({ "localizedNames.en": 1 });
@@ -157,6 +161,7 @@ ExerciseSchema.index({ muscle: 1 });
 ExerciseSchema.index({ slug: 1 });
 ExerciseSchema.index({ identityKey: 1, isActive: 1 });
 ExerciseSchema.index({ type: 1, ownerId: 1, isActive: 1 });
+ExerciseSchema.index({ isActive: 1, type: -1, name: 1, ownerId: 1 });
 ExerciseSchema.index({ primaryMuscle: 1 });
 ExerciseSchema.index({ primaryMuscleGroup: 1 });
 ExerciseSchema.index({ bodyRegion: 1 });

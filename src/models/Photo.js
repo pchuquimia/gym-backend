@@ -1,8 +1,9 @@
 import mongoose from "mongoose";
+import { isoDateKey } from "./schemaValidation.js";
 
 const PhotoSchema = new mongoose.Schema(
   {
-    date: { type: String, required: true }, // yyyy-mm-dd
+    date: isoDateKey(),
     label: { type: String, default: "" },
     url: { type: String, required: true },
     publicId: { type: String, default: "" },
@@ -23,7 +24,7 @@ const PhotoSchema = new mongoose.Schema(
       enum: ["front", "side", "back", "other"],
       default: "front",
     },
-    ownerId: { type: String, default: null },
+    ownerId: { type: String, required: true },
   },
   { timestamps: true, versionKey: false },
 );

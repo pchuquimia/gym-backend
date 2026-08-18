@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { maxArrayLength } from "./schemaValidation.js";
 
 const PlanDaySchema = new mongoose.Schema(
   {
@@ -69,7 +70,25 @@ const TrainingPlanSchema = new mongoose.Schema(
       default: "active",
       index: true,
     },
-    weeklySchedule: { type: [PlanDaySchema], default: [] },
+    weeklySchedule: {
+      type: [PlanDaySchema],
+      default: [],
+      validate: [
+        maxArrayLength(28, "La planificacion semanal"),
+        {
+          validator: (days) =>
+            new Set((days || []).map((day) => day.slotId)).size ===
+            (days || []).length,
+          message: "Los identificadores de bloque deben ser unicos",
+        },
+        {
+          validator: (days) =>
+            new Set((days || []).map((day) => day.dayIndex)).size ===
+            (days || []).length,
+          message: "Los indices de dia deben ser unicos",
+        },
+      ],
+    },
     cycleProgress: {
       currentIndex: { type: Number, min: 0, default: 0 },
       completedCycles: { type: Number, min: 0, default: 0 },
@@ -78,11 +97,19 @@ const TrainingPlanSchema = new mongoose.Schema(
     },
     notes: { type: String, trim: true, maxlength: 1000, default: "" },
   },
-  { timestamps: true, versionKey: false },
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 TrainingPlanSchema.index({ athleteId: 1, status: 1, updatedAt: -1 });
 TrainingPlanSchema.index({ coachId: 1, athleteId: 1, updatedAt: -1 });
+TrainingPlanSchema.index(
+  { athleteId: 1, status: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: "active" },
+    name: "one_active_plan_per_athlete",
+  },
+);
 
 TrainingPlanSchema.pre("validate", function normalizePlanDatesAndSlots(next) {
   if (!this.startDate) this.startDate = new Date();

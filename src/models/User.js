@@ -6,6 +6,7 @@ import {
   SUBSCRIPTION_PLANS,
   SUBSCRIPTION_STATUSES,
 } from "../utils/subscription.js";
+import { maxArrayLength } from "./schemaValidation.js";
 
 export const USER_ROLES = ["Admin", "Entrenador", "Cliente"];
 export const TRAINING_MODES = ["independent", "coach_managed"];
@@ -183,8 +184,9 @@ const UserSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
-    activeSessions: [
-      {
+    activeSessions: {
+      type: [
+        {
         sessionId: { type: String, required: true },
         device: { type: String, default: "Dispositivo" },
         browser: { type: String, default: "Navegador" },
@@ -193,8 +195,10 @@ const UserSchema = new mongoose.Schema(
         userAgent: { type: String, default: "" },
         createdAt: { type: Date, default: Date.now },
         lastSeenAt: { type: Date, default: Date.now },
-      },
-    ],
+        },
+      ],
+      validate: maxArrayLength(20, "Las sesiones activas"),
+    },
   },
   { timestamps: true, versionKey: false },
 );

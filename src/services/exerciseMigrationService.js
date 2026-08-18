@@ -47,7 +47,7 @@ const legacyCatalogFilter = {
 const currentCatalogFilter = {
   type: "system",
   "source.provider": DATASET_PROVIDER,
-  isActive: { $ne: false },
+  isActive: true,
 };
 
 const migrationCatalogFilter = {
@@ -56,7 +56,7 @@ const migrationCatalogFilter = {
     { "source.provider": { $ne: DATASET_PROVIDER } },
     {
       "source.provider": DATASET_PROVIDER,
-      isActive: { $ne: false },
+      isActive: true,
     },
   ],
 };

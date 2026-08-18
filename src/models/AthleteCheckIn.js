@@ -1,9 +1,10 @@
 import mongoose from "mongoose";
+import { isoDateKey } from "./schemaValidation.js";
 
 const AthleteCheckInSchema = new mongoose.Schema(
   {
     athleteId: { type: String, required: true, index: true },
-    dateKey: { type: String, required: true },
+    dateKey: isoDateKey(),
     sleep: { type: Number, required: true, min: 1, max: 5 },
     energy: { type: Number, required: true, min: 1, max: 5 },
     stress: { type: Number, required: true, min: 1, max: 5 },

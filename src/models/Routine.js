@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { maxArrayLength } from "./schemaValidation.js";
 
 const RoutineExerciseSchema = new mongoose.Schema(
   {
@@ -57,8 +58,17 @@ const RoutineSchema = new mongoose.Schema(
       enum: ["free", "muscle_blocks"],
       default: "free",
     },
-    exercises: [RoutineExerciseSchema],
-    ownerId: { type: String, default: null },
+    exercises: {
+      type: [RoutineExerciseSchema],
+      validate: maxArrayLength(100, "La lista de ejercicios"),
+    },
+    ownerId: {
+      type: String,
+      default: null,
+      required() {
+        return this.visibility !== "system";
+      },
+    },
     progressScopeId: { type: String, default: "" },
     progressMode: {
       type: String,
@@ -83,6 +93,8 @@ const RoutineSchema = new mongoose.Schema(
     assignedByCoachId: { type: String, default: null, index: true },
     assignedAt: { type: Date, default: null },
     trainingPlanId: { type: String, default: null, index: true },
+    historicalTrainingPlanId: { type: String, default: null },
+    detachedAt: { type: Date, default: null },
     trainingPlanSlotId: { type: String, default: null, index: true },
     assignmentType: {
       type: String,
@@ -99,7 +111,7 @@ const RoutineSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true, versionKey: false },
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 RoutineSchema.index({ progressScopeId: 1 });

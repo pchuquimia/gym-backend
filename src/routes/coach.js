@@ -23,6 +23,7 @@ import {
   shiftDateKey,
 } from "../utils/coachPremium.js";
 import { PREMIUM_FEATURES } from "../utils/subscription.js";
+import { persistPlanStatus } from "../services/trainingPlanTransactionService.js";
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
@@ -984,55 +985,14 @@ router.patch(
           });
         }
       }
-      if (status === "active") {
-        const otherPlans = await TrainingPlan.find(
-          {
-            _id: { $ne: plan._id },
-            athleteId: athlete._id.toString(),
-            status: "active",
-          },
-          "weeklySchedule.routineId",
-        ).lean();
-        const otherPlanIds = otherPlans.map((item) => String(item._id));
-        await TrainingPlan.updateMany(
-          { _id: { $in: otherPlanIds } },
-          { $set: { status: "paused" } },
-        );
-        if (otherPlanIds.length) {
-          await Routine.updateMany(
-            {
-              ownerId: athlete._id.toString(),
-              trainingPlanId: { $in: otherPlanIds },
-            },
-            { $set: { isArchived: true, isAvailableForTraining: false } },
-          );
-        }
-      } else if (status === "scheduled") {
-        await TrainingPlan.updateMany(
-          {
-            _id: { $ne: plan._id },
-            athleteId: athlete._id.toString(),
-            status: "scheduled",
-          },
-          { $set: { status: "paused" } },
-        );
-      }
-
-      plan.status = status;
-      await plan.save();
-      await Routine.updateMany(
-        {
-          ownerId: athlete._id.toString(),
-          trainingPlanId: String(plan._id),
-        },
-        {
-          $set: {
-            isArchived: status !== "active",
-            isAvailableForTraining: status === "active",
-          },
-        },
-      );
-      res.json(plan);
+      const updatedPlan = await persistPlanStatus({
+        planId: plan._id,
+        athleteId: athlete._id.toString(),
+        coachId: req.user.id,
+        status,
+        expectedUpdatedAt: plan.updatedAt,
+      });
+      res.json(updatedPlan);
     } catch (err) {
       next(err);
     }

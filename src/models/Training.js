@@ -1,9 +1,10 @@
 import mongoose from "mongoose";
+import { isoDateKey, maxArrayLength } from "./schemaValidation.js";
 
 const EntrySchema = new mongoose.Schema(
   {
-    weightKg: { type: Number, default: null },
-    reps: { type: Number, default: null },
+    weightKg: { type: Number, min: 0, default: null },
+    reps: { type: Number, min: 0, default: null },
     done: { type: Boolean, default: false },
     completedAt: { type: String, default: null },
     order: { type: Number, default: 0 },
@@ -14,8 +15,8 @@ const EntrySchema = new mongoose.Schema(
 
 const SetSchema = new mongoose.Schema(
   {
-    weightKg: { type: Number, default: null },
-    reps: { type: Number, default: null },
+    weightKg: { type: Number, min: 0, default: null },
+    reps: { type: Number, min: 0, default: null },
     done: { type: Boolean, default: false },
     order: { type: Number, default: 0 },
     seriesType: {
@@ -128,15 +129,18 @@ const TrainingSchema = new mongoose.Schema(
       type: String,
       default: () => new mongoose.Types.ObjectId().toString(), // autogenerar si no se envia
     },
-    date: { type: String, required: true }, // yyyy-mm-dd
-    durationSeconds: { type: Number, default: 0 },
-    durationOverrideSeconds: { type: Number, default: null },
-    workSeconds: { type: Number, default: null },
-    restSeconds: { type: Number, default: null },
-    pauseSeconds: { type: Number, default: null },
-    timeEvents: [TimeEventSchema],
+    date: isoDateKey(),
+    durationSeconds: { type: Number, min: 0, max: 86400, default: 0 },
+    durationOverrideSeconds: { type: Number, min: 0, max: 86400, default: null },
+    workSeconds: { type: Number, min: 0, default: null },
+    restSeconds: { type: Number, min: 0, default: null },
+    pauseSeconds: { type: Number, min: 0, default: null },
+    timeEvents: {
+      type: [TimeEventSchema],
+      validate: maxArrayLength(1000, "El historial de tiempos"),
+    },
     exerciseDurations: [ExerciseDurationSchema],
-    totalVolume: { type: Number, default: 0 },
+    totalVolume: { type: Number, min: 0, default: 0 },
     volumeBreakdown: {
       recordedSets: { type: Number, default: 0 },
       completedSets: { type: Number, default: 0 },
@@ -153,6 +157,7 @@ const TrainingSchema = new mongoose.Schema(
     },
     routineId: { type: String, default: null },
     routineName: { type: String, default: "" },
+    registrationKey: { type: String, default: undefined },
     trainingPlanId: { type: String, default: null, index: true },
     trainingPlanSlotId: { type: String, default: null, index: true },
     scheduleOverride: {
@@ -166,7 +171,13 @@ const TrainingSchema = new mongoose.Schema(
     progressScopeId: { type: String, default: "" },
     orderSignature: { type: String, default: "" },
     branch: { type: String, default: null },
-    ownerId: { type: String, default: null },
+    ownerId: { type: String, required: true },
+    historicalRefs: {
+      routineId: { type: String, default: null },
+      trainingPlanId: { type: String, default: null },
+      detachedAt: { type: Date, default: null },
+      reason: { type: String, default: "" },
+    },
     sessionType: {
       type: String,
       enum: ["personal", "supervised"],
@@ -174,13 +185,21 @@ const TrainingSchema = new mongoose.Schema(
     },
     startedBy: { type: String, default: null },
     supervisedBy: { type: String, default: null, index: true },
-    exercises: [ExerciseSchema],
+    exercises: {
+      type: [ExerciseSchema],
+      validate: maxArrayLength(100, "La lista de ejercicios"),
+    },
   },
-  { timestamps: true, versionKey: false },
+  { timestamps: true, optimisticConcurrency: true },
 );
 
 TrainingSchema.index({ date: -1 });
 TrainingSchema.index({ ownerId: 1, date: -1 });
+TrainingSchema.index({ ownerId: 1, date: -1, _id: -1 });
+TrainingSchema.index(
+  { registrationKey: 1 },
+  { unique: true, sparse: true, name: "unique_training_registration" },
+);
 TrainingSchema.index({ routineId: 1, date: -1 });
 TrainingSchema.index({ trainingPlanId: 1, trainingPlanSlotId: 1, date: -1 });
 TrainingSchema.index({ ownerId: 1, trainingPlanId: 1, date: -1 });
