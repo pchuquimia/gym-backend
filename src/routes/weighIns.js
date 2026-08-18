@@ -1,10 +1,8 @@
 import { Router } from "express";
-import {
-  ensureCanAccessOwner,
-  protect,
-} from "../middleware/authMiddleware.js";
+import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
+import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
 
 const router = Router();
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -49,16 +47,18 @@ const resolveOwnerId = async (req, value) => {
 };
 
 const buildSummary = async (ownerId, todayKey) => {
-  const [latestEntries, completedToday, total, recentDates] = await Promise.all([
-    WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(2).lean(),
-    WeightEntry.exists({ ownerId, dateKey: todayKey }),
-    WeightEntry.countDocuments({ ownerId }),
-    WeightEntry.find({ ownerId, dateKey: { $lte: todayKey } })
-      .select("dateKey")
-      .sort({ dateKey: -1 })
-      .limit(366)
-      .lean(),
-  ]);
+  const [latestEntries, completedToday, total, recentDates] = await Promise.all(
+    [
+      WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(2).lean(),
+      WeightEntry.exists({ ownerId, dateKey: todayKey }),
+      WeightEntry.countDocuments({ ownerId }),
+      WeightEntry.find({ ownerId, dateKey: { $lte: todayKey } })
+        .select("dateKey")
+        .sort({ dateKey: -1 })
+        .limit(366)
+        .lean(),
+    ],
+  );
 
   const dateSet = new Set(recentDates.map((entry) => entry.dateKey));
   let cursor = completedToday ? todayKey : shiftDateKey(todayKey, -1);
@@ -126,7 +126,9 @@ router.post("/", async (req, res, next) => {
     if (!Number.isFinite(weightKg) || weightKg < 25 || weightKg > 400) {
       throw invalidRequest("El peso debe estar entre 25 y 400 kg");
     }
-    const note = String(req.body.note || "").trim().slice(0, 160);
+    const note = String(req.body.note || "")
+      .trim()
+      .slice(0, 160);
     const existed = await WeightEntry.exists({ ownerId, dateKey });
     const entry = await WeightEntry.findOneAndUpdate(
       { ownerId, dateKey },
@@ -150,6 +152,8 @@ router.post("/", async (req, res, next) => {
         $set: { "profile.weight": latest.weightKg },
       });
     }
+
+    await enqueueAthleteMetricRefresh(ownerId, dateKey);
 
     res.status(existed ? 200 : 201).json(entry);
   } catch (error) {
@@ -175,6 +179,7 @@ router.delete("/:id", async (req, res, next) => {
         $set: { "profile.weight": latest.weightKg },
       });
     }
+    await enqueueAthleteMetricRefresh(entry.ownerId, entry.dateKey);
     res.json({ ok: true });
   } catch (error) {
     next(error);

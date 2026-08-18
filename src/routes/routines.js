@@ -12,6 +12,7 @@ import {
   getExerciseLanguage,
   localizeExerciseReferences,
 } from "../utils/exerciseLocalization.js";
+import { measureDatabase } from "../middleware/performanceTiming.js";
 
 const router = Router();
 
@@ -65,10 +66,14 @@ router.get("/", async (req, res, next) => {
     if (["template", "personal", "assigned"].includes(req.query.kind)) {
       filter.kind = req.query.kind;
     }
-    const routines = await Routine.find(filter).lean();
+    const routines = await measureDatabase(res, () =>
+      Routine.find(filter).lean(),
+    );
     res.set("Cache-Control", "private, no-store");
     res.json(
-      await localizeExerciseReferences(routines, getExerciseLanguage(req)),
+      await measureDatabase(res, () =>
+        localizeExerciseReferences(routines, getExerciseLanguage(req)),
+      ),
     );
   } catch (err) {
     next(err);

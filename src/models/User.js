@@ -1,5 +1,11 @@
 import bcrypt from "bcrypt";
 import mongoose from "mongoose";
+import {
+  getEffectiveSubscription,
+  getEntitlements,
+  SUBSCRIPTION_PLANS,
+  SUBSCRIPTION_STATUSES,
+} from "../utils/subscription.js";
 
 export const USER_ROLES = ["Admin", "Entrenador", "Cliente"];
 export const TRAINING_MODES = ["independent", "coach_managed"];
@@ -73,6 +79,14 @@ const UserSchema = new mongoose.Schema(
       default: "independent",
       index: true,
     },
+    onboarding: {
+      status: {
+        type: String,
+        enum: ["pending", "complete"],
+        default: "complete",
+      },
+      completedAt: { type: Date, default: null },
+    },
     coachCode: {
       type: String,
       default: undefined,
@@ -80,6 +94,28 @@ const UserSchema = new mongoose.Schema(
       sparse: true,
       uppercase: true,
       trim: true,
+    },
+    subscription: {
+      plan: { type: String, enum: SUBSCRIPTION_PLANS, default: "free" },
+      status: {
+        type: String,
+        enum: SUBSCRIPTION_STATUSES,
+        default: "active",
+      },
+      trialEndsAt: { type: Date, default: null },
+      currentPeriodEnd: { type: Date, default: null },
+      activatedAt: { type: Date, default: null },
+      canceledAt: { type: Date, default: null },
+      trialStartedAt: { type: Date, default: null },
+      trialUsedAt: { type: Date, default: null },
+      provider: {
+        type: String,
+        enum: ["manual", "stripe", "other"],
+        default: "manual",
+      },
+      grantedBy: { type: String, default: null },
+      externalCustomerId: { type: String, default: null, select: false },
+      externalSubscriptionId: { type: String, default: null, select: false },
     },
     profile: {
       birthDate: { type: String, default: "" },
@@ -90,6 +126,12 @@ const UserSchema = new mongoose.Schema(
         enum: ["volumen", "mantenimiento", "definicion"],
         default: "mantenimiento",
       },
+      experienceLevel: {
+        type: String,
+        enum: ["beginner", "intermediate", "advanced"],
+        default: "beginner",
+      },
+      weeklyFrequency: { type: Number, min: 1, max: 7, default: 3 },
       calories: { type: Number, default: 2500 },
       units: { type: String, enum: ["metric", "imperial"], default: "metric" },
       language: { type: String, enum: ["es", "en"], default: "es" },
@@ -167,7 +209,10 @@ UserSchema.methods.comparePassword = function comparePassword(candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
+UserSchema.index({ role: 1, assignedTrainerId: 1, isActive: 1, name: 1 });
+
 UserSchema.methods.toSafeJSON = function toSafeJSON() {
+  const subscription = getEffectiveSubscription(this);
   return {
     id: this._id.toString(),
     name: this.name,
@@ -177,6 +222,10 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
       this.role === "Cliente" && this.assignedTrainerId
         ? "coach_managed"
         : this.trainingMode || "independent",
+    onboarding: {
+      status: this.onboarding?.status || "complete",
+      completedAt: this.onboarding?.completedAt || null,
+    },
     assignedTrainerId: this.assignedTrainerId || null,
     coachCode: ["Admin", "Entrenador"].includes(this.role)
       ? this.coachCode || null
@@ -190,6 +239,8 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     passwordChangedAt: this.passwordChangedAt,
     emailVerificationRequired: this.emailVerificationRequired,
     emailVerifiedAt: this.emailVerifiedAt,
+    subscription,
+    entitlements: getEntitlements(this),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };

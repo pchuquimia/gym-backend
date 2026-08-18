@@ -7,6 +7,8 @@ describe("API shell", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ ok: true });
+    expect(response.headers["server-timing"]).toMatch(/total;dur=/);
+    expect(response.headers["x-response-time"]).toMatch(/ms$/);
   });
 
   test("una ruta desconocida responde 404 en JSON", async () => {

@@ -1,6 +1,44 @@
 import jwt from "jsonwebtoken";
 import User from "../models/User.js";
+import { measureDatabase } from "./performanceTiming.js";
 import { getDemoRestriction } from "../utils/demoMode.js";
+import {
+  getEffectiveSubscription,
+  getEntitlements,
+  hasPremiumFeature,
+} from "../utils/subscription.js";
+
+const AUTH_USER_FIELDS = [
+  "name",
+  "email",
+  "role",
+  "isActive",
+  "isDemo",
+  "demoWorkspaceId",
+  "demoExpiresAt",
+  "assignedTrainerId",
+  "trainingMode",
+  "profile.language",
+  "activeSessions",
+  "subscription",
+].join(" ");
+const authenticationReadsInFlight = new Map();
+
+const loadAuthenticationUser = (userId) => {
+  const key = String(userId || "");
+  const current = authenticationReadsInFlight.get(key);
+  if (current) return current;
+  const operation = User.findById(key, AUTH_USER_FIELDS)
+    .lean()
+    .exec()
+    .finally(() => {
+      if (authenticationReadsInFlight.get(key) === operation) {
+        authenticationReadsInFlight.delete(key);
+      }
+    });
+  authenticationReadsInFlight.set(key, operation);
+  return operation;
+};
 
 const getTokenFromRequest = (req) => {
   if (req.cookies?.jwt) return req.cookies.jwt;
@@ -13,7 +51,7 @@ const getTokenFromRequest = (req) => {
   return null;
 };
 
-export const protect = async (req, _res, next) => {
+export const protect = async (req, res, next) => {
   try {
     const token = getTokenFromRequest(req);
     if (!token) {
@@ -23,7 +61,12 @@ export const protect = async (req, _res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select("-password");
+    // Initial screens issue several protected requests in parallel. Sharing the
+    // same in-flight user lookup removes duplicate Atlas round trips without
+    // caching permissions after the request burst has finished.
+    const user = await measureDatabase(res, () =>
+      loadAuthenticationUser(decoded.id),
+    );
     if (!user || !user.isActive) {
       const err = new Error("No autenticado");
       err.statusCode = 401;
@@ -63,6 +106,8 @@ export const protect = async (req, _res, next) => {
         language: user.profile?.language === "en" ? "en" : "es",
       },
       sessionId: decoded.sid || null,
+      subscription: getEffectiveSubscription(user),
+      entitlements: getEntitlements(user),
     };
 
     if (req.user.isDemo) {
@@ -92,6 +137,15 @@ export const authorizeRoles =
     }
     next();
   };
+
+export const requireFeature = (feature) => (req, _res, next) => {
+  if (hasPremiumFeature(req.user, feature)) return next();
+  const err = new Error("Esta funcionalidad requiere un plan premium");
+  err.statusCode = 403;
+  err.code = "PREMIUM_FEATURE_REQUIRED";
+  err.details = { feature };
+  next(err);
+};
 
 export const canAccessOwner = (user, ownerId) => {
   if (!user) return false;

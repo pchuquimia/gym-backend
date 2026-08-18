@@ -1,4 +1,5 @@
 import fs from "fs";
+import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { Router } from "express";
@@ -40,17 +41,83 @@ import {
 } from "../services/exerciseAiImageService.js";
 import { inferWeightConfig } from "../utils/weightConfig.js";
 import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
+import { measureDatabase } from "../middleware/performanceTiming.js";
 
 const router = Router();
 const EXERCISE_FACET_PAGE_SIZE = 200;
 const EXERCISE_FACET_CONCURRENCY = 8;
 const EXERCISE_FACET_CACHE_TTL_MS = 5 * 60 * 1000;
 const EXERCISE_FACET_CACHE_MAX_ENTRIES = 8;
+const EXERCISE_LIST_CACHE_TTL_MS = 2 * 60 * 1000;
+const EXERCISE_LIST_CACHE_MAX_ENTRIES = 64;
 const EXERCISE_FACET_FIELDS =
   "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image type ownerId";
 const exerciseFacetCache = new Map();
+const exerciseListCache = new Map();
+let systemCatalogVersionCache = null;
+const SYSTEM_CATALOG_FILTER = {
+  isActive: { $ne: false },
+  $or: [{ type: "system" }, { ownerId: null }, { ownerId: { $exists: false } }],
+};
+const VERSIONED_CATALOG_FIELDS =
+  "name localizedNames nameSpanish nameEnglish slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
 
-const clearExerciseFacetCache = () => exerciseFacetCache.clear();
+const clearExerciseFacetCache = () => {
+  exerciseFacetCache.clear();
+  exerciseListCache.clear();
+  systemCatalogVersionCache = null;
+};
+
+const getSystemCatalogVersion = async () => {
+  if (
+    systemCatalogVersionCache &&
+    systemCatalogVersionCache.expiresAt > Date.now()
+  ) {
+    return systemCatalogVersionCache.value;
+  }
+  const [count, latest] = await Promise.all([
+    Exercise.countDocuments(SYSTEM_CATALOG_FILTER),
+    Exercise.findOne(SYSTEM_CATALOG_FILTER, "updatedAt")
+      .sort({ updatedAt: -1 })
+      .lean(),
+  ]);
+  const source = `${count}:${latest?.updatedAt?.toISOString?.() || "initial"}`;
+  const value = {
+    version: crypto
+      .createHash("sha1")
+      .update(source)
+      .digest("hex")
+      .slice(0, 16),
+    count,
+    updatedAt: latest?.updatedAt || null,
+  };
+  systemCatalogVersionCache = {
+    value,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  };
+  return value;
+};
+
+const readExerciseListCache = (key) => {
+  const cached = exerciseListCache.get(key);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    if (cached) exerciseListCache.delete(key);
+    return null;
+  }
+  exerciseListCache.delete(key);
+  exerciseListCache.set(key, cached);
+  return cached.value;
+};
+
+const writeExerciseListCache = (key, value) => {
+  exerciseListCache.set(key, {
+    value,
+    expiresAt: Date.now() + EXERCISE_LIST_CACHE_TTL_MS,
+  });
+  while (exerciseListCache.size > EXERCISE_LIST_CACHE_MAX_ENTRIES) {
+    exerciseListCache.delete(exerciseListCache.keys().next().value);
+  }
+};
 
 const loadExerciseFacetDocuments = async (filter) => {
   return loadInConcurrentPages({
@@ -66,6 +133,20 @@ const loadExerciseFacetDocuments = async (filter) => {
         .lean(),
   });
 };
+
+const loadVersionedSystemCatalog = (fields) =>
+  loadInConcurrentPages({
+    pageSize: 300,
+    concurrency: 6,
+    fetchPage: ({ skip, limit }) =>
+      Exercise.find(SYSTEM_CATALOG_FILTER, fields)
+        .sort({ _id: 1 })
+        .skip(skip)
+        .limit(limit)
+        .batchSize(limit)
+        .maxTimeMS(10000)
+        .lean(),
+  });
 
 const loadCachedExerciseFacetDocuments = async (cacheKey, filter) => {
   const cached = exerciseFacetCache.get(cacheKey);
@@ -467,7 +548,96 @@ const assertCanManageExercise = async (req, exercise) => {
   return ensureCanAccessOwner(req, exercise.ownerId);
 };
 
+router.get("/catalog/version", async (_req, res, next) => {
+  try {
+    const catalog = await getSystemCatalogVersion();
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+    res.set("X-Catalog-Version", catalog.version);
+    res.json({ ...catalog, schemaVersion: 1 });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/catalog/system", async (req, res, next) => {
+  try {
+    const catalog = await getSystemCatalogVersion();
+    const language = req.query.language === "en" ? "en" : "es";
+    const fields = req.query.fields
+      ? String(req.query.fields).split(",").join(" ")
+      : VERSIONED_CATALOG_FIELDS;
+    const etag = `"catalog-${catalog.version}-${crypto
+      .createHash("sha1")
+      .update(`${language}:${fields}`)
+      .digest("hex")
+      .slice(0, 10)}"`;
+    const normalizeEtag = (value) =>
+      String(value || "")
+        .replace(/^W\//, "")
+        .replace(/^"|"$/g, "");
+    if (
+      normalizeEtag(req.headers["if-none-match"]) === normalizeEtag(etag)
+    ) {
+      return res.status(304).end();
+    }
+    const exercises = await measureDatabase(res, () =>
+      loadVersionedSystemCatalog(fields),
+    );
+    res.set("Cache-Control", "public, max-age=86400, immutable");
+    res.set("ETag", etag);
+    res.set("X-Catalog-Version", catalog.version);
+    res.json({
+      version: catalog.version,
+      count: exercises.length,
+      items: exercises.map((exercise) =>
+        localizeExerciseDocument(exercise, language),
+      ),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.use(protect);
+
+router.get("/catalog/custom", async (req, res, next) => {
+  try {
+    const ownerId = String(req.query.ownerId || req.user.id).trim();
+    if (!(await ensureCanAccessOwner(req, ownerId))) {
+      return res.status(403).json({ error: "No autorizado" });
+    }
+    const fields = req.query.fields
+      ? String(req.query.fields).split(",").join(" ")
+      : VERSIONED_CATALOG_FIELDS;
+    const exercises = await measureDatabase(res, () =>
+      Exercise.find(
+        { ownerId, type: "custom", isActive: { $ne: false } },
+        fields,
+      )
+        .sort({ updatedAt: -1, _id: 1 })
+        .lean(),
+    );
+    const versionSource = exercises
+      .map((exercise) => `${exercise._id}:${exercise.updatedAt || ""}`)
+      .join("|");
+    const version = crypto
+      .createHash("sha1")
+      .update(versionSource || "empty")
+      .digest("hex")
+      .slice(0, 16);
+    res.set("Cache-Control", "private, no-store");
+    res.set("X-Catalog-Version", version);
+    res.json({
+      version,
+      count: exercises.length,
+      items: exercises.map((exercise) =>
+        localizeExerciseDocument(exercise, getExerciseLanguage(req)),
+      ),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get(
   "/admin/migrations",
@@ -1050,6 +1220,23 @@ router.get("/", async (req, res, next) => {
     }
     if (andFilters.length) filter.$and = andFilters;
 
+    const includeMeta = req.query.meta === "true";
+    const language = getExerciseLanguage(req);
+    const cacheKey = JSON.stringify({
+      page,
+      limit,
+      fields,
+      filter,
+      includeMeta,
+      language,
+    });
+    const cached = readExerciseListCache(cacheKey);
+    if (cached) {
+      res.set("Cache-Control", "private, max-age=60");
+      res.set("X-Data-Cache", "HIT");
+      return res.json(cached);
+    }
+
     const exercisesQuery = Exercise.find(filter, fields)
       .sort({ type: -1, name: 1 })
       .skip((page - 1) * limit)
@@ -1058,29 +1245,31 @@ router.get("/", async (req, res, next) => {
       .maxTimeMS(10000)
       .lean();
 
-    const includeMeta = req.query.meta === "true";
-    const [exercises, total] = await Promise.all([
-      exercisesQuery,
-      includeMeta
-        ? Exercise.countDocuments(filter).maxTimeMS(10000)
-        : Promise.resolve(null),
-    ]);
+    const [exercises, total] = await measureDatabase(res, () =>
+      Promise.all([
+        exercisesQuery,
+        includeMeta
+          ? Exercise.countDocuments(filter).maxTimeMS(10000)
+          : Promise.resolve(null),
+      ]),
+    );
 
     const localizedExercises = exercises.map((exercise) =>
-      localizeExerciseDocument(exercise, getExerciseLanguage(req)),
+      localizeExerciseDocument(exercise, language),
     );
+    const response = includeMeta
+      ? {
+          page,
+          limit,
+          count: localizedExercises.length,
+          total,
+          items: localizedExercises,
+        }
+      : localizedExercises;
+    writeExerciseListCache(cacheKey, response);
     res.set("Cache-Control", "private, max-age=60");
-    if (includeMeta) {
-      res.json({
-        page,
-        limit,
-        count: localizedExercises.length,
-        total,
-        items: localizedExercises,
-      });
-    } else {
-      res.json(localizedExercises);
-    }
+    res.set("X-Data-Cache", "MISS");
+    res.json(response);
   } catch (err) {
     next(err);
   }

@@ -6,8 +6,9 @@ describe("Mongo connection options", () => {
       serverSelectionTimeoutMS: 10_000,
       connectTimeoutMS: 10_000,
       socketTimeoutMS: 15_000,
-      maxIdleTimeMS: 30_000,
-      minPoolSize: 0,
+      maxIdleTimeMS: 60_000,
+      minPoolSize: 2,
+      maxPoolSize: 10,
       retryReads: true,
       retryWrites: true,
     });

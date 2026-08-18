@@ -2,16 +2,20 @@ import mongoose from "mongoose";
 
 export const getMongoConnectionOptions = () => {
   const configuredPoolSize = Number(process.env.MONGO_MAX_POOL_SIZE || 10);
+  const configuredMinPoolSize = Number(process.env.MONGO_MIN_POOL_SIZE || 2);
+  const maxPoolSize = Number.isFinite(configuredPoolSize)
+    ? Math.max(2, configuredPoolSize)
+    : 10;
   return {
     serverSelectionTimeoutMS: 10_000,
     connectTimeoutMS: 10_000,
     socketTimeoutMS: 15_000,
-    maxIdleTimeMS: 30_000,
+    maxIdleTimeMS: 60_000,
     heartbeatFrequencyMS: 10_000,
-    maxPoolSize: Number.isFinite(configuredPoolSize)
-      ? Math.max(2, configuredPoolSize)
-      : 10,
-    minPoolSize: 0,
+    maxPoolSize,
+    minPoolSize: Number.isFinite(configuredMinPoolSize)
+      ? Math.max(0, Math.min(configuredMinPoolSize, maxPoolSize))
+      : 2,
     retryReads: true,
     retryWrites: true,
   };

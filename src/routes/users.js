@@ -3,6 +3,11 @@ import { body } from "express-validator";
 import { authorizeRoles, protect } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import User, { TRAINING_MODES, USER_ROLES } from "../models/User.js";
+import {
+  getEffectiveSubscription,
+  getPlanForRole,
+  SUBSCRIPTION_PLANS,
+} from "../utils/subscription.js";
 import Exercise from "../models/Exercise.js";
 import Photo from "../models/Photo.js";
 import Preference from "../models/Preference.js";
@@ -14,7 +19,7 @@ import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
@@ -118,6 +123,20 @@ router.patch(
       ).lean();
       if (!current) return res.status(404).json({ error: "Not found" });
       const nextRole = payload.role || current.role;
+      if (payload.role && payload.role !== current.role) {
+        payload.subscription = {
+          plan: "free",
+          status: "active",
+          trialEndsAt: null,
+          currentPeriodEnd: null,
+          activatedAt: null,
+          canceledAt: new Date(),
+          trialStartedAt: null,
+          trialUsedAt: null,
+          provider: "manual",
+          grantedBy: req.user.id,
+        };
+      }
       const nextTrainerId = Object.prototype.hasOwnProperty.call(
         payload,
         "assignedTrainerId",
@@ -194,6 +213,112 @@ router.patch(
         }
       }
       res.json(user);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+router.patch(
+  "/:id/subscription",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const action = String(req.body.action || "").trim();
+      const requestedPlan = String(req.body.plan || "").trim();
+      if (!["start_trial", "activate", "set_free"].includes(action)) {
+        return res
+          .status(400)
+          .json({ error: "Accion de suscripcion invalida" });
+      }
+      const user = await User.findById(req.params.id).select(
+        "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt",
+      );
+      if (!user)
+        return res.status(404).json({ error: "Usuario no encontrado" });
+      if (user.isDemo) {
+        return res.status(400).json({
+          error: "Las cuentas demo ya incluyen todas las funciones",
+        });
+      }
+
+      const expectedPlan = getPlanForRole(user.role);
+      const plan =
+        action === "set_free" ? "free" : requestedPlan || expectedPlan;
+      if (
+        action !== "set_free" &&
+        (!SUBSCRIPTION_PLANS.includes(plan) || plan === "free")
+      ) {
+        return res
+          .status(400)
+          .json({ error: "Selecciona un plan premium valido" });
+      }
+      if (action !== "set_free" && plan !== expectedPlan) {
+        return res.status(400).json({
+          error:
+            user.role === "Entrenador"
+              ? "Un coach requiere el plan Coach Pro"
+              : user.role === "Cliente"
+                ? "Un atleta requiere el plan Athlete Pro"
+                : "Las cuentas administrativas ya tienen acceso completo",
+        });
+      }
+
+      const now = new Date();
+      if (action === "set_free") {
+        user.subscription = {
+          plan: "free",
+          status: "active",
+          trialEndsAt: null,
+          currentPeriodEnd: null,
+          activatedAt: null,
+          canceledAt: now,
+          trialStartedAt: user.subscription?.trialStartedAt || null,
+          trialUsedAt: user.subscription?.trialUsedAt || null,
+          provider: "manual",
+          grantedBy: req.user.id,
+        };
+      } else if (action === "start_trial") {
+        const trialDays = Math.min(
+          30,
+          Math.max(1, Math.round(Number(req.body.trialDays) || 14)),
+        );
+        user.subscription = {
+          plan,
+          status: "trialing",
+          trialEndsAt: new Date(now.getTime() + trialDays * 86_400_000),
+          currentPeriodEnd: null,
+          activatedAt: now,
+          canceledAt: null,
+          trialStartedAt: now,
+          trialUsedAt: now,
+          provider: "manual",
+          grantedBy: req.user.id,
+        };
+      } else {
+        const periodDays = Math.min(
+          3650,
+          Math.max(1, Math.round(Number(req.body.periodDays) || 30)),
+        );
+        user.subscription = {
+          plan,
+          status: "active",
+          trialEndsAt: null,
+          currentPeriodEnd: new Date(now.getTime() + periodDays * 86_400_000),
+          activatedAt: now,
+          canceledAt: null,
+          trialStartedAt: user.subscription?.trialStartedAt || null,
+          trialUsedAt: user.subscription?.trialUsedAt || now,
+          provider: "manual",
+          grantedBy: req.user.id,
+        };
+      }
+      await user.save();
+      res.set("Cache-Control", "no-store");
+      res.json({
+        ...user.toObject(),
+        subscription: getEffectiveSubscription(user),
+      });
     } catch (err) {
       next(err);
     }

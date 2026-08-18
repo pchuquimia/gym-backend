@@ -21,7 +21,13 @@ import plansRoutes from "./routes/plans.js";
 import planTemplatesRoutes from "./routes/planTemplates.js";
 import analyticsRoutes from "./routes/analytics.js";
 import weighInsRoutes from "./routes/weighIns.js";
+import checkInsRoutes from "./routes/checkIns.js";
+import billingRoutes from "./routes/billing.js";
+import dashboardRoutes from "./routes/dashboard.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
+import { performanceTiming } from "./middleware/performanceTiming.js";
+import { getCacheStatus } from "./services/cacheService.js";
+import { getDeploymentHealth } from "./utils/deploymentTopology.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -63,6 +69,13 @@ const corsOptions = {
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
+  exposedHeaders: [
+    "Server-Timing",
+    "X-Response-Time",
+    "X-Data-Cache",
+    "ETag",
+    "X-Catalog-Version",
+  ],
   credentials: true,
   optionsSuccessStatus: 200,
 };
@@ -92,10 +105,22 @@ app.use(
 );
 app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
+app.use(performanceTiming);
 app.use(morgan("dev"));
 app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health/architecture", async (_req, res, next) => {
+  try {
+    res.json({
+      ok: true,
+      topology: await getDeploymentHealth(),
+      cache: getCacheStatus(),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/coach", coachRoutes);
@@ -109,6 +134,9 @@ app.use("/api/trainings", trainingsRoutes);
 app.use("/api/analytics", analyticsRoutes);
 app.use("/api/preferences", preferencesRoutes);
 app.use("/api/weigh-ins", weighInsRoutes);
+app.use("/api/check-ins", checkInsRoutes);
+app.use("/api/billing", billingRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

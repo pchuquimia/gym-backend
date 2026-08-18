@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "node src/server.js",
+    "worker:metrics": "node src/workers/metricsWorker.js",
+    "worker:metrics:once": "node src/workers/metricsWorker.js --once",
+    "metrics:backfill": "node scripts/backfillAthleteDailyMetrics.js",
     "start": "node src/server.js",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
@@ -43,7 +46,8 @@
     "mongoose": "^8.5.3",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^7.0.13"
+    "nodemailer": "^7.0.13",
+    "redis": "^5.8.2"
   },
   "devDependencies": {
     "jest": "^30.4.2",

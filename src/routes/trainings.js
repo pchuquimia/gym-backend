@@ -26,6 +26,13 @@ import {
 } from "../utils/trainingLoad.js";
 import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
 import { toTrainingWeightConfig } from "../utils/weightConfig.js";
+import { measureDatabase } from "../middleware/performanceTiming.js";
+import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
+import {
+  applyCursorFilter,
+  decodeCursor,
+  paginatedResult,
+} from "../utils/cursorPagination.js";
 
 const router = Router();
 
@@ -552,7 +559,7 @@ router.get("/exercise-history", async (req, res, next) => {
 router.get("/summary", async (req, res, next) => {
   try {
     const { from, to, routineId } = req.query;
-    const filter = await getAccessibleOwnerFilter(req);
+    let filter = await getAccessibleOwnerFilter(req);
     if (from || to) {
       filter.date = {};
       if (from) filter.date.$gte = from;
@@ -561,13 +568,15 @@ router.get("/summary", async (req, res, next) => {
     if (routineId) filter.routineId = routineId;
 
     // Obtenemos las últimas 300 sesiones para el rango solicitado (suficiente para dashboard)
-    const trainings = await Training.find(
-      filter,
-      "date routineId routineName branch routineBranch durationSeconds totalVolume exercises",
-    )
-      .sort({ date: -1 })
-      .limit(300)
-      .lean();
+    const trainings = await measureDatabase(res, () =>
+      Training.find(
+        filter,
+        "date routineId routineName branch routineBranch durationSeconds totalVolume exercises",
+      )
+        .sort({ date: -1 })
+        .limit(300)
+        .lean(),
+    );
 
     // Volumen total y gráfica semanal
     const byWeek = new Map();
@@ -591,7 +600,9 @@ router.get("/summary", async (req, res, next) => {
     // Objetivos desde preferencias
     let objectives = [];
     try {
-      const pref = await Preference.findOne({ userId: req.user.id }).lean();
+      const pref = await measureDatabase(res, () =>
+        Preference.findOne({ userId: req.user.id }).lean(),
+      );
       if (pref?.goals) {
         objectives = Object.entries(pref.goals).map(([key, obj]) => ({
           key,
@@ -648,7 +659,7 @@ router.get("/", async (req, res, next) => {
     const includeTrainingPlanId = req.query.includeTrainingPlanId;
     const excludeProgressScopeId = req.query.excludeProgressScopeId;
 
-    const filter = await getAccessibleOwnerFilter(req);
+    let filter = await getAccessibleOwnerFilter(req);
     if (from || to) {
       filter.date = {};
       if (from) filter.date.$gte = from;
@@ -665,18 +676,22 @@ router.get("/", async (req, res, next) => {
         excludeProgressScopeId,
       }),
     );
+    const cursor = decodeCursor(req.query.cursor);
+    filter = applyCursorFilter(filter, cursor);
 
-    const trainings = await Training.find(filter, fields || undefined)
-      .sort({ date: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .maxTimeMS(10000)
-      .lean();
+    const trainingRows = await measureDatabase(res, () =>
+      Training.find(filter, fields || undefined)
+        .sort({ date: -1, _id: -1 })
+        .skip(cursor ? 0 : (page - 1) * limit)
+        .limit(limit + 1)
+        .maxTimeMS(10000)
+        .lean(),
+    );
+    const paginated = paginatedResult(trainingRows, limit);
 
     res.set("Cache-Control", "no-store");
-    const localizedTrainings = await localizeExerciseReferences(
-      trainings,
-      getExerciseLanguage(req),
+    const localizedTrainings = await measureDatabase(res, () =>
+      localizeExerciseReferences(paginated.items, getExerciseLanguage(req)),
     );
     const includeMeta = req.query.meta === "true";
     if (includeMeta) {
@@ -684,6 +699,8 @@ router.get("/", async (req, res, next) => {
         page,
         limit,
         count: localizedTrainings.length,
+        hasMore: paginated.hasMore,
+        nextCursor: paginated.nextCursor,
         items: localizedTrainings,
       });
     } else {
@@ -899,6 +916,7 @@ router.post("/", async (req, res, next) => {
         );
       }
     }
+    await enqueueAthleteMetricRefresh(training.ownerId, training.date);
     res.status(201).json(training);
   } catch (err) {
     next(err);
@@ -922,7 +940,7 @@ router.patch(
       }
       const current = await Training.findById(
         req.params.id,
-        "ownerId sessionType supervisedBy",
+        "ownerId date sessionType supervisedBy",
       ).lean();
       if (!current) return res.status(404).json({ error: "Not found" });
       if (!(await canMutateTraining(req, current))) {
@@ -933,6 +951,7 @@ router.patch(
         { durationSeconds, durationOverrideSeconds: durationSeconds },
         { new: true, runValidators: true },
       );
+      await enqueueAthleteMetricRefresh(current.ownerId, current.date);
       res.json(training);
     } catch (err) {
       next(err);
@@ -972,6 +991,7 @@ router.patch(
       training.totalVolume = loadMetrics.recordedKg;
       training.volumeBreakdown = loadMetrics;
       await training.save();
+      await enqueueAthleteMetricRefresh(training.ownerId, training.date);
 
       res.set("Cache-Control", "private, no-store");
       res.json({
@@ -1036,6 +1056,11 @@ router.put("/:id", async (req, res, next) => {
       new: true,
     });
     if (!updated) return res.status(404).json({ error: "Not found" });
+    await Promise.all(
+      [...new Set([current.date, updated.date].filter(Boolean))].map((date) =>
+        enqueueAthleteMetricRefresh(updated.ownerId, date),
+      ),
+    );
     res.json(updated);
   } catch (err) {
     next(err);
@@ -1050,6 +1075,7 @@ router.delete("/:id", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     await Training.findByIdAndDelete(req.params.id);
+    await enqueueAthleteMetricRefresh(current.ownerId, current.date);
     res.json({ ok: true });
   } catch (err) {
     next(err);

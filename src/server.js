@@ -6,6 +6,8 @@ const [{ default: app }, { connectDB }] = await Promise.all([
   import("./app.js"),
   import("./config/db.js"),
 ]);
+const { reportDeploymentTopology } =
+  await import("./utils/deploymentTopology.js");
 
 const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/gym";
@@ -22,6 +24,7 @@ for (const key of requiredEnv) {
 }
 
 async function start() {
+  reportDeploymentTopology();
   await connectDB(MONGO_URI);
   app.listen(PORT, () => {
     console.log(`API escuchando en puerto ${PORT}`);

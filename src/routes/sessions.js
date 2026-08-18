@@ -7,6 +7,12 @@ import {
 } from "../middleware/authMiddleware.js";
 import Session from "../models/Session.js";
 import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
+import { measureDatabase } from "../middleware/performanceTiming.js";
+import {
+  applyCursorFilter,
+  decodeCursor,
+  paginatedResult,
+} from "../utils/cursorPagination.js";
 
 const router = Router();
 
@@ -14,10 +20,40 @@ router.use(protect);
 
 router.get("/", async (req, res, next) => {
   try {
-    const filter = await getAccessibleOwnerFilter(req);
-    const sessions = await Session.find(filter).lean();
+    let filter = await getAccessibleOwnerFilter(req);
+    const limit = Math.min(
+      Math.max(Number.parseInt(req.query.limit, 10) || 500, 1),
+      2000,
+    );
+    if (req.query.from || req.query.to) {
+      filter.date = {};
+      if (req.query.from) filter.date.$gte = req.query.from;
+      if (req.query.to) filter.date.$lte = req.query.to;
+    }
+    const fields = req.query.fields
+      ? String(req.query.fields).split(",").join(" ")
+      : undefined;
+    const cursor = decodeCursor(req.query.cursor);
+    filter = applyCursorFilter(filter, cursor);
+    const sessionRows = await measureDatabase(res, () =>
+      Session.find(filter, fields)
+        .sort({ date: -1, _id: -1 })
+        .limit(limit + 1)
+        .maxTimeMS(10000)
+        .lean(),
+    );
+    const page = paginatedResult(sessionRows, limit);
     res.set("Cache-Control", "private, no-store");
-    res.json(sessions);
+    if (req.query.meta === "true") {
+      return res.json({
+        count: page.items.length,
+        limit,
+        items: page.items,
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
+      });
+    }
+    res.json(page.items);
   } catch (err) {
     next(err);
   }

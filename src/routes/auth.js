@@ -3,6 +3,7 @@ import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
 import {
   changePassword,
+  completeOnboarding,
   demoLogin,
   demoStatus,
   devAdminLogin,
@@ -183,6 +184,15 @@ router.patch(
       .optional()
       .isIn(["volumen", "mantenimiento", "definicion"])
       .withMessage("Objetivo inválido"),
+    body("experienceLevel")
+      .optional()
+      .isIn(["beginner", "intermediate", "advanced"])
+      .withMessage("Nivel de experiencia invalido"),
+    body("weeklyFrequency")
+      .optional()
+      .isInt({ min: 1, max: 7 })
+      .withMessage("Frecuencia semanal invalida")
+      .toInt(),
     body("calories")
       .optional()
       .isFloat({ min: 0 })
@@ -206,6 +216,32 @@ router.patch(
     validate,
   ],
   updateProfile,
+);
+router.patch(
+  "/onboarding",
+  protect,
+  [
+    body("goal")
+      .isIn(["volumen", "mantenimiento", "definicion"])
+      .withMessage("Objetivo invalido"),
+    body("experienceLevel")
+      .isIn(["beginner", "intermediate", "advanced"])
+      .withMessage("Nivel de experiencia invalido"),
+    body("weeklyFrequency")
+      .isInt({ min: 1, max: 7 })
+      .withMessage("Frecuencia semanal invalida")
+      .toInt(),
+    body("weight")
+      .isFloat({ min: 20, max: 500 })
+      .withMessage("Peso invalido")
+      .toFloat(),
+    body("height")
+      .isFloat({ min: 80, max: 250 })
+      .withMessage("Altura invalida")
+      .toFloat(),
+    validate,
+  ],
+  completeOnboarding,
 );
 router.patch(
   "/security",

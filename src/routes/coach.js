@@ -1,16 +1,28 @@
 import crypto from "crypto";
 import { Router } from "express";
-import { authorizeRoles, protect } from "../middleware/authMiddleware.js";
+import {
+  authorizeRoles,
+  protect,
+  requireFeature,
+} from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import PlanTemplate from "../models/PlanTemplate.js";
 import Training from "../models/Training.js";
 import User from "../models/User.js";
+import AthleteCheckIn from "../models/AthleteCheckIn.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
 } from "../utils/trainingPlanLifecycle.js";
 import { transitionAthleteCoach } from "../utils/coachAssignment.js";
+import {
+  buildAssistedPlanDraft,
+  buildWeeklyReport,
+  dateKey,
+  shiftDateKey,
+} from "../utils/coachPremium.js";
+import { PREMIUM_FEATURES } from "../utils/subscription.js";
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
@@ -100,7 +112,8 @@ router.post(
         req.user.id,
         "assignedTrainerId trainingMode",
       );
-      if (!athlete) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (!athlete)
+        return res.status(404).json({ error: "Usuario no encontrado" });
       const previousCoachId = String(athlete.assignedTrainerId || "");
       const nextCoachId = String(coach._id);
       if (
@@ -137,7 +150,8 @@ router.delete(
         req.user.id,
         "assignedTrainerId trainingMode",
       );
-      if (!athlete) return res.status(404).json({ error: "Usuario no encontrado" });
+      if (!athlete)
+        return res.status(404).json({ error: "Usuario no encontrado" });
       await transitionAthleteCoach({
         athleteId: athlete._id,
         previousCoachId: athlete.assignedTrainerId,
@@ -200,6 +214,246 @@ const getAthlete = async (coachId, athleteId) =>
     athleteFilter(coachId, athleteId),
     "name email role profile.goal profile.weight profile.height profile.avatarPhotoId",
   ).lean();
+
+const requestToday = (value) => {
+  const candidate = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return dateKey();
+  return dateKey(`${candidate}T12:00:00.000Z`) === candidate
+    ? candidate
+    : dateKey();
+};
+
+router.get(
+  "/portfolio",
+  requireFeature(PREMIUM_FEATURES.COACH_PORTFOLIO),
+  async (req, res, next) => {
+    try {
+      const athletes = await User.find(
+        {
+          role: "Cliente",
+          assignedTrainerId: req.user.id,
+          isActive: true,
+        },
+        "name email profile.goal profile.weight profile.height profile.avatarPhotoId updatedAt",
+      )
+        .sort({ name: 1 })
+        .lean();
+      const athleteIds = athletes.map((athlete) => String(athlete._id));
+      if (!athleteIds.length) {
+        return res.json({
+          generatedAt: new Date().toISOString(),
+          summary: {
+            athletes: 0,
+            attention: 0,
+            onTrack: 0,
+            sessionsThisWeek: 0,
+            adherence: 0,
+          },
+          alerts: [],
+          athletes: [],
+        });
+      }
+
+      const todayKey = requestToday(req.query.today);
+      const historyFrom = shiftDateKey(todayKey, -34);
+      const [trainings, plans, checkIns, routineCounts] = await Promise.all([
+        Training.find({
+          ownerId: { $in: athleteIds },
+          date: { $gte: historyFrom },
+        })
+          .select(
+            "ownerId date durationSeconds totalVolume volumeBreakdown exercises",
+          )
+          .lean(),
+        TrainingPlan.find({
+          athleteId: { $in: athleteIds },
+          coachId: req.user.id,
+          status: { $in: ["active", "scheduled"] },
+        })
+          .sort({ status: 1, updatedAt: -1 })
+          .lean(),
+        AthleteCheckIn.find({ athleteId: { $in: athleteIds } })
+          .sort({ dateKey: -1, updatedAt: -1 })
+          .lean(),
+        Routine.aggregate([
+          {
+            $match: { ownerId: { $in: athleteIds }, isArchived: { $ne: true } },
+          },
+          { $group: { _id: "$ownerId", count: { $sum: 1 } } },
+        ]),
+      ]);
+
+      const trainingsByAthlete = new Map();
+      trainings.forEach((training) => {
+        const key = String(training.ownerId);
+        trainingsByAthlete.set(key, [
+          ...(trainingsByAthlete.get(key) || []),
+          training,
+        ]);
+      });
+      const planByAthlete = new Map();
+      plans.forEach((plan) => {
+        const key = String(plan.athleteId);
+        const current = planByAthlete.get(key);
+        if (!current || plan.status === "active") planByAthlete.set(key, plan);
+      });
+      const checkInByAthlete = new Map();
+      checkIns.forEach((checkIn) => {
+        const key = String(checkIn.athleteId);
+        if (!checkInByAthlete.has(key)) checkInByAthlete.set(key, checkIn);
+      });
+      const routineCountByAthlete = new Map(
+        routineCounts.map((item) => [String(item._id), item.count]),
+      );
+
+      const enriched = athletes.map((athlete) => {
+        const id = String(athlete._id);
+        const athleteTrainings = trainingsByAthlete.get(id) || [];
+        const report = buildWeeklyReport({
+          athlete,
+          trainings: athleteTrainings,
+          activePlan: planByAthlete.get(id) || null,
+          latestCheckIn: checkInByAthlete.get(id) || null,
+          today: new Date(`${todayKey}T12:00:00.000Z`),
+        });
+        const sortedTrainings = [...athleteTrainings].sort((a, b) =>
+          b.date.localeCompare(a.date),
+        );
+        return {
+          ...athlete,
+          id,
+          routineCount: routineCountByAthlete.get(id) || 0,
+          trainingCount: athleteTrainings.length,
+          lastTraining: sortedTrainings[0] || null,
+          weekly: report.current,
+          adherence: report.adherence,
+          priority: report.priority,
+          alerts: report.alerts,
+          readiness: report.readiness,
+        };
+      });
+      const allAlerts = enriched
+        .flatMap((athlete) =>
+          athlete.alerts.map((alert) => ({
+            ...alert,
+            athleteId: athlete.id,
+            athleteName: athlete.name,
+          })),
+        )
+        .sort((left, right) => (left.severity === "high" ? -1 : 1));
+      const totalTarget = enriched.reduce(
+        (sum, athlete) => sum + athlete.adherence.target,
+        0,
+      );
+      const totalCompleted = enriched.reduce(
+        (sum, athlete) => sum + athlete.adherence.completed,
+        0,
+      );
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        generatedAt: new Date().toISOString(),
+        summary: {
+          athletes: enriched.length,
+          attention: enriched.filter((athlete) => athlete.priority === "high")
+            .length,
+          onTrack: enriched.filter((athlete) => athlete.priority === "normal")
+            .length,
+          sessionsThisWeek: totalCompleted,
+          adherence: totalTarget
+            ? Math.round(Math.min(1, totalCompleted / totalTarget) * 100)
+            : 0,
+        },
+        alerts: allAlerts.slice(0, 20),
+        athletes: enriched,
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  "/athletes/:athleteId/weekly-report",
+  requireFeature(PREMIUM_FEATURES.WEEKLY_REPORTS),
+  async (req, res, next) => {
+    try {
+      const athlete = await getAthlete(req.user.id, req.params.athleteId);
+      if (!athlete)
+        return res.status(404).json({ error: "Atleta no encontrado" });
+      const athleteId = String(athlete._id);
+      const todayKey = requestToday(req.query.today);
+      const from = shiftDateKey(todayKey, -34);
+      const [trainings, activePlan, latestCheckIn] = await Promise.all([
+        Training.find({ ownerId: athleteId, date: { $gte: from } })
+          .sort({ date: -1 })
+          .select(
+            "date durationSeconds totalVolume volumeBreakdown exercises routineName",
+          )
+          .lean(),
+        TrainingPlan.findOne({
+          athleteId,
+          coachId: req.user.id,
+          status: "active",
+        })
+          .sort({ updatedAt: -1 })
+          .lean(),
+        AthleteCheckIn.findOne({ athleteId }).sort({ dateKey: -1 }).lean(),
+      ]);
+      res.set("Cache-Control", "private, no-store");
+      res.json(
+        buildWeeklyReport({
+          athlete,
+          trainings,
+          activePlan,
+          latestCheckIn,
+          today: new Date(`${todayKey}T12:00:00.000Z`),
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/athletes/:athleteId/plan-draft",
+  requireFeature(PREMIUM_FEATURES.ASSISTED_PLANS),
+  async (req, res, next) => {
+    try {
+      const athlete = await getAthlete(req.user.id, req.params.athleteId);
+      if (!athlete)
+        return res.status(404).json({ error: "Atleta no encontrado" });
+      const athleteId = String(athlete._id);
+      const [routines, trainings, latestCheckIn] = await Promise.all([
+        Routine.find({ ownerId: req.user.id, isArchived: { $ne: true } })
+          .sort({ updatedAt: -1 })
+          .select("name goal level exercises isArchived updatedAt")
+          .limit(12)
+          .lean(),
+        Training.find({ ownerId: athleteId })
+          .sort({ date: -1 })
+          .select("date routineId routineName totalVolume durationSeconds")
+          .limit(100)
+          .lean(),
+        AthleteCheckIn.findOne({ athleteId }).sort({ dateKey: -1 }).lean(),
+      ]);
+      const requestedFrequency = Number(req.body.frequency);
+      const draft = buildAssistedPlanDraft({
+        athlete,
+        routines,
+        trainings,
+        latestCheckIn,
+        frequency: Number.isInteger(requestedFrequency)
+          ? requestedFrequency
+          : undefined,
+        today: new Date(`${requestToday(req.body.today)}T12:00:00.000Z`),
+      });
+      res.json(draft);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 const normalizeSchedule = (value, scheduleMode = "fixed") => {
   const sequential = scheduleMode !== "fixed";
@@ -382,31 +636,28 @@ router.get("/athletes", async (req, res, next) => {
   }
 });
 
-router.delete(
-  "/athletes/:athleteId/relationship",
-  async (req, res, next) => {
-    try {
-      const athlete = await User.findOne(
-        athleteFilter(req.user.id, req.params.athleteId),
-        "assignedTrainerId trainingMode name",
-      );
-      if (!athlete) {
-        return res.status(404).json({ error: "Atleta no encontrado" });
-      }
-      await transitionAthleteCoach({
-        athleteId: athlete._id,
-        previousCoachId: req.user.id,
-        nextCoachId: null,
-      });
-      athlete.assignedTrainerId = null;
-      athlete.trainingMode = "independent";
-      await athlete.save();
-      res.json({ ok: true, athleteId: String(athlete._id) });
-    } catch (err) {
-      next(err);
+router.delete("/athletes/:athleteId/relationship", async (req, res, next) => {
+  try {
+    const athlete = await User.findOne(
+      athleteFilter(req.user.id, req.params.athleteId),
+      "assignedTrainerId trainingMode name",
+    );
+    if (!athlete) {
+      return res.status(404).json({ error: "Atleta no encontrado" });
     }
-  },
-);
+    await transitionAthleteCoach({
+      athleteId: athlete._id,
+      previousCoachId: req.user.id,
+      nextCoachId: null,
+    });
+    athlete.assignedTrainerId = null;
+    athlete.trainingMode = "independent";
+    await athlete.save();
+    res.json({ ok: true, athleteId: String(athlete._id) });
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get("/athletes/:athleteId/overview", async (req, res, next) => {
   try {

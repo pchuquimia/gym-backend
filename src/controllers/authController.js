@@ -235,6 +235,14 @@ const register = asyncHandler(async (req, res) => {
     password,
     role: "Cliente",
     trainingMode: "independent",
+    onboarding: { status: "pending", completedAt: null },
+    profile: {
+      weight: null,
+      height: null,
+      goal: "mantenimiento",
+      experienceLevel: "beginner",
+      weeklyFrequency: 3,
+    },
     emailVerificationRequired: verificationRequired,
     emailVerificationToken: verificationRequired
       ? crypto.createHash("sha256").update(verificationToken).digest("hex")
@@ -605,6 +613,8 @@ const updateProfile = asyncHandler(async (req, res) => {
     "weight",
     "height",
     "goal",
+    "experienceLevel",
+    "weeklyFrequency",
     "calories",
     "units",
     "language",
@@ -634,6 +644,31 @@ const updateProfile = asyncHandler(async (req, res) => {
     runValidators: true,
   }).select("profile security");
   res.json({ profile: user.profile, security: user.security });
+});
+
+const completeOnboarding = asyncHandler(async (req, res) => {
+  const user = await User.findOneAndUpdate(
+    { _id: req.user.id, role: "Cliente" },
+    {
+      $set: {
+        "profile.goal": req.body.goal,
+        "profile.experienceLevel": req.body.experienceLevel,
+        "profile.weeklyFrequency": req.body.weeklyFrequency,
+        "profile.weight": req.body.weight,
+        "profile.height": req.body.height,
+        "onboarding.status": "complete",
+        "onboarding.completedAt": new Date(),
+      },
+    },
+    { new: true, runValidators: true },
+  );
+  if (!user) {
+    const err = new Error("El onboarding solo esta disponible para atletas");
+    err.statusCode = 403;
+    throw err;
+  }
+  res.set("Cache-Control", "no-store");
+  res.json({ user: sanitizeUser(user) });
 });
 
 const updateSecurity = asyncHandler(async (req, res) => {
@@ -722,6 +757,7 @@ export {
   me,
   getProfile,
   updateProfile,
+  completeOnboarding,
   getProfileSummary,
   updateAccount,
   updateSecurity,

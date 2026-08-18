@@ -27,6 +27,7 @@ export const errorHandler = (err, _req, res, _next) => {
   };
 
   if (err.details && !isProduction) payload.details = err.details;
+  if (typeof err.code === "string") payload.code = err.code;
   if (!isProduction && err.stack) payload.stack = err.stack;
 
   if (!isProduction) {
