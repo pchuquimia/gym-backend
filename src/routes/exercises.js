@@ -11,8 +11,10 @@ import {
   protect,
 } from "../middleware/authMiddleware.js";
 import Exercise from "../models/Exercise.js";
+import CodexImageRequest from "../models/CodexImageRequest.js";
 import Routine from "../models/Routine.js";
 import {
+  deleteExerciseMedia,
   removeLocalFile,
   uploadExerciseMedia,
 } from "../utils/exerciseMediaUpload.js";
@@ -36,12 +38,17 @@ import {
   migrateExercise,
 } from "../services/exerciseMigrationService.js";
 import {
-  generateExerciseAiImage,
-  getExerciseAiImageStatus,
-} from "../services/exerciseAiImageService.js";
+  enqueueCodexImageRequestForExercise,
+  enqueueEligibleCodexImageRequests,
+  getCodexAutoQueueConfig,
+} from "../services/exerciseCodexAutoQueueService.js";
 import { inferWeightConfig } from "../utils/weightConfig.js";
 import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
+import {
+  buildExerciseDiscoveryScoreExpression,
+  decorateExerciseDiscovery,
+} from "../utils/exerciseDiscovery.js";
 
 const router = Router();
 const EXERCISE_FACET_PAGE_SIZE = 200;
@@ -60,7 +67,7 @@ const SYSTEM_CATALOG_FILTER = {
   $or: [{ type: "system" }, { ownerId: null }, { ownerId: { $exists: false } }],
 };
 const VERSIONED_CATALOG_FIELDS =
-  "name localizedNames nameSpanish nameEnglish slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
+  "name localizedNames nameSpanish nameEnglish slug aliases discovery category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
 
 const clearExerciseFacetCache = () => {
   exerciseFacetCache.clear();
@@ -207,13 +214,13 @@ const upload = multer({
   },
 });
 
-const aiImageLimiter = rateLimit({
+const codexImageRequestLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  limit: 10,
+  limit: 30,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
-    error: "Alcanzaste el limite temporal de generaciones. Intenta mas tarde.",
+    error: "Alcanzaste el limite temporal de solicitudes. Intenta mas tarde.",
   },
 });
 
@@ -268,17 +275,35 @@ const SEARCH_SYNONYMS = new Map([
 ]);
 
 const expandSearchTerms = (value = "") => {
-  const term = String(value).trim();
-  if (!term) return [];
-  const normalized = term
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
+  const terms = String(value)
+    .split("|")
+    .map((term) => term.trim())
+    .filter(Boolean);
+  if (!terms.length) return [];
   return Array.from(
     new Set(
-      [term, normalized, SEARCH_SYNONYMS.get(normalized)].filter(Boolean),
+      terms.flatMap((term) => {
+        const normalized = term
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase();
+        return [term, normalized, SEARCH_SYNONYMS.get(normalized)].filter(
+          Boolean,
+        );
+      }),
     ),
   );
+};
+
+const buildInclusiveProjection = (fields = "") => {
+  const projection = { _id: 1 };
+  String(fields)
+    .split(/\s+/)
+    .filter((field) => /^[a-zA-Z][a-zA-Z0-9_.]*$/.test(field))
+    .forEach((field) => {
+      projection[field] = 1;
+    });
+  return projection;
 };
 
 const cloudinaryPublicIdFromUrl = (url) => {
@@ -364,6 +389,77 @@ const getExerciseMediaStructure = (exercise = {}) => ({
       : "") ||
     "",
 });
+
+const applyCodexProposal = async ({ request, req }) => {
+  if (request.status !== "ready" || !request.result?.url) {
+    const error = new Error(
+      "La solicitud todavia no tiene una propuesta lista.",
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+  const exercise = await Exercise.findById(request.exerciseId);
+  if (!exercise) {
+    const error = new Error("Ejercicio no encontrado");
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const currentPublicId =
+    exercise.media?.image?.publicId ||
+    exercise.imagePublicId ||
+    cloudinaryPublicIdFromUrl(exercise.media?.image?.url || exercise.image);
+  const uploaded = request.result.toObject?.() || request.result;
+  const currentMedia = exercise.media?.toObject?.() || exercise.media || {};
+  exercise.media = { ...currentMedia, image: uploaded };
+  exercise.image = uploaded.url;
+  exercise.imagePublicId = uploaded.publicId;
+  exercise.updatedBy = req.user.id;
+  await exercise.save();
+
+  await Routine.updateMany(
+    { "exercises.exerciseId": exercise._id },
+    {
+      $set: {
+        "exercises.$[exercise].image": uploaded.url,
+        "exercises.$[exercise].imagePublicId": uploaded.publicId,
+      },
+    },
+    { arrayFilters: [{ "exercise.exerciseId": exercise._id }] },
+  );
+  await Routine.updateMany(
+    { "exercises.alternatives.exerciseId": exercise._id },
+    {
+      $set: {
+        "exercises.$[].alternatives.$[alternative].image": uploaded.url,
+        "exercises.$[].alternatives.$[alternative].imagePublicId":
+          uploaded.publicId,
+      },
+    },
+    { arrayFilters: [{ "alternative.exerciseId": exercise._id }] },
+  );
+
+  request.status = "applied";
+  request.appliedAt = new Date();
+  request.reviewedAt = new Date();
+  request.reviewedBy = req.user.id;
+  request.reviewDecision = "approved";
+  await request.save();
+  if (currentPublicId && currentPublicId !== uploaded.publicId) {
+    await deleteExerciseMedia(currentPublicId);
+  }
+  clearExerciseFacetCache();
+  return exercise;
+};
+
+const safelyRefillCodexImageQueue = async () => {
+  try {
+    return await enqueueEligibleCodexImageRequests({ limit: 1 });
+  } catch (error) {
+    console.error("No se pudo reponer la cola automatica de imagenes:", error);
+    return null;
+  }
+};
 
 const normalizePayload = (body, req, current = null) => {
   const payload = { ...body };
@@ -575,9 +671,7 @@ router.get("/catalog/system", async (req, res, next) => {
       String(value || "")
         .replace(/^W\//, "")
         .replace(/^"|"$/g, "");
-    if (
-      normalizeEtag(req.headers["if-none-match"]) === normalizeEtag(etag)
-    ) {
+    if (normalizeEtag(req.headers["if-none-match"]) === normalizeEtag(etag)) {
       return res.status(304).end();
     }
     const exercises = await measureDatabase(res, () =>
@@ -610,10 +704,7 @@ router.get("/catalog/custom", async (req, res, next) => {
       ? String(req.query.fields).split(",").join(" ")
       : VERSIONED_CATALOG_FIELDS;
     const exercises = await measureDatabase(res, () =>
-      Exercise.find(
-        { ownerId, type: "custom", isActive: true },
-        fields,
-      )
+      Exercise.find({ ownerId, type: "custom", isActive: true }, fields)
         .sort({ updatedAt: -1, _id: 1 })
         .lean(),
     );
@@ -688,29 +779,253 @@ router.delete(
   },
 );
 
-router.get("/admin/ai-image/status", authorizeRoles("Admin"), (_req, res) => {
-  res.set("Cache-Control", "private, no-store");
-  res.json(getExerciseAiImageStatus());
-});
+router.get(
+  "/admin/codex-image-requests",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const filter = {};
+      if (req.query.exerciseId) {
+        filter.exerciseId = String(req.query.exerciseId).trim();
+      }
+      if (req.query.status) {
+        const statuses = String(req.query.status)
+          .split(",")
+          .map((status) => status.trim())
+          .filter(Boolean);
+        if (statuses.length) filter.status = { $in: statuses };
+      }
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const requests = await CodexImageRequest.find(filter)
+        .sort({ createdAt: -1 })
+        .limit(limit);
+      res.set("Cache-Control", "private, no-store");
+      res.json({ requests });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  "/admin/codex-image-review-queue",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+      const [requests, statusRows] = await Promise.all([
+        CodexImageRequest.find({ status: "ready", "result.url": { $ne: "" } })
+          .sort({ completedAt: 1, createdAt: 1 })
+          .limit(limit)
+          .lean(),
+        CodexImageRequest.aggregate([
+          {
+            $match: {
+              status: { $in: ["pending", "processing", "ready", "failed"] },
+            },
+          },
+          { $group: { _id: "$status", count: { $sum: 1 } } },
+        ]),
+      ]);
+      const exerciseIds = requests.map((request) => request.exerciseId);
+      const exercises = await Exercise.find({ _id: { $in: exerciseIds } })
+        .select(
+          "name localizedNames bodyRegion primaryMuscleGroup primaryMuscles secondaryMuscles equipment image media.image thumb type",
+        )
+        .lean();
+      const exerciseById = new Map(
+        exercises.map((exercise) => [String(exercise._id), exercise]),
+      );
+      const summary = { pending: 0, processing: 0, ready: 0, failed: 0 };
+      statusRows.forEach((row) => {
+        if (Object.hasOwn(summary, row._id)) summary[row._id] = row.count;
+      });
+
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        requests: requests.map((request) => ({
+          ...request,
+          id: String(request._id),
+          exercise: exerciseById.get(request.exerciseId) || null,
+        })),
+        summary,
+        autoQueue: getCodexAutoQueueConfig(),
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.post(
-  "/admin/:id/ai-image",
+  "/admin/codex-image-requests/auto-enqueue",
   authorizeRoles("Admin"),
-  aiImageLimiter,
+  async (req, res, next) => {
+    try {
+      const result = await enqueueEligibleCodexImageRequests({
+        limit: req.body?.limit,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/codex-image-requests/:requestId/review",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const decision = String(req.body?.decision || "").trim();
+      const reason = String(req.body?.reason || "")
+        .trim()
+        .slice(0, 2000);
+      if (!["approve", "regenerate", "skip"].includes(decision)) {
+        return res.status(422).json({ error: "Decision de revision invalida" });
+      }
+      const request = await CodexImageRequest.findById(req.params.requestId);
+      if (!request) {
+        return res.status(404).json({ error: "Solicitud no encontrada" });
+      }
+
+      if (decision === "approve") {
+        const exercise = await applyCodexProposal({ request, req });
+        const autoQueue = await safelyRefillCodexImageQueue();
+        res.set("Cache-Control", "private, no-store");
+        return res.json({
+          request,
+          autoQueue,
+          exercise: localizeExerciseDocument(
+            exercise,
+            getExerciseLanguage(req),
+          ),
+        });
+      }
+
+      if (request.status !== "ready") {
+        return res.status(409).json({
+          error: "Solo se pueden revisar propuestas listas.",
+        });
+      }
+
+      request.reviewedAt = new Date();
+      request.reviewedBy = req.user.id;
+      request.reviewReason = reason;
+
+      if (decision === "skip") {
+        request.status = "skipped";
+        request.reviewDecision = "skipped";
+        await request.save();
+        const autoQueue = await safelyRefillCodexImageQueue();
+        res.set("Cache-Control", "private, no-store");
+        return res.json({ request, autoQueue });
+      }
+
+      const exercise = await Exercise.findById(request.exerciseId).lean();
+      if (!exercise) {
+        return res.status(404).json({ error: "Ejercicio no encontrado" });
+      }
+      request.status = "rejected";
+      request.reviewDecision = "regenerate";
+      await request.save();
+      const correction = reason
+        ? `Corrige la propuesta anterior: ${reason}`
+        : "Corrige la propuesta anterior conservando con mayor precision la pose, el equipo y los musculos resaltados.";
+      const created = await enqueueCodexImageRequestForExercise({
+        exercise,
+        requestedBy: req.user.id,
+        instruction: correction,
+        source: "regeneration",
+        parentRequestId: request.id,
+        force: true,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.status(201).json({ request, nextRequest: created.request });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/:id/codex-image-requests",
+  authorizeRoles("Admin"),
+  codexImageRequestLimiter,
   async (req, res, next) => {
     try {
       const exercise = await Exercise.findById(req.params.id).lean();
       if (!exercise) {
         return res.status(404).json({ error: "Ejercicio no encontrado" });
       }
-      const result = await generateExerciseAiImage({
+      const instruction = String(req.body.instruction || "")
+        .trim()
+        .slice(0, 2000);
+      const result = await enqueueCodexImageRequestForExercise({
         exercise,
-        prompt: req.body.prompt,
-        userId: req.user.id,
+        requestedBy: req.user.id,
+        instruction,
+        source: "manual",
       });
-      clearExerciseFacetCache();
       res.set("Cache-Control", "private, no-store");
-      res.json(result);
+      res.status(result.reused ? 200 : 201).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  "/admin/codex-image-requests/:requestId",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const request = await CodexImageRequest.findById(req.params.requestId);
+      if (!request) {
+        return res.status(404).json({ error: "Solicitud no encontrada" });
+      }
+      if (request.status === "applied") {
+        return res.status(409).json({
+          error: "La imagen ya fue aplicada y no se puede descartar.",
+        });
+      }
+      if (request.result?.publicId) {
+        await deleteExerciseMedia(request.result.publicId);
+      }
+      if (request.result?.storage === "local" && request.result?.filename) {
+        const localProposal = path.resolve(uploadsDir, request.result.filename);
+        if (localProposal.startsWith(`${uploadsDir}${path.sep}`)) {
+          await removeLocalFile(localProposal);
+        }
+      }
+      request.status = "cancelled";
+      request.result = {};
+      request.error = "";
+      await request.save();
+      res.set("Cache-Control", "private, no-store");
+      res.json({ request });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/codex-image-requests/:requestId/apply",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const request = await CodexImageRequest.findById(req.params.requestId);
+      if (!request) {
+        return res.status(404).json({ error: "Solicitud no encontrada" });
+      }
+      const exercise = await applyCodexProposal({ request, req });
+      res.set("Cache-Control", "private, no-store");
+      res.json({
+        request,
+        exercise: localizeExerciseDocument(exercise, getExerciseLanguage(req)),
+      });
     } catch (error) {
       next(error);
     }
@@ -781,6 +1096,20 @@ router.post(
         },
         { arrayFilters: [{ "alternative.exerciseId": exercise._id }] },
       );
+
+      if (exercise.type === "system") {
+        try {
+          await enqueueCodexImageRequestForExercise({
+            exercise: exercise.toObject(),
+            requestedBy: req.user.id,
+            source: "automatic",
+          });
+        } catch (queueError) {
+          console.error(
+            `No se pudo autoencolar la imagen de ${exercise._id}: ${queueError.message}`,
+          );
+        }
+      }
 
       clearExerciseFacetCache();
       res.set("Cache-Control", "private, no-store");
@@ -1079,7 +1408,7 @@ router.get("/", async (req, res, next) => {
     );
     const fields = req.query.fields
       ? req.query.fields.split(",").join(" ")
-      : "name localizedNames slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
+      : "name localizedNames slug aliases discovery category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality kineticChain executionType stability position difficulty goals mechanics force precautions branches tags type ownerId image imagePublicId media thumb supportsUnilateral movementMode source classificationStatus isActive updatedAt createdAt";
     const filter = {};
     const andFilters = [];
     const scope = await getVisibleExerciseScope(req);
@@ -1194,6 +1523,8 @@ router.get("/", async (req, res, next) => {
         "nameSpanish",
         "nameEnglish",
         "aliases",
+        "discovery.familyName",
+        "discovery.keywords",
         "categories",
         "bodyRegion",
         "navigationRegion",
@@ -1221,6 +1552,7 @@ router.get("/", async (req, res, next) => {
     if (andFilters.length) filter.$and = andFilters;
 
     const includeMeta = req.query.meta === "true";
+    const sortMode = req.query.sort === "discovery" ? "discovery" : "name";
     const language = getExerciseLanguage(req);
     const cacheKey = JSON.stringify({
       page,
@@ -1229,6 +1561,7 @@ router.get("/", async (req, res, next) => {
       filter,
       includeMeta,
       language,
+      sortMode,
     });
     const cached = readExerciseListCache(cacheKey);
     if (cached) {
@@ -1237,13 +1570,45 @@ router.get("/", async (req, res, next) => {
       return res.json(cached);
     }
 
-    const exercisesQuery = Exercise.find(filter, fields)
-      .sort({ type: -1, name: 1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .batchSize(limit)
-      .maxTimeMS(10000)
-      .lean();
+    let exercisesQuery;
+    if (sortMode === "discovery") {
+      const searchPatterns = req.query.q
+        ? Array.from(
+            new Set(
+              expandSearchTerms(req.query.q).map(buildAccentInsensitivePattern),
+            ),
+          )
+        : [];
+      const groupedSearchPattern = searchPatterns.length
+        ? `(?:${searchPatterns.join("|")})`
+        : "";
+      const scoreExpression = buildExerciseDiscoveryScoreExpression({
+        exactSearchPattern: groupedSearchPattern
+          ? `^\\s*${groupedSearchPattern}\\s*$`
+          : "",
+        prefixSearchPattern: groupedSearchPattern
+          ? `^\\s*${groupedSearchPattern}`
+          : "",
+      });
+      exercisesQuery = Exercise.aggregate([
+        { $match: filter },
+        { $addFields: { __discoveryScore: scoreExpression } },
+        { $sort: { __discoveryScore: -1, type: -1, name: 1, _id: 1 } },
+        { $skip: (page - 1) * limit },
+        { $limit: limit },
+        { $project: buildInclusiveProjection(fields) },
+      ])
+        .collation({ locale: "es", strength: 1 })
+        .option({ maxTimeMS: 10000 });
+    } else {
+      exercisesQuery = Exercise.find(filter, fields)
+        .sort({ type: -1, name: 1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .batchSize(limit)
+        .maxTimeMS(10000)
+        .lean();
+    }
 
     const [exercises, total] = await measureDatabase(res, () =>
       Promise.all([
@@ -1255,7 +1620,10 @@ router.get("/", async (req, res, next) => {
     );
 
     const localizedExercises = exercises.map((exercise) =>
-      localizeExerciseDocument(exercise, language),
+      decorateExerciseDiscovery(
+        localizeExerciseDocument(exercise, language),
+        req.query.q,
+      ),
     );
     const response = includeMeta
       ? {
@@ -1295,6 +1663,19 @@ router.post("/", blockManagedAthleteWrites, async (req, res, next) => {
       payload._id = `${payload.slug}-${String(payload.ownerId).slice(-6)}-${Date.now()}`;
     }
     const exercise = await Exercise.create(payload);
+    if (exercise.type === "system" && req.user.role === "Admin") {
+      try {
+        await enqueueCodexImageRequestForExercise({
+          exercise: exercise.toObject(),
+          requestedBy: req.user.id,
+          source: "automatic",
+        });
+      } catch (queueError) {
+        console.error(
+          `No se pudo autoencolar la imagen de ${exercise._id}: ${queueError.message}`,
+        );
+      }
+    }
     clearExerciseFacetCache();
     res
       .status(201)
@@ -1319,6 +1700,19 @@ router.put("/:id", blockManagedAthleteWrites, async (req, res, next) => {
       new: true,
       runValidators: true,
     });
+    if (exercise.type === "system" && req.user.role === "Admin") {
+      try {
+        await enqueueCodexImageRequestForExercise({
+          exercise: exercise.toObject(),
+          requestedBy: req.user.id,
+          source: "automatic",
+        });
+      } catch (queueError) {
+        console.error(
+          `No se pudo autoencolar la imagen de ${exercise._id}: ${queueError.message}`,
+        );
+      }
+    }
     clearExerciseFacetCache();
     res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
   } catch (err) {

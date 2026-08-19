@@ -48,6 +48,18 @@ const WeightConfigSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const ExerciseDiscoverySchema = new mongoose.Schema(
+  {
+    familyId: { type: String, default: "", trim: true },
+    familyName: { type: String, default: "", trim: true },
+    isEssential: { type: Boolean, default: undefined },
+    isPrimaryVariant: { type: Boolean, default: undefined },
+    priority: { type: Number, min: -100, max: 100, default: 0 },
+    keywords: { type: [String], default: [] },
+  },
+  { _id: false },
+);
+
 const ExerciseSchema = new mongoose.Schema(
   {
     _id: { type: String }, // usamos slug/id string para alinear con frontend
@@ -58,6 +70,7 @@ const ExerciseSchema = new mongoose.Schema(
     },
     slug: { type: String, default: "" },
     aliases: { type: [String], default: [] },
+    discovery: { type: ExerciseDiscoverySchema, default: undefined },
     category: { type: String, default: "" },
     categories: { type: [String], default: [] },
     bodyRegion: { type: String, default: "" },
@@ -76,7 +89,15 @@ const ExerciseSchema = new mongoose.Schema(
     equipment: { type: [String], default: [] },
     loadType: {
       type: String,
-      enum: ["", "external", "machine", "bodyweight", "assisted", "cardio", "unknown"],
+      enum: [
+        "",
+        "external",
+        "machine",
+        "bodyweight",
+        "assisted",
+        "cardio",
+        "unknown",
+      ],
       default: "",
     },
     weightConfig: { type: WeightConfigSchema, default: undefined },
@@ -172,6 +193,8 @@ ExerciseSchema.index({ equipment: 1 });
 ExerciseSchema.index({ difficulty: 1 });
 ExerciseSchema.index({ goals: 1 });
 ExerciseSchema.index({ tags: 1 });
+ExerciseSchema.index({ "discovery.familyId": 1, isActive: 1 });
+ExerciseSchema.index({ "discovery.isEssential": 1, "discovery.priority": -1 });
 ExerciseSchema.index(
   { "source.provider": 1, "source.externalId": 1 },
   {

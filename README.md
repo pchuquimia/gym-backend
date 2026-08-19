@@ -70,9 +70,48 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Autenticación   | `EMAIL_VERIFICATION_REQUIRED`                                                               |
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
-| Imágenes con IA | `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL`                                                      |
 
 `DEV_ADMIN_LOGIN` debe utilizarse únicamente en desarrollo. No habilites accesos automáticos en producción.
+
+### Imágenes de ejercicios con Codex
+
+Las solicitudes creadas desde **Gestionar imágenes → Generar con Codex** se
+guardan en MongoDB y no requieren una API key. Codex puede administrarlas con:
+
+```bash
+npm run codex:images -- list
+npm run codex:images -- claim [requestId]
+npm run codex:images -- complete <requestId> <ruta-imagen>
+npm run codex:images -- fail <requestId> <motivo>
+```
+
+`complete` guarda la propuesta únicamente en `uploads/codex-proposals` y marca
+la solicitud como lista, sin publicarla. El administrador debe revisarla y
+pulsar **Usar imagen** para reemplazar la imagen vigente.
+
+La cola automática está activa por defecto. Al iniciar el backend detecta
+ejercicios del catálogo con imagen de referencia que todavía no tienen una
+decisión y crea solicitudes hasta alcanzar el límite de trabajo pendiente. Se
+configura con `CODEX_IMAGE_AUTO_QUEUE`,
+`CODEX_IMAGE_AUTO_QUEUE_MAX_OUTSTANDING` y
+`CODEX_IMAGE_AUTO_QUEUE_INTERVAL_MS`. Las propuestas se revisan desde
+**Gestionar imágenes → Revisar propuestas**; aprobar aplica la imagen,
+regenerar crea un intento nuevo con el motivo elegido y omitir evita que esa
+misma referencia vuelva a encolarse automáticamente.
+
+Para que Codex consuma la cola sin pulsar **Generar**, crea una tarea programada
+en la aplicación de escritorio, selecciona este proyecto local y usa una
+cadencia corta (por ejemplo, cada 30 minutos) con este texto:
+
+```text
+Procesa hasta 3 imágenes de ejercicios pendientes del proyecto gym siguiendo
+AGENTS.md. Trabaja una por vez, registra fallos y no apliques propuestas: deben
+quedar listas para revisión administrativa.
+```
+
+La tarea requiere que el equipo esté encendido y la aplicación de escritorio
+permanezca en ejecución. El backend no inicia procesos de Codex ni almacena una
+API key.
 
 ### Procesamiento de metricas
 

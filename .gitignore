@@ -7,4 +7,5 @@
 node_modules/
 *.log
 uploads/
+codex-image-work/
 coverage/

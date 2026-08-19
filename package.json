@@ -31,6 +31,7 @@
     "upload:exercises-dataset-media": "node scripts/uploadDatasetMediaToCloudinary.js",
     "build:cloudinary-map": "node scripts/buildCloudinaryMap.js",
     "clear:exercise-images": "node scripts/clearExerciseImages.js",
+    "codex:images": "node scripts/codexExerciseImages.js",
     "export:cloudinary-template": "node scripts/exportExerciseIds.js"
   },
   "dependencies": {
