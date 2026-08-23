@@ -38,7 +38,7 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
    | Variable     | Descripción                                  |
    | ------------ | -------------------------------------------- |
    | `MONGO_URI`  | Cadena de conexión a MongoDB.                |
-   | `JWT_SECRET` | Secreto aleatorio de al menos 32 caracteres. |
+   | `JWT_SECRET` | Secreto aleatorio de al menos 32 bytes y 120 bits de entropía estimada. |
    | `CLIENT_URL` | Origen permitido del frontend.               |
    | `PORT`       | Puerto HTTP; por defecto `4000`.             |
    | `NODE_ENV`   | `development` o `production`.                |
@@ -71,7 +71,14 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
 
-`DEV_ADMIN_LOGIN` debe utilizarse únicamente en desarrollo. No habilites accesos automáticos en producción.
+`DEV_ADMIN_LOGIN=true` habilita `/api/auth/dev-admin` exclusivamente fuera de
+producción. La ruta no se registra cuando `NODE_ENV=production`, aunque la
+variable se configure por error.
+
+La creación y rotación de administradores exige `ADMIN_EMAIL` y una
+`ADMIN_PASSWORD` fuerte inyectados de forma explícita. El script nunca imprime
+estos valores. Consulta [SECURITY_HARDENING.md](./SECURITY_HARDENING.md) antes
+de ejecutar `npm run admin:init` o `npm run admin:rotate`.
 
 ### Imágenes de ejercicios con Codex
 

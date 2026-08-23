@@ -1,4 +1,5 @@
 import { loadBackendEnvironment } from "./config/loadEnv.js";
+import { assertSecureJwtSecret } from "./config/security.js";
 
 loadBackendEnvironment();
 
@@ -24,6 +25,8 @@ for (const key of requiredEnv) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
 }
+
+assertSecureJwtSecret(process.env.JWT_SECRET);
 
 async function start() {
   reportDeploymentTopology();

@@ -24,6 +24,7 @@ import {
 } from "../controllers/authController.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { passwordRules, validate } from "../middleware/validate.js";
+import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 
 const router = Router();
 
@@ -53,7 +54,9 @@ const validateLogin = (req, res, next) => {
   return res.status(401).json({ error: "Credenciales inválidas" });
 };
 
-router.post("/dev-admin", devAdminLogin);
+if (isDevelopmentAdminRouteEnabled()) {
+  router.post("/dev-admin", devAdminLogin);
+}
 router.get("/demo/status", demoStatus);
 router.post(
   "/demo",

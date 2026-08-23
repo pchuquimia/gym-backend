@@ -11,6 +11,21 @@ describe("API shell", () => {
     expect(response.headers["x-response-time"]).toMatch(/ms$/);
   });
 
+  test("el endpoint publico de arquitectura no expone topologia en produccion", async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      const response = await request(app).get("/api/health/architecture");
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+      expect(response.body).not.toHaveProperty("topology");
+      expect(response.body).not.toHaveProperty("cache");
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+
   test("una ruta desconocida responde 404 en JSON", async () => {
     const response = await request(app).get("/api/no-existe");
 

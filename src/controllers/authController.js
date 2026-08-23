@@ -17,6 +17,7 @@ import {
   isDemoModeEnabled,
   isDemoRole,
 } from "../utils/demoMode.js";
+import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -399,9 +400,11 @@ const verifyEmail = asyncHandler(async (req, res) => {
 });
 
 const devAdminLogin = asyncHandler(async (req, res) => {
-  const isDevAdminEnabled =
-    process.env.NODE_ENV !== "production" ||
-    String(process.env.DEV_ADMIN_LOGIN || "").toLowerCase() === "true";
+  if (!isDevelopmentAdminRouteEnabled()) {
+    const err = new Error("Ruta no encontrada");
+    err.statusCode = 404;
+    throw err;
+  }
   const host = req.hostname;
   const ip = req.ip || "";
   const isPrivateNetworkAddress = (value = "") =>
@@ -417,7 +420,7 @@ const devAdminLogin = asyncHandler(async (req, res) => {
     isPrivateNetworkAddress(host) ||
     isPrivateNetworkAddress(ip);
 
-  if (!isDevAdminEnabled || !isLocal) {
+  if (!isLocal) {
     const err = new Error("No autorizado");
     err.statusCode = 403;
     throw err;

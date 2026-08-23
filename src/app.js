@@ -111,6 +111,9 @@ app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.get("/api/health/architecture", async (_req, res, next) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.json({ ok: true });
+  }
   try {
     res.json({
       ok: true,

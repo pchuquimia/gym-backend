@@ -16,6 +16,7 @@
     "test:postman": "node scripts/runApiContractTests.js",
     "demo:verify": "node scripts/verifyDemoWorkspace.js",
     "admin:init": "node scripts/createAdminAndAssignData.js",
+    "admin:rotate": "node scripts/createAdminAndAssignData.js --rotate-password",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
     "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",

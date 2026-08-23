@@ -7,12 +7,12 @@ import Routine from "../src/models/Routine.js";
 import Session from "../src/models/Session.js";
 import Training from "../src/models/Training.js";
 import User from "../src/models/User.js";
+import {
+  applyAdminCredentialRotation,
+  getAdminBootstrapConfig,
+} from "../src/config/adminBootstrap.js";
 
-const ADMIN = {
-  name: "Administrador Gym",
-  email: "admin@gym.com",
-  password: "Admin#2026Gym!",
-};
+const rotatePasswordOnly = process.argv.includes("--rotate-password");
 
 const missingOwnerFilter = {
   $or: [
@@ -35,25 +35,39 @@ async function main() {
     throw new Error("MONGO_URI no esta definido");
   }
 
+  const config = getAdminBootstrapConfig(process.env, {
+    requirePassword: rotatePasswordOnly,
+  });
   await mongoose.connect(process.env.MONGO_URI);
 
-  let admin = await User.findOne({ email: ADMIN.email });
+  let admin = await User.findOne({ email: config.email }).select("+password");
   if (!admin) {
+    if (!config.password) {
+      throw new Error(
+        "ADMIN_PASSWORD es obligatorio para crear la cuenta administrativa",
+      );
+    }
     admin = await User.create({
-      name: ADMIN.name,
-      email: ADMIN.email,
-      password: ADMIN.password,
+      name: config.name,
+      email: config.email,
+      password: config.password,
       role: "Admin",
       isActive: true,
     });
-    console.log("Admin creado");
+    console.log("Cuenta administrativa creada de forma segura");
+  } else if (rotatePasswordOnly) {
+    applyAdminCredentialRotation(admin, config.password);
+    await admin.save();
+    console.log("Credencial administrativa rotada y sesiones revocadas");
   } else {
-    admin.name = admin.name || ADMIN.name;
+    admin.name = admin.name || config.name;
     admin.role = "Admin";
     admin.isActive = true;
     await admin.save();
-    console.log("Admin existente actualizado");
+    console.log("Cuenta administrativa existente validada");
   }
+
+  if (rotatePasswordOnly) return;
 
   const adminId = admin._id.toString();
 
@@ -82,22 +96,17 @@ async function main() {
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
     await Preference.deleteOne({ userId: "default" });
-    console.log("Preferencias default migradas al Admin");
+    console.log("Preferencias predeterminadas migradas");
   }
-
-  console.log("");
-  console.log("Credenciales Admin");
-  console.log(`Nombre: ${ADMIN.name}`);
-  console.log(`Email: ${ADMIN.email}`);
-  console.log(`Password: ${ADMIN.password}`);
-  console.log("");
-  console.log("Cambia este password despues del primer ingreso.");
-
-  await mongoose.disconnect();
 }
 
-main().catch(async (err) => {
-  console.error(err);
-  await mongoose.disconnect();
-  process.exit(1);
-});
+main()
+  .catch((error) => {
+    console.error(
+      `No se pudo completar la operacion administrativa: ${error.message}`,
+    );
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await mongoose.disconnect();
+  });
