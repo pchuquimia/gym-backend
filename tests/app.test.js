@@ -26,6 +26,19 @@ describe("API shell", () => {
     }
   });
 
+  test("el endpoint publico de arquitectura tampoco expone topologia en staging", async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "staging";
+    try {
+      const response = await request(app).get("/api/health/architecture");
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ ok: true });
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
+
   test("una ruta desconocida responde 404 en JSON", async () => {
     const response = await request(app).get("/api/no-existe");
 

@@ -28,6 +28,7 @@ import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { performanceTiming } from "./middleware/performanceTiming.js";
 import { getCacheStatus } from "./services/cacheService.js";
 import { getDeploymentHealth } from "./utils/deploymentTopology.js";
+import { canExposeArchitectureDetails } from "./config/security.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -111,7 +112,7 @@ app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 app.get("/api/health/architecture", async (_req, res, next) => {
-  if (process.env.NODE_ENV === "production") {
+  if (!canExposeArchitectureDetails()) {
     return res.json({ ok: true });
   }
   try {

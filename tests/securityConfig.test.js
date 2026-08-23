@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 import {
   assertSecureAdminPassword,
   assertSecureJwtSecret,
+  canExposeArchitectureDetails,
   estimateShannonEntropyBits,
   isDevelopmentAdminRouteEnabled,
+  requiresSessionBoundToken,
 } from "../src/config/security.js";
 
 const backendRoot = path.resolve(
@@ -55,6 +57,24 @@ describe("security configuration", () => {
         DEV_ADMIN_LOGIN: "true",
       }),
     ).toBe(true);
+    expect(
+      isDevelopmentAdminRouteEnabled({
+        NODE_ENV: "staging",
+        DEV_ADMIN_LOGIN: "true",
+      }),
+    ).toBe(false);
+  });
+
+  test("los detalles y tokens sin sesion fallan cerrados fuera de desarrollo", () => {
+    expect(canExposeArchitectureDetails({ NODE_ENV: "development" })).toBe(
+      true,
+    );
+    expect(canExposeArchitectureDetails({ NODE_ENV: "staging" })).toBe(false);
+    expect(canExposeArchitectureDetails({ NODE_ENV: "production" })).toBe(
+      false,
+    );
+    expect(requiresSessionBoundToken({ NODE_ENV: "production" })).toBe(true);
+    expect(requiresSessionBoundToken({ NODE_ENV: "development" })).toBe(false);
   });
 
   test("el router no registra dev-admin en produccion aunque exista opt-in", async () => {

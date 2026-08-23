@@ -3,15 +3,6 @@ import { assertSecureJwtSecret } from "./config/security.js";
 
 loadBackendEnvironment();
 
-const [{ default: app }, { connectDB }] = await Promise.all([
-  import("./app.js"),
-  import("./config/db.js"),
-]);
-const { reportDeploymentTopology } =
-  await import("./utils/deploymentTopology.js");
-const { startCodexImageAutoQueue } =
-  await import("./services/exerciseCodexAutoQueueService.js");
-
 const PORT = process.env.PORT || 4000;
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/gym";
 
@@ -27,6 +18,15 @@ for (const key of requiredEnv) {
 }
 
 assertSecureJwtSecret(process.env.JWT_SECRET);
+
+const [{ default: app }, { connectDB }] = await Promise.all([
+  import("./app.js"),
+  import("./config/db.js"),
+]);
+const { reportDeploymentTopology } =
+  await import("./utils/deploymentTopology.js");
+const { startCodexImageAutoQueue } =
+  await import("./services/exerciseCodexAutoQueueService.js");
 
 async function start() {
   reportDeploymentTopology();

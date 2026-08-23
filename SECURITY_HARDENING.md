@@ -72,7 +72,12 @@ despliegue y comunicación.
 
 ## Información pública de salud
 
-`GET /api/health` permanece como endpoint público de vida. En producción,
-`GET /api/health/architecture` devuelve únicamente `{ "ok": true }`. Las
-regiones, latencia de base de datos y estado de caché detallados solo quedan
-disponibles fuera de producción.
+`GET /api/health` permanece como endpoint público de vida. En cualquier entorno
+distinto de `development`, `GET /api/health/architecture` devuelve únicamente
+`{ "ok": true }`. Las regiones, latencia de base de datos y estado de caché
+detallados solo quedan disponibles en desarrollo.
+
+En producción, todo JWT debe estar ligado a una sesión mediante `sid`. Esto
+cierra tokens administrativos heredados sin sesión; la rotación coordinada de
+`JWT_SECRET` continúa siendo obligatoria durante el despliegue para invalidar
+todos los tokens emitidos anteriormente.

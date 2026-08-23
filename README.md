@@ -71,9 +71,9 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
 
-`DEV_ADMIN_LOGIN=true` habilita `/api/auth/dev-admin` exclusivamente fuera de
-producción. La ruta no se registra cuando `NODE_ENV=production`, aunque la
-variable se configure por error.
+`DEV_ADMIN_LOGIN=true` habilita `/api/auth/dev-admin` exclusivamente cuando
+`NODE_ENV=development`. La ruta no se registra en staging ni producción,
+aunque la variable se configure por error.
 
 La creación y rotación de administradores exige `ADMIN_EMAIL` y una
 `ADMIN_PASSWORD` fuerte inyectados de forma explícita. El script nunca imprime

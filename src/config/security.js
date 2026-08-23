@@ -74,9 +74,18 @@ export const assertSecureAdminPassword = (value) =>
     maxBytes: 72,
   });
 
+export const isDevelopmentEnvironment = (env = process.env) =>
+  env.NODE_ENV === "development";
+
 export const isDevelopmentAdminRouteEnabled = (env = process.env) =>
-  env.NODE_ENV !== "production" &&
+  isDevelopmentEnvironment(env) &&
   String(env.DEV_ADMIN_LOGIN || "").trim().toLowerCase() === "true";
+
+export const canExposeArchitectureDetails = (env = process.env) =>
+  isDevelopmentEnvironment(env);
+
+export const requiresSessionBoundToken = (env = process.env) =>
+  env.NODE_ENV === "production";
 
 export const SECURITY_REQUIREMENTS = Object.freeze({
   jwtSecretMinBytes: JWT_SECRET_MIN_BYTES,

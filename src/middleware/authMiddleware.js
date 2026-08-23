@@ -7,6 +7,7 @@ import {
   getEntitlements,
   hasPremiumFeature,
 } from "../utils/subscription.js";
+import { requiresSessionBoundToken } from "../config/security.js";
 
 const AUTH_USER_FIELDS = [
   "name",
@@ -61,6 +62,11 @@ export const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (requiresSessionBoundToken() && !decoded.sid) {
+      const err = new Error("No autenticado");
+      err.statusCode = 401;
+      return next(err);
+    }
     // Initial screens issue several protected requests in parallel. Sharing the
     // same in-flight user lookup removes duplicate Atlas round trips without
     // caching permissions after the request burst has finished.
