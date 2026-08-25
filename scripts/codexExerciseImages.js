@@ -5,16 +5,24 @@ import { loadBackendEnvironment } from "../src/config/loadEnv.js";
 
 loadBackendEnvironment();
 
-const [{ getMongoConnectionOptions }, { default: CodexImageRequest }] =
+const [
+  { getMongoConnectionOptions },
+  { default: CodexImageRequest },
+  { default: Routine },
+  { default: TrainingPlan },
+] =
   await Promise.all([
     import("../src/config/db.js"),
     import("../src/models/CodexImageRequest.js"),
+    import("../src/models/Routine.js"),
+    import("../src/models/TrainingPlan.js"),
   ]);
 
 const usage = () => {
   console.log(`Uso:
   npm run codex:images -- list
   npm run codex:images -- claim [requestId]
+  npm run codex:images -- claim-current
   npm run codex:images -- complete <requestId> <ruta-imagen>
   npm run codex:images -- fail <requestId> <motivo>`);
 };
@@ -59,6 +67,50 @@ const claim = async (requestId) => {
     { $set: { status: "processing", claimedAt: new Date(), error: "" } },
     { new: true, sort: { createdAt: 1 } },
   ).lean();
+  console.log(JSON.stringify({ request: serialize(request) }, null, 2));
+};
+
+const claimCurrent = async () => {
+  const activePlans = await TrainingPlan.find(
+    { status: "active" },
+    "weeklySchedule.routineId",
+  ).lean();
+  const routineIds = [
+    ...new Set(
+      activePlans.flatMap((plan) =>
+        (plan.weeklySchedule || [])
+          .map((day) => day.routineId)
+          .filter(Boolean)
+          .map(String),
+      ),
+    ),
+  ];
+  const routines = routineIds.length
+    ? await Routine.find(
+        {
+          _id: { $in: routineIds },
+          isArchived: { $ne: true },
+          isAvailableForTraining: { $ne: false },
+        },
+        "exercises.exerciseId",
+      ).lean()
+    : [];
+  const exerciseIds = [
+    ...new Set(
+      routines.flatMap((routine) =>
+        (routine.exercises || []).map((exercise) => exercise.exerciseId),
+      ),
+    ),
+  ]
+    .filter(Boolean)
+    .map(String);
+  const request = exerciseIds.length
+    ? await CodexImageRequest.findOneAndUpdate(
+        { exerciseId: { $in: exerciseIds }, status: "pending" },
+        { $set: { status: "processing", claimedAt: new Date(), error: "" } },
+        { new: true, sort: { createdAt: 1 } },
+      ).lean()
+    : null;
   console.log(JSON.stringify({ request: serialize(request) }, null, 2));
 };
 
@@ -132,7 +184,11 @@ const fail = async (requestId, message) => {
 
 const run = async () => {
   const [command = "list", first, ...rest] = process.argv.slice(2);
-  if (!["list", "claim", "complete", "fail"].includes(command)) {
+  if (
+    !["list", "claim", "claim-current", "complete", "fail"].includes(
+      command,
+    )
+  ) {
     usage();
     process.exitCode = 1;
     return;
@@ -140,6 +196,7 @@ const run = async () => {
   await connect();
   if (command === "list") await list();
   if (command === "claim") await claim(first);
+  if (command === "claim-current") await claimCurrent();
   if (command === "complete") await complete(first, rest[0]);
   if (command === "fail") await fail(first, rest.join(" "));
 };

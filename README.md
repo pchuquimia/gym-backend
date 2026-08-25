@@ -38,7 +38,7 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
    | Variable     | Descripción                                  |
    | ------------ | -------------------------------------------- |
    | `MONGO_URI`  | Cadena de conexión a MongoDB.                |
-   | `JWT_SECRET` | Secreto aleatorio de al menos 32 caracteres. |
+   | `JWT_SECRET` | Secreto aleatorio de al menos 32 bytes y 120 bits de entropía estimada. |
    | `CLIENT_URL` | Origen permitido del frontend.               |
    | `PORT`       | Puerto HTTP; por defecto `4000`.             |
    | `NODE_ENV`   | `development` o `production`.                |
@@ -71,7 +71,14 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
 
-`DEV_ADMIN_LOGIN` debe utilizarse únicamente en desarrollo. No habilites accesos automáticos en producción.
+`DEV_ADMIN_LOGIN=true` habilita `/api/auth/dev-admin` exclusivamente cuando
+`NODE_ENV=development`. La ruta no se registra en staging ni producción,
+aunque la variable se configure por error.
+
+La creación y rotación de administradores exige `ADMIN_EMAIL` y una
+`ADMIN_PASSWORD` fuerte inyectados de forma explícita. El script nunca imprime
+estos valores. Consulta [SECURITY_HARDENING.md](./SECURITY_HARDENING.md) antes
+de ejecutar `npm run admin:init` o `npm run admin:rotate`.
 
 ### Imágenes de ejercicios con Codex
 
@@ -81,6 +88,7 @@ guardan en MongoDB y no requieren una API key. Codex puede administrarlas con:
 ```bash
 npm run codex:images -- list
 npm run codex:images -- claim [requestId]
+npm run codex:images -- claim-current
 npm run codex:images -- complete <requestId> <ruta-imagen>
 npm run codex:images -- fail <requestId> <motivo>
 ```
@@ -88,6 +96,11 @@ npm run codex:images -- fail <requestId> <motivo>
 `complete` guarda la propuesta únicamente en `uploads/codex-proposals` y marca
 la solicitud como lista, sin publicarla. El administrador debe revisarla y
 pulsar **Usar imagen** para reemplazar la imagen vigente.
+
+`claim-current` reclama primero la solicitud pendiente más antigua cuyo
+ejercicio pertenece a una rutina de una planificación activa. Para las
+propuestas finales se recomienda WebP de 1024 × 1024, con calidad aproximada
+de 82, y reportar el peso resultante antes de continuar con la siguiente.
 
 La cola automática está activa por defecto. Al iniciar el backend detecta
 ejercicios del catálogo con imagen de referencia que todavía no tienen una
