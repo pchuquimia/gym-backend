@@ -88,6 +88,7 @@ guardan en MongoDB y no requieren una API key. Codex puede administrarlas con:
 ```bash
 npm run codex:images -- list
 npm run codex:images -- claim [requestId]
+npm run codex:images -- claim-current
 npm run codex:images -- complete <requestId> <ruta-imagen>
 npm run codex:images -- fail <requestId> <motivo>
 ```
@@ -95,6 +96,11 @@ npm run codex:images -- fail <requestId> <motivo>
 `complete` guarda la propuesta únicamente en `uploads/codex-proposals` y marca
 la solicitud como lista, sin publicarla. El administrador debe revisarla y
 pulsar **Usar imagen** para reemplazar la imagen vigente.
+
+`claim-current` reclama primero la solicitud pendiente más antigua cuyo
+ejercicio pertenece a una rutina de una planificación activa. Para las
+propuestas finales se recomienda WebP de 1024 × 1024, con calidad aproximada
+de 82, y reportar el peso resultante antes de continuar con la siguiente.
 
 La cola automática está activa por defecto. Al iniciar el backend detecta
 ejercicios del catálogo con imagen de referencia que todavía no tienen una

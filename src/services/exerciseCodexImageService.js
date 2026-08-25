@@ -2,6 +2,8 @@ const DEFAULT_CODEX_IMAGE_PROMPT = `Edita la imagen de referencia y conviertela 
 
 Representa a la persona con anatomia humana realista, proporciones correctas, musculatura definida pero natural y ropa adecuada para entrenamiento.
 
+La zona anatomica que ya aparece remarcada en rojo en la imagen de referencia es la fuente visual autoritativa. Concentrate en esa misma zona y conserva su ubicacion, forma, extension y orientacion. Si los datos textuales del ejercicio son mas generales o entran en conflicto con la referencia, sigue el resaltado rojo visible de la referencia y no traslades el rojo a otros musculos.
+
 Identifica anatomicamente los musculos principales que se trabajan y resaltalos en rojo intenso siguiendo con precision su ubicacion, forma, extension y orientacion anatomica. Conserva los musculos secundarios y el resto del cuerpo en tono natural. No colorees musculos que no participen de manera principal. El resaltado debe integrarse de forma realista y permitir distinguir fasciculos y limites musculares sin convertir toda la zona en una mancha roja.
 
 Usa un estilo fotorrealista de visualizacion anatomica fitness, alta definicion, iluminacion suave y uniforme de estudio, sombras naturales y fondo blanco o gris muy claro completamente limpio. Sin texto, flechas, etiquetas, logos, marcas de agua ni objetos que no aparezcan en la referencia.
