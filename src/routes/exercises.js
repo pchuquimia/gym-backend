@@ -1260,6 +1260,22 @@ router.get("/facets", async (req, res, next) => {
     Object.keys(groupsByRegion).forEach((region) => {
       groupsByRegion[region] = counts(groupsByRegion[region]);
     });
+    const groupsByCategory = exercises.reduce((result, exercise) => {
+      const categories = flat(exercise.categories).length
+        ? flat(exercise.categories).map(canonicalizeCategory)
+        : flat(exercise.category).map(canonicalizeCategory);
+      const group = primaryGroup(exercise);
+      if (!group) return result;
+      categories.forEach((category) => {
+        if (!category) return;
+        result[category] ||= [];
+        result[category].push(group);
+      });
+      return result;
+    }, {});
+    Object.keys(groupsByCategory).forEach((category) => {
+      groupsByCategory[category] = counts(groupsByCategory[category]);
+    });
 
     const isCardio = (exercise) =>
       flat(exercise.categories).includes("Cardio") ||
@@ -1356,6 +1372,7 @@ router.get("/facets", async (req, res, next) => {
         exercises.map((item) => canonicalizeBodyRegion(item.bodyRegion)),
       ),
       groupsByRegion,
+      groupsByCategory,
       equipment: counts(
         exercises.flatMap((item) =>
           flat(item.equipment).map(canonicalizeEquipment),

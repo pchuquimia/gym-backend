@@ -38,6 +38,10 @@ import {
   decodeCursor,
   paginatedResult,
 } from "../utils/cursorPagination.js";
+import {
+  calculateTimingSummary,
+  normalizeTimeEvents,
+} from "../utils/trainingTiming.js";
 
 const router = Router();
 
@@ -182,126 +186,6 @@ const resolveTrainingProgressScope = async (req, payload, current = null) => {
     return "";
   }
   return routine.progressScopeId;
-};
-
-const parseEventTime = (value) => {
-  const ts = Date.parse(value);
-  return Number.isNaN(ts) ? null : ts;
-};
-
-const normalizeTimeEvents = (events = []) =>
-  Array.isArray(events)
-    ? events
-        .filter(
-          (event) =>
-            event?.type && event?.at && parseEventTime(event.at) != null,
-        )
-        .map((event) => ({
-          type: event.type,
-          at: new Date(parseEventTime(event.at)).toISOString(),
-          exerciseId: event.exerciseId || null,
-        }))
-        .sort((a, b) => parseEventTime(a.at) - parseEventTime(b.at))
-    : [];
-
-const calculateTimingSummary = (events = []) => {
-  let running = false;
-  let resting = false;
-  let activeExerciseId = null;
-  let lastAt = null;
-  let pauseStartedAt = null;
-  let durationSeconds = 0;
-  let restSeconds = 0;
-  let pauseSeconds = 0;
-  const exerciseMap = new Map();
-  const exerciseRestMap = new Map();
-  const normalizedEvents = normalizeTimeEvents(events);
-  const hasRestEvents = normalizedEvents.some((event) =>
-    ["rest_start", "rest_end"].includes(event.type),
-  );
-
-  const accrue = (nextAt) => {
-    if (!running || lastAt == null || nextAt <= lastAt) return;
-    const delta = Math.floor((nextAt - lastAt) / 1000);
-    if (delta <= 0) return;
-    durationSeconds += delta;
-    if (resting) restSeconds += delta;
-    if (activeExerciseId) {
-      exerciseMap.set(
-        activeExerciseId,
-        (exerciseMap.get(activeExerciseId) || 0) + delta,
-      );
-      if (resting) {
-        exerciseRestMap.set(
-          activeExerciseId,
-          (exerciseRestMap.get(activeExerciseId) || 0) + delta,
-        );
-      }
-    }
-  };
-
-  normalizedEvents.forEach((event) => {
-    const at = parseEventTime(event.at);
-    accrue(at);
-    if (event.type === "session_start" || event.type === "session_resume") {
-      if (pauseStartedAt != null && at > pauseStartedAt) {
-        pauseSeconds += Math.floor((at - pauseStartedAt) / 1000);
-      }
-      running = true;
-      resting = false;
-      pauseStartedAt = null;
-      lastAt = at;
-      return;
-    }
-    if (event.type === "session_pause" || event.type === "session_end") {
-      if (pauseStartedAt != null && at > pauseStartedAt) {
-        pauseSeconds += Math.floor((at - pauseStartedAt) / 1000);
-      }
-      running = false;
-      resting = false;
-      pauseStartedAt = event.type === "session_pause" ? at : null;
-      lastAt = at;
-      return;
-    }
-    if (event.type === "exercise_start") {
-      if (!running) running = true;
-      activeExerciseId = event.exerciseId || null;
-      lastAt = at;
-      return;
-    }
-    if (event.type === "rest_start" && running) {
-      resting = true;
-      lastAt = at;
-      return;
-    }
-    if (event.type === "rest_end") {
-      resting = false;
-      lastAt = at;
-    }
-  });
-
-  return {
-    durationSeconds,
-    workSeconds: hasRestEvents
-      ? Math.max(0, durationSeconds - restSeconds)
-      : null,
-    restSeconds: hasRestEvents ? restSeconds : null,
-    pauseSeconds,
-    hasRestEvents,
-    exerciseDurations: Array.from(exerciseMap.entries()).map(
-      ([exerciseId, seconds]) => {
-        const exerciseRestSeconds = exerciseRestMap.get(exerciseId) || 0;
-        return {
-          exerciseId,
-          durationSeconds: seconds,
-          workSeconds: hasRestEvents
-            ? Math.max(0, seconds - exerciseRestSeconds)
-            : null,
-          restSeconds: hasRestEvents ? exerciseRestSeconds : null,
-        };
-      },
-    ),
-  };
 };
 
 // GET /api/trainings/routine-counts
@@ -838,6 +722,7 @@ router.post("/", async (req, res, next) => {
     }
     payload.workSeconds = timingSummary.workSeconds;
     payload.restSeconds = timingSummary.restSeconds;
+    payload.preparationSeconds = timingSummary.preparationSeconds;
     payload.pauseSeconds = timingSummary.pauseSeconds;
     const submission = validateTrainingSubmission({
       date: payload.date,
@@ -1124,6 +1009,7 @@ router.put("/:id", async (req, res, next) => {
     }
     payload.workSeconds = timingSummary.workSeconds;
     payload.restSeconds = timingSummary.restSeconds;
+    payload.preparationSeconds = timingSummary.preparationSeconds;
     payload.pauseSeconds = timingSummary.pauseSeconds;
     const submission = validateTrainingSubmission({
       date: payload.date,
