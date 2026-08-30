@@ -1,10 +1,7 @@
 import { Router } from "express";
-import {
-  authorizeRoles,
-  ensureCanAccessOwner,
-  protect,
-} from "../middleware/authMiddleware.js";
+import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
+import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import PlanTemplate from "../models/PlanTemplate.js";
 import {
@@ -153,9 +150,9 @@ router.get("/", async (req, res, next) => {
       ),
     );
     const existingRoutineIds = new Set(
-      (
-        await Routine.find({ _id: { $in: routineIds } }, "_id").lean()
-      ).map((routine) => String(routine._id)),
+      (await Routine.find({ _id: { $in: routineIds } }, "_id").lean()).map(
+        (routine) => String(routine._id),
+      ),
     );
     const plansWithIntegrity = plans.map((plan) => {
       const trainingDays = (plan.weeklySchedule || []).filter(
@@ -402,14 +399,17 @@ router.patch("/:id/status", async (req, res, next) => {
         .json({ error: "Completa todas las rutinas antes de activar el plan" });
     }
     if (["active", "scheduled"].includes(nextStatus)) {
-      const validRoutines = await Routine.find({
-        _id: { $in: routineIds },
-        ownerId: req.user.id,
-        $or: [
-          { isArchived: { $ne: true } },
-          { trainingPlanId: String(plan._id) },
-        ],
-      }, "_id").lean();
+      const validRoutines = await Routine.find(
+        {
+          _id: { $in: routineIds },
+          ownerId: req.user.id,
+          $or: [
+            { isArchived: { $ne: true } },
+            { trainingPlanId: String(plan._id) },
+          ],
+        },
+        "_id",
+      ).lean();
       const validRoutineIds = new Set(
         validRoutines.map((routine) => String(routine._id)),
       );
@@ -443,11 +443,12 @@ router.patch("/:id/status", async (req, res, next) => {
   }
 });
 
-router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
+router.delete("/:id", async (req, res, next) => {
   let dbSession;
   try {
     dbSession = await TrainingPlan.startSession();
-    let archivedRoutines = 0;
+    let affectedRoutines = 0;
+    let disposition = "archived";
     let plan = null;
     await dbSession.withTransaction(async () => {
       plan = await TrainingPlan.findById(req.params.id).session(dbSession);
@@ -456,12 +457,46 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         error.status = 404;
         throw error;
       }
+      const isOwner = String(plan.athleteId) === String(req.user.id);
+      const isSelfManagedPlan = !plan.coachId;
+      if (
+        req.user.role !== "Admin" &&
+        (!isOwner ||
+          !isSelfManagedPlan ||
+          (req.user.role === "Cliente" &&
+            req.user.trainingMode === "coach_managed"))
+      ) {
+        const error = new Error("No autorizado para eliminar este plan");
+        error.status = 403;
+        throw error;
+      }
+
+      const planId = String(plan._id);
+      const hasTrainings = await Training.exists({
+        ownerId: String(plan.athleteId),
+        trainingPlanId: planId,
+      }).session(dbSession);
+
+      if (["draft", "cancelled"].includes(plan.status) && !hasTrainings) {
+        const routineResult = await Routine.deleteMany(
+          {
+            ownerId: plan.athleteId,
+            trainingPlanId: planId,
+          },
+          { session: dbSession },
+        );
+        affectedRoutines = routineResult.deletedCount;
+        await plan.deleteOne({ session: dbSession });
+        disposition = "deleted";
+        return;
+      }
+
       plan.status = "cancelled";
       await plan.save({ session: dbSession });
       const routineResult = await Routine.updateMany(
         {
           ownerId: plan.athleteId,
-          trainingPlanId: String(plan._id),
+          trainingPlanId: planId,
         },
         {
           $set: {
@@ -473,13 +508,15 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         },
         { session: dbSession, runValidators: true },
       );
-      archivedRoutines = routineResult.modifiedCount;
+      affectedRoutines = routineResult.modifiedCount;
     });
     res.json({
       ok: true,
-      disposition: "archived",
+      disposition,
       planId: String(plan._id),
-      archivedRoutines,
+      ...(disposition === "deleted"
+        ? { deletedRoutines: affectedRoutines }
+        : { archivedRoutines: affectedRoutines }),
     });
   } catch (err) {
     next(err);
