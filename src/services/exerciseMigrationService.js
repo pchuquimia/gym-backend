@@ -50,6 +50,22 @@ const currentCatalogFilter = {
   isActive: true,
 };
 
+const activeMergeScope = (ownerId) => ({
+  isActive: { $ne: false },
+  $and: [
+    {
+      $or: [
+        { mergedIntoExerciseId: { $exists: false } },
+        { mergedIntoExerciseId: "" },
+        { mergedIntoExerciseId: null },
+      ],
+    },
+    {
+      $or: [{ type: "system" }, { type: "custom", ownerId }],
+    },
+  ],
+});
+
 const migrationCatalogFilter = {
   type: "system",
   $or: [
@@ -306,68 +322,106 @@ export const migrateTrainingDocument = (training = {}, legacyId, target) => {
 };
 
 export const getExerciseReferenceCounts = async (exerciseId) => {
-  const [routines, trainings, sessions] = await Promise.all([
+  const [routines, trainingDocuments, sessionDocuments] = await Promise.all([
     Routine.countDocuments({
       $or: [
         { "exercises.exerciseId": exerciseId },
         { "exercises.alternatives.exerciseId": exerciseId },
       ],
     }),
-    Training.countDocuments({
-      $or: [
-        { "exercises.exerciseId": exerciseId },
-        { "timeEvents.exerciseId": exerciseId },
-        { "exerciseDurations.exerciseId": exerciseId },
-      ],
-    }),
-    Session.countDocuments({ exerciseId }),
+    Training.find(
+      {
+        $or: [
+          { "exercises.exerciseId": exerciseId },
+          { "timeEvents.exerciseId": exerciseId },
+          { "exerciseDurations.exerciseId": exerciseId },
+        ],
+      },
+      "exercises.exerciseId",
+    ).lean(),
+    Session.find({ exerciseId }, "trainingId").lean(),
   ]);
+  const sessionKeys = new Set();
+  trainingDocuments.forEach((training) => {
+    if (
+      (training.exercises || []).some((exercise) =>
+        sameId(exercise.exerciseId, exerciseId),
+      )
+    ) {
+      sessionKeys.add(`training:${idOf(training._id)}`);
+    }
+  });
+  sessionDocuments.forEach((session) => {
+    sessionKeys.add(
+      session.trainingId
+        ? `training:${idOf(session.trainingId)}`
+        : `session:${idOf(session._id)}`,
+    );
+  });
+  const trainings = trainingDocuments.length;
+  const sessions = sessionDocuments.length;
   return {
     routines,
     trainings,
     sessions,
+    uniqueSessions: sessionKeys.size,
     total: routines + trainings + sessions,
   };
 };
 
-const buildReferenceMap = async (exerciseIds) => {
+const buildReferenceMap = async (exerciseIds, { ownerId = "" } = {}) => {
   const idSet = new Set(exerciseIds.map(idOf));
   const map = new Map(
     [...idSet].map((exerciseId) => [
       exerciseId,
-      { routines: 0, trainings: 0, sessions: 0, total: 0 },
+      {
+        routines: 0,
+        trainings: 0,
+        sessions: 0,
+        uniqueSessions: 0,
+        total: 0,
+      },
     ]),
+  );
+  const uniqueSessionMap = new Map(
+    [...idSet].map((exerciseId) => [exerciseId, new Set()]),
   );
   if (!idSet.size) return map;
 
+  const routineFilter = {
+    $or: [
+      { "exercises.exerciseId": { $in: [...idSet] } },
+      { "exercises.alternatives.exerciseId": { $in: [...idSet] } },
+    ],
+  };
+  const trainingFilter = {
+    $or: [
+      { "exercises.exerciseId": { $in: [...idSet] } },
+      { "timeEvents.exerciseId": { $in: [...idSet] } },
+      { "exerciseDurations.exerciseId": { $in: [...idSet] } },
+    ],
+  };
+  const sessionFilter = { exerciseId: { $in: [...idSet] } };
+  if (ownerId) {
+    routineFilter.ownerId = idOf(ownerId);
+    trainingFilter.ownerId = idOf(ownerId);
+    sessionFilter.ownerId = idOf(ownerId);
+  }
+
   const [routines, trainings, sessions] = await Promise.all([
     Routine.find(
-      {
-        $or: [
-          { "exercises.exerciseId": { $in: [...idSet] } },
-          { "exercises.alternatives.exerciseId": { $in: [...idSet] } },
-        ],
-      },
+      routineFilter,
       "exercises.exerciseId exercises.alternatives.exerciseId",
     )
       .batchSize(500)
       .lean(),
     Training.find(
-      {
-        $or: [
-          { "exercises.exerciseId": { $in: [...idSet] } },
-          { "timeEvents.exerciseId": { $in: [...idSet] } },
-          { "exerciseDurations.exerciseId": { $in: [...idSet] } },
-        ],
-      },
+      trainingFilter,
       "exercises.exerciseId timeEvents.exerciseId exerciseDurations.exerciseId",
     )
       .batchSize(500)
       .lean(),
-    Session.aggregate([
-      { $match: { exerciseId: { $in: [...idSet] } } },
-      { $group: { _id: "$exerciseId", count: { $sum: 1 } } },
-    ]),
+    Session.find(sessionFilter, "exerciseId trainingId").lean(),
   ]);
 
   routines.forEach((routine) => {
@@ -382,8 +436,11 @@ const buildReferenceMap = async (exerciseIds) => {
     });
   });
   trainings.forEach((training) => {
+    const performedIds = new Set(
+      (training.exercises || []).map((item) => idOf(item.exerciseId)),
+    );
     const ids = new Set([
-      ...(training.exercises || []).map((item) => idOf(item.exerciseId)),
+      ...performedIds,
       ...(training.timeEvents || []).map((item) => idOf(item.exerciseId)),
       ...(training.exerciseDurations || []).map((item) =>
         idOf(item.exerciseId),
@@ -392,11 +449,26 @@ const buildReferenceMap = async (exerciseIds) => {
     ids.forEach((exerciseId) => {
       if (map.has(exerciseId)) map.get(exerciseId).trainings += 1;
     });
+    performedIds.forEach((exerciseId) => {
+      if (uniqueSessionMap.has(exerciseId)) {
+        uniqueSessionMap.get(exerciseId).add(`training:${idOf(training._id)}`);
+      }
+    });
   });
-  sessions.forEach((item) => {
-    if (map.has(idOf(item._id))) map.get(idOf(item._id)).sessions = item.count;
+  sessions.forEach((session) => {
+    const exerciseId = idOf(session.exerciseId);
+    if (!map.has(exerciseId)) return;
+    map.get(exerciseId).sessions += 1;
+    uniqueSessionMap
+      .get(exerciseId)
+      .add(
+        session.trainingId
+          ? `training:${idOf(session.trainingId)}`
+          : `session:${idOf(session._id)}`,
+      );
   });
-  map.forEach((counts) => {
+  map.forEach((counts, exerciseId) => {
+    counts.uniqueSessions = uniqueSessionMap.get(exerciseId)?.size || 0;
     counts.total = counts.routines + counts.trainings + counts.sessions;
   });
   return map;
@@ -509,6 +581,52 @@ export const listExerciseMigrationCandidates = async () => {
     clearExerciseMigrationCandidatesCache();
     throw error;
   }
+};
+
+export const listExerciseMergeCandidates = async ({ ownerId }) => {
+  const exercises = await Exercise.find(
+    activeMergeScope(ownerId),
+    `${MIGRATION_CATALOG_FIELDS} type ownerId`,
+  )
+    .sort({ name: 1, _id: 1 })
+    .lean();
+  const referenceMap = await buildReferenceMap(
+    exercises.map((exercise) => exercise._id),
+    { ownerId },
+  );
+
+  return {
+    items: exercises
+      .map((exercise) =>
+        serializeExercise(
+          exercise,
+          referenceMap.get(idOf(exercise._id)) || {
+            routines: 0,
+            trainings: 0,
+            sessions: 0,
+            uniqueSessions: 0,
+            total: 0,
+          },
+        ),
+      )
+      .sort(compareMigrationCandidates),
+  };
+};
+
+export const getExerciseMergeImpact = async ({ exerciseId, ownerId }) => {
+  const exercise = await Exercise.findOne({
+    _id: exerciseId,
+    ...activeMergeScope(ownerId),
+  }).lean();
+  if (!exercise) {
+    const error = new Error("El ejercicio no está disponible para fusionar");
+    error.statusCode = 404;
+    throw error;
+  }
+  return {
+    exercise: serializeExercise(exercise),
+    references: await getExerciseReferenceCounts(exerciseId),
+  };
 };
 
 const migrateRoutineDocuments = async (legacyId, target) => {
@@ -685,6 +803,101 @@ export const migrateExercise = async ({
     ok: true,
     sourceDeleted: Boolean(deleteLegacy),
     sourceExercise: { id: legacyExerciseId, name: targetName(legacy) },
+    targetExercise: { id: idOf(target._id), name: targetName(target) },
+    references: before,
+    modified: {
+      routines: routinesModified,
+      trainings: trainingsModified,
+      sessions: sessionsResult.modifiedCount || 0,
+    },
+  };
+};
+
+export const mergeExercises = async ({
+  sourceExerciseId,
+  targetExerciseId,
+  performedBy,
+}) => {
+  if (!sourceExerciseId || !targetExerciseId) {
+    const error = new Error(
+      "Selecciona el duplicado y el ejercicio a conservar",
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+  if (sameId(sourceExerciseId, targetExerciseId)) {
+    const error = new Error(
+      "Los ejercicios de origen y destino deben ser distintos",
+    );
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const scope = activeMergeScope(performedBy);
+  const [source, target] = await Promise.all([
+    Exercise.findOne({ _id: sourceExerciseId, ...scope }).lean(),
+    Exercise.findOne({ _id: targetExerciseId, ...scope }).lean(),
+  ]);
+  if (!source) {
+    const error = new Error("El ejercicio duplicado no está disponible");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (!target) {
+    const error = new Error(
+      "El ejercicio que deseas conservar no está disponible",
+    );
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const before = await getExerciseReferenceCounts(sourceExerciseId);
+  const [routinesModified, trainingsModified, sessionsResult] =
+    await Promise.all([
+      migrateRoutineDocuments(sourceExerciseId, target),
+      migrateTrainingDocuments(sourceExerciseId, target),
+      Session.updateMany(
+        { exerciseId: sourceExerciseId },
+        {
+          $set: {
+            exerciseId: idOf(target._id),
+            exerciseName: targetName(target),
+          },
+        },
+      ),
+    ]);
+
+  await CatalogSwitchState.updateMany(
+    { "previousExercises.exerciseId": sourceExerciseId },
+    { $set: { "previousExercises.$[item].exerciseId": idOf(target._id) } },
+    { arrayFilters: [{ "item.exerciseId": sourceExerciseId }] },
+  );
+  await preserveLegacyMetadata(source, target);
+
+  const remaining = await getExerciseReferenceCounts(sourceExerciseId);
+  if (remaining.total > 0) {
+    const error = new Error(
+      "La fusión quedó incompleta. Puedes repetirla de forma segura.",
+    );
+    error.statusCode = 409;
+    error.details = remaining;
+    throw error;
+  }
+
+  await ExerciseMigration.create({
+    operation: "merge",
+    sourceExercise: { id: sourceExerciseId, name: targetName(source) },
+    targetExercise: { id: idOf(target._id), name: targetName(target) },
+    references: before,
+    sourceDeleted: false,
+    performedBy,
+  });
+  clearExerciseMigrationCandidatesCache();
+
+  return {
+    ok: true,
+    sourceRetained: true,
+    sourceExercise: { id: sourceExerciseId, name: targetName(source) },
     targetExercise: { id: idOf(target._id), name: targetName(target) },
     references: before,
     modified: {

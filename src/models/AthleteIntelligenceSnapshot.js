@@ -10,6 +10,7 @@ const AthleteIntelligenceSnapshotSchema = new mongoose.Schema(
       enum: ["basic", "advanced"],
       required: true,
     },
+    algorithmVersion: { type: Number, default: 1 },
     data: { type: mongoose.Schema.Types.Mixed, required: true },
     dirty: { type: Boolean, default: false },
     generatedAt: { type: Date, default: Date.now },

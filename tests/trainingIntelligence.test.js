@@ -54,7 +54,7 @@ describe("trainingIntelligence", () => {
       result.advanced.decisionSupport.factors.map((factor) => factor.code),
     ).toEqual(expect.arrayContaining(["load_spike", "joint_pain"]));
     expect(result.advanced.decisionSupport.recommendation).toMatch(
-      /recuperacion/i,
+      /recuperaci[oó]n/i,
     );
   });
 
@@ -90,6 +90,57 @@ describe("trainingIntelligence", () => {
     });
     expect(press.suggestion).toMatch(/repeticion|kg/i);
     expect(press.history).toHaveLength(4);
+  });
+
+  test("no recomienda reducir la sesion solo por faltar el check-in", () => {
+    const result = buildTrainingIntelligence(
+      [
+        training({ id: "c1", date: "2026-07-30", volume: 1000 }),
+        training({ id: "c2", date: "2026-08-06", volume: 1000 }),
+        training({ id: "c3", date: "2026-08-13", volume: 1000 }),
+        training({ id: "c4", date: "2026-08-20", volume: 1000 }),
+        training({
+          id: "recent",
+          date: "2026-08-25",
+          weight: 30,
+          volume: 500,
+        }),
+      ],
+      {
+        advanced: true,
+        context: { today: "2026-08-31", checkIns: [] },
+      },
+    );
+
+    expect(result.advanced.decisionSupport).toMatchObject({
+      score: 80,
+      state: "optimal",
+      confidence: "baja",
+    });
+    expect(result.advanced.decisionSupport.recommendation).toMatch(/mant[eé]n/i);
+    expect(
+      result.advanced.decisionSupport.factors.find(
+        (factor) => factor.code === "load_drop",
+      ),
+    ).toMatchObject({ tone: "neutral", label: "Menor actividad reciente" });
+  });
+
+  test("conserva el total real de sesiones aunque limite el historial enviado", () => {
+    const trainings = Array.from({ length: 14 }, (_, index) =>
+      training({
+        id: `session-${index + 1}`,
+        date: `2026-07-${String(index + 1).padStart(2, "0")}`,
+      }),
+    );
+    const result = buildTrainingIntelligence(trainings, {
+      advanced: true,
+      context: { today: "2026-07-14" },
+    });
+    const press = result.advanced.exerciseProgression.items[0];
+
+    expect(press.sessionCount).toBe(14);
+    expect(press.history).toHaveLength(12);
+    expect(press.status).toBe("plateau");
   });
 
   test("compara la semana activa contra los mismos dias de la semana anterior", () => {

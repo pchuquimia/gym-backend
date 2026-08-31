@@ -34,7 +34,10 @@ import {
 } from "../utils/exerciseTaxonomy.js";
 import {
   deleteLegacyExercise,
+  getExerciseMergeImpact,
+  listExerciseMergeCandidates,
   listExerciseMigrationCandidates,
+  mergeExercises,
   migrateExercise,
 } from "../services/exerciseMigrationService.js";
 import {
@@ -761,6 +764,53 @@ router.post(
     }
   },
 );
+
+router.get(
+  "/admin/merge-candidates",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      res.set("Cache-Control", "private, no-store");
+      res.json(
+        await listExerciseMergeCandidates({ ownerId: String(req.user.id) }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
+  "/admin/merge-impact/:id",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      res.set("Cache-Control", "private, no-store");
+      res.json(
+        await getExerciseMergeImpact({
+          exerciseId: String(req.params.id || "").trim(),
+          ownerId: String(req.user.id),
+        }),
+      );
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post("/admin/merge", authorizeRoles("Admin"), async (req, res, next) => {
+  try {
+    const result = await mergeExercises({
+      sourceExerciseId: String(req.body.sourceExerciseId || "").trim(),
+      targetExerciseId: String(req.body.targetExerciseId || "").trim(),
+      performedBy: String(req.user.id),
+    });
+    clearExerciseFacetCache();
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.delete(
   "/admin/legacy/:id",

@@ -10,11 +10,12 @@ import { deleteCache, getCache, setCache } from "./cacheService.js";
 
 const RECORD_LIMIT = 2000;
 const INTELLIGENCE_CACHE_TTL_SECONDS = 60;
+const INTELLIGENCE_ALGORITHM_VERSION = 4;
 const TRAINING_INTELLIGENCE_FIELDS =
   "date routineName durationSeconds totalVolume exercises.exerciseId exercises.exerciseName exercises.muscleGroup exercises.primaryMuscleGroup exercises.weightBasis exercises.barWeightKg exercises.implementCount exercises.sets.weightKg exercises.sets.weight exercises.sets.kg exercises.sets.reps exercises.sets.repetitions exercises.sets.done exercises.sets.entries.weightKg exercises.sets.entries.weight exercises.sets.entries.kg exercises.sets.entries.reps exercises.sets.entries.repetitions exercises.sets.entries.done";
 
 export const intelligenceCacheKey = (ownerId, advanced, today) =>
-  `intelligence:${ownerId}:${advanced ? "advanced" : "basic"}:${today}`;
+  `intelligence:v${INTELLIGENCE_ALGORITHM_VERSION}:${ownerId}:${advanced ? "advanced" : "basic"}:${today}`;
 
 const intelligenceVariant = (advanced) => (advanced ? "advanced" : "basic");
 
@@ -135,7 +136,10 @@ export const getAthleteIntelligence = async ({
       variant,
       dirty: { $ne: true },
     }).lean();
-    if (snapshot?.data) {
+    if (
+      snapshot?.data &&
+      Number(snapshot.algorithmVersion) === INTELLIGENCE_ALGORITHM_VERSION
+    ) {
       await setCache(cacheKey, snapshot.data, INTELLIGENCE_CACHE_TTL_SECONDS);
       return { data: snapshot.data, source: "snapshot" };
     }
@@ -149,6 +153,7 @@ export const getAthleteIntelligence = async ({
         $set: {
           data,
           dirty: false,
+          algorithmVersion: INTELLIGENCE_ALGORITHM_VERSION,
           generatedAt: new Date(),
         },
       },

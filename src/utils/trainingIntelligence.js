@@ -407,7 +407,9 @@ const buildDecisionSupport = (
     ? daysBetweenKeys(latestCheckIn.dateKey, todayKey)
     : null;
   const freshCheckIn = checkInAge !== null && checkInAge <= 3;
-  let score = freshCheckIn ? finite(latestCheckIn.readinessScore) : 72;
+  // Sin un check-in reciente no asumimos fatiga. Partimos de una referencia
+  // conservadora y reducimos la confianza, no la capacidad para entrenar.
+  let score = freshCheckIn ? finite(latestCheckIn.readinessScore) : 80;
   const factors = [];
 
   if (freshCheckIn) {
@@ -420,14 +422,14 @@ const buildDecisionSupport = (
           : latestCheckIn.readinessState === "adjust"
             ? "warning"
             : "positive",
-      detail: `${latestCheckIn.readinessScore}/100 registrado hace ${checkInAge} ${checkInAge === 1 ? "dia" : "dias"}.`,
+      detail: `${latestCheckIn.readinessScore}/100 registrado hace ${checkInAge} ${checkInAge === 1 ? "día" : "días"}.`,
     });
   } else {
     factors.push({
       code: "missing_check_in",
       label: "Sin check-in reciente",
       tone: "neutral",
-      detail: "Completa el estado diario para personalizar la recomendacion.",
+      detail: "Completa el estado diario para personalizar la recomendación.",
     });
   }
 
@@ -438,13 +440,13 @@ const buildDecisionSupport = (
         code: "load_spike",
         label: "Aumento brusco de carga",
         tone: "negative",
-        detail: `La carga de 7 dias equivale al ${round(loadRatio * 100, 0)}% del promedio semanal previo.`,
+        detail: `La carga de 7 días equivale al ${round(loadRatio * 100, 0)}% del promedio semanal previo.`,
       });
     } else if (loadRatio > 1.3) {
       score -= 12;
       factors.push({
         code: "load_high",
-        label: "Carga por encima del patron",
+        label: "Carga por encima del patrón",
         tone: "warning",
         detail: `La carga reciente esta ${round((loadRatio - 1) * 100, 0)}% sobre el promedio previo.`,
       });
@@ -454,15 +456,15 @@ const buildDecisionSupport = (
         label: "Carga estable",
         tone: "positive",
         detail:
-          "La carga reciente se mantiene cerca del patron de cuatro semanas.",
+          "La carga reciente se mantiene cerca del patrón de cuatro semanas.",
       });
     } else if (loadRatio < 0.6) {
       factors.push({
         code: "load_drop",
-        label: "Caida de carga",
-        tone: "warning",
+        label: "Menor actividad reciente",
+        tone: "neutral",
         detail:
-          "La actividad reciente esta claramente por debajo del patron habitual.",
+          "Entrenaste menos que en una semana habitual; esto no indica fatiga por sí solo.",
       });
     }
   }
@@ -471,9 +473,9 @@ const buildDecisionSupport = (
     score -= 10;
     factors.push({
       code: "consecutive_days",
-      label: "Acumulacion de sesiones",
+      label: "Acumulación de sesiones",
       tone: "warning",
-      detail: `${consecutiveDays} dias consecutivos con entrenamiento registrado.`,
+      detail: `${consecutiveDays} días consecutivos con entrenamiento registrado.`,
     });
   }
 
@@ -509,7 +511,7 @@ const buildDecisionSupport = (
     score -= 8;
     factors.push({
       code: "weight_drop",
-      label: "Descenso rapido de peso",
+      label: "Descenso rápido de peso",
       tone: "warning",
       detail: `${weightChangePercent}% durante los ultimos 30 dias.`,
     });
@@ -519,10 +521,10 @@ const buildDecisionSupport = (
   const state = score >= 75 ? "optimal" : score >= 50 ? "caution" : "recovery";
   const recommendation =
     state === "optimal"
-      ? "Mantener la sesion planificada. Progresa solo si la tecnica y el esfuerzo se mantienen estables."
+      ? "Mantén la sesión planificada. Progresa solo si la técnica y el esfuerzo se mantienen estables."
       : state === "caution"
-        ? "Mantener los ejercicios y reducir entre 10% y 20% el volumen o la carga prevista."
-        : "Priorizar recuperacion o una sesion ligera y evitar aumentos de carga hasta que mejoren las señales.";
+        ? "Mantén los ejercicios y reduce entre 10% y 20% el volumen o la carga prevista."
+        : "Prioriza la recuperación o una sesión ligera y evita aumentos de carga hasta que mejoren las señales.";
   const adjustment =
     state === "optimal"
       ? { minPercent: 0, maxPercent: 5 }
@@ -546,12 +548,15 @@ const buildDecisionSupport = (
     generatedFor: todayKey,
     score,
     state,
-    confidence:
-      confidenceSources >= 3
+    confidence: freshCheckIn
+      ? confidenceSources >= 3
         ? "alta"
         : confidenceSources >= 2
           ? "media"
-          : "baja",
+          : "baja"
+      : confidenceSources >= 2
+        ? "media"
+        : "baja",
     recommendation,
     adjustment,
     factors,
@@ -640,14 +645,19 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
   };
   const items = [...exerciseMap.values()]
     .map((exercise) => {
-      const history = exercise.history.slice(-12);
-      const latest = history[history.length - 1];
-      const previous = history.slice(-4, -1);
-      const baseline = mean(previous.map((item) => item.oneRM));
-      const changePercent = baseline
-        ? round(((latest.oneRM - baseline) / baseline) * 100, 1)
+      const completeHistory = exercise.history;
+      const history = completeHistory.slice(-12);
+      const latest = completeHistory[completeHistory.length - 1];
+      const latestWindow = completeHistory.slice(-3);
+      const previousWindow = completeHistory.slice(-6, -3);
+      const latestAverage = mean(latestWindow.map((item) => item.oneRM));
+      const baseline = mean(previousWindow.map((item) => item.oneRM));
+      const hasStableComparison =
+        latestWindow.length === 3 && previousWindow.length === 3;
+      const changePercent = hasStableComparison && baseline
+        ? round(((latestAverage - baseline) / baseline) * 100, 1)
         : null;
-      const recentFour = history.slice(-4).map((item) => item.oneRM);
+      const recentFour = completeHistory.slice(-4).map((item) => item.oneRM);
       const recentAverage = mean(recentFour);
       const recentRange = recentFour.length
         ? Math.max(...recentFour) - Math.min(...recentFour)
@@ -657,13 +667,15 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
         recentAverage > 0 &&
         recentRange / recentAverage <= 0.025;
       const status =
-        history.length < 3
+        completeHistory.length < 4
           ? "limited"
-          : changePercent <= -5
+          : plateau
+            ? "plateau"
+            : !hasStableComparison
+              ? "limited"
+              : changePercent <= -5
             ? "declining"
-            : plateau
-              ? "plateau"
-              : changePercent >= 2.5
+            : changePercent >= 2.5
                 ? "progressing"
                 : "stable";
       let suggestion =
@@ -671,7 +683,7 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
       let suggestedWeightKg = latest.weight;
       if (status === "progressing") {
         suggestion =
-          "La tendencia es positiva. Consolida una sesion antes de volver a aumentar la carga.";
+          "La tendencia es positiva. Consolida una sesión antes de volver a aumentar la carga.";
       } else if (status === "plateau") {
         const canIncrease = readiness?.state === "optimal";
         suggestedWeightKg = canIncrease
@@ -679,18 +691,17 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
           : latest.weight;
         suggestion = canIncrease
           ? `Prueba ${suggestedWeightKg} kg manteniendo el rango actual de repeticiones.`
-          : "Mantiene la carga y suma una repeticion antes de progresar peso.";
+          : "Mantén la carga y suma una repetición antes de progresar peso.";
       } else if (status === "declining") {
-        suggestedWeightKg = roundToHalf(latest.weight * 0.925);
-        suggestion = `Considera ${suggestedWeightKg} kg y revisa recuperacion, tecnica y orden del ejercicio.`;
+        suggestion = `Mantén ${latest.weight} kg y confirma la tendencia en la próxima sesión; si vuelve a bajar, reduce cerca de 5%.`;
       } else if (status === "limited") {
         suggestion =
-          "Registra al menos tres sesiones para habilitar una recomendacion de progresion.";
+          "Registra al menos tres sesiones para habilitar una recomendación de progresión.";
       }
       return {
         ...exercise,
         history,
-        sessionCount: history.length,
+        sessionCount: completeHistory.length,
         lastDate: latest.date,
         current: {
           oneRM: latest.oneRM,
@@ -701,7 +712,11 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
         changePercent,
         status,
         confidence:
-          history.length >= 6 ? "alta" : history.length >= 4 ? "media" : "baja",
+          completeHistory.length >= 8
+            ? "alta"
+            : completeHistory.length >= 5
+              ? "media"
+              : "baja",
         suggestedWeightKg,
         suggestion,
       };

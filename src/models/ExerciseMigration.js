@@ -4,7 +4,7 @@ const ExerciseMigrationSchema = new mongoose.Schema(
   {
     operation: {
       type: String,
-      enum: ["migrate", "delete"],
+      enum: ["migrate", "merge", "delete"],
       required: true,
     },
     sourceExercise: {
