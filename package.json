@@ -19,6 +19,8 @@
     "admin:rotate": "node scripts/createAdminAndAssignData.js --rotate-password",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",
     "progress:backfill-scopes": "node scripts/backfillProgressScopes.js",
+    "photos:migrate": "node scripts/migrateProgressPhotos.js",
+    "photos:migrate:apply": "node scripts/migrateProgressPhotos.js --apply",
     "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",
     "exercises:backfill-weight-config": "node scripts/backfillExerciseWeightConfig.js --apply",
     "exercises:normalize-catalog": "node scripts/normalizeExerciseCatalog.js",

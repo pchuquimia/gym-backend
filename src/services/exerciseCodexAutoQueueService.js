@@ -25,8 +25,8 @@ const positiveInteger = (value, fallback, maximum = 500) => {
 
 export const getCodexAutoQueueConfig = () => ({
   enabled:
-    String(process.env.CODEX_IMAGE_AUTO_QUEUE || "true").toLowerCase() !==
-    "false",
+    String(process.env.CODEX_IMAGE_AUTO_QUEUE || "false").toLowerCase() ===
+    "true",
   maxOutstanding: positiveInteger(
     process.env.CODEX_IMAGE_AUTO_QUEUE_MAX_OUTSTANDING,
     DEFAULT_MAX_OUTSTANDING,

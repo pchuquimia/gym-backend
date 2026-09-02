@@ -29,6 +29,7 @@ import { performanceTiming } from "./middleware/performanceTiming.js";
 import { getCacheStatus } from "./services/cacheService.js";
 import { getDeploymentHealth } from "./utils/deploymentTopology.js";
 import { canExposeArchitectureDetails } from "./config/security.js";
+import Photo from "./models/Photo.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -108,6 +109,24 @@ app.use(express.json({ limit: "10mb" }));
 app.use(cookieParser());
 app.use(performanceTiming);
 app.use(morgan("dev"));
+app.use("/uploads/:filename", async (req, res, next) => {
+  try {
+    const filename = path.basename(String(req.params.filename || ""));
+    if (!filename || filename !== req.params.filename)
+      return res.sendStatus(404);
+    const escaped = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const privatePhoto = await Photo.exists({
+      $or: [
+        { localFilename: filename },
+        { url: { $regex: `/uploads/${escaped}(?:\\?|$)` } },
+      ],
+    });
+    if (privatePhoto) return res.sendStatus(404);
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
 app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));

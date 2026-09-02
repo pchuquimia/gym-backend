@@ -23,6 +23,8 @@ const [{ default: app }, { connectDB }] = await Promise.all([
   import("./app.js"),
   import("./config/db.js"),
 ]);
+const { processPhotoAssetCleanupJobs } =
+  await import("./services/photoAssetCleanupService.js");
 const { reportDeploymentTopology } =
   await import("./utils/deploymentTopology.js");
 const { startCodexImageAutoQueue } =
@@ -31,6 +33,9 @@ const { startCodexImageAutoQueue } =
 async function start() {
   reportDeploymentTopology();
   await connectDB(MONGO_URI);
+  processPhotoAssetCleanupJobs({ limit: 250 }).catch((error) => {
+    console.error("No se pudo completar la limpieza pendiente de fotos", error);
+  });
   startCodexImageAutoQueue();
   app.listen(PORT, () => {
     console.log(`API escuchando en puerto ${PORT}`);

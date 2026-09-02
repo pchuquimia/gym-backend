@@ -45,6 +45,10 @@ import {
   enqueueEligibleCodexImageRequests,
   getCodexAutoQueueConfig,
 } from "../services/exerciseCodexAutoQueueService.js";
+import {
+  enqueueExerciseImageWorkspaceBatch,
+  listExerciseImageWorkspace,
+} from "../services/exerciseImageWorkspaceService.js";
 import { inferWeightConfig } from "../utils/weightConfig.js";
 import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
@@ -858,15 +862,60 @@ router.get(
 );
 
 router.get(
+  "/admin/image-workspace",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const workspace = await listExerciseImageWorkspace({
+        query: req.query.q,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.json(workspace);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/codex-image-requests/batch",
+  authorizeRoles("Admin"),
+  codexImageRequestLimiter,
+  async (req, res, next) => {
+    try {
+      const result = await enqueueExerciseImageWorkspaceBatch({
+        exerciseIds: Array.isArray(req.body?.exerciseIds)
+          ? req.body.exerciseIds
+          : [],
+        masterInstruction: req.body?.masterInstruction,
+        specificInstructions: req.body?.specificInstructions,
+        requestedBy: req.user.id,
+      });
+      res.set("Cache-Control", "private, no-store");
+      res.status(result.created ? 201 : 200).json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.get(
   "/admin/codex-image-review-queue",
   authorizeRoles("Admin"),
   async (req, res, next) => {
     try {
       const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
-      const [requests, statusRows] = await Promise.all([
+      const [requests, recentReviewed, statusRows] = await Promise.all([
         CodexImageRequest.find({ status: "ready", "result.url": { $ne: "" } })
           .sort({ completedAt: 1, createdAt: 1 })
           .limit(limit)
+          .lean(),
+        CodexImageRequest.find({
+          status: { $in: ["applied", "skipped", "rejected"] },
+          "result.url": { $ne: "" },
+        })
+          .sort({ reviewedAt: -1, updatedAt: -1 })
+          .limit(12)
           .lean(),
         CodexImageRequest.aggregate([
           {
@@ -877,7 +926,11 @@ router.get(
           { $group: { _id: "$status", count: { $sum: 1 } } },
         ]),
       ]);
-      const exerciseIds = requests.map((request) => request.exerciseId);
+      const exerciseIds = [
+        ...new Set(
+          [...requests, ...recentReviewed].map((request) => request.exerciseId),
+        ),
+      ];
       const exercises = await Exercise.find({ _id: { $in: exerciseIds } })
         .select(
           "name localizedNames bodyRegion primaryMuscleGroup primaryMuscles secondaryMuscles equipment image media.image thumb type",
@@ -894,6 +947,11 @@ router.get(
       res.set("Cache-Control", "private, no-store");
       res.json({
         requests: requests.map((request) => ({
+          ...request,
+          id: String(request._id),
+          exercise: exerciseById.get(request.exerciseId) || null,
+        })),
+        recentReviewed: recentReviewed.map((request) => ({
           ...request,
           id: String(request._id),
           exercise: exerciseById.get(request.exerciseId) || null,

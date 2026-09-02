@@ -9,6 +9,10 @@ import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
+import {
+  processPhotoAssetCleanupJobs,
+  queuePhotoAssetCleanup,
+} from "./photoAssetCleanupService.js";
 import { DEMO_ROLES, getDemoLifetimeHours } from "../utils/demoMode.js";
 import {
   buildDemoTrainingOffsets,
@@ -113,9 +117,7 @@ const loadCatalogExercises = async () => {
     .limit(16)
     .lean();
   if (exercises.length) return exercises;
-  return Exercise.find({ isActive: true })
-    .limit(16)
-    .lean();
+  return Exercise.find({ isActive: true }).limit(16).lean();
 };
 
 const createDemoUser = async ({
@@ -426,33 +428,85 @@ export const cleanupExpiredDemoWorkspaces = async () => {
 
 export const deleteDemoWorkspace = async (workspaceId) => {
   if (!workspaceId) return false;
+  const dbSession = await User.startSession();
+  let cleanupJobs = [];
+  let deleted = false;
+  try {
+    await dbSession.withTransaction(async () => {
+      const users = await User.find({
+        isDemo: true,
+        demoWorkspaceId: workspaceId,
+      })
+        .select("_id")
+        .session(dbSession)
+        .lean();
+      const ownerIds = users.map((user) => user._id.toString());
+      if (!ownerIds.length) return;
 
-  const users = await User.find({
-    isDemo: true,
-    demoWorkspaceId: workspaceId,
-  })
-    .select("_id")
-    .lean();
-  const ownerIds = users.map((user) => user._id.toString());
-  if (!ownerIds.length) return false;
-  await Promise.all([
-    Routine.deleteMany({ ownerId: { $in: ownerIds } }),
-    Training.deleteMany({ ownerId: { $in: ownerIds } }),
-    Session.deleteMany({ ownerId: { $in: ownerIds } }),
-    Photo.deleteMany({ ownerId: { $in: ownerIds } }),
-    Preference.deleteMany({ userId: { $in: ownerIds } }),
-    WeightEntry.deleteMany({ ownerId: { $in: ownerIds } }),
-    Exercise.deleteMany({ ownerId: { $in: ownerIds }, type: "custom" }),
-    PlanTemplate.deleteMany({ ownerId: { $in: ownerIds } }),
-    TrainingPlan.deleteMany({
-      $or: [
-        { athleteId: { $in: ownerIds } },
-        { coachId: { $in: ownerIds } },
-        { createdById: { $in: ownerIds } },
-      ],
-    }),
-    User.deleteMany({ isDemo: true, demoWorkspaceId: workspaceId }),
-  ]);
+      const storedPhotos = await Photo.find({ ownerId: { $in: ownerIds } })
+        .session(dbSession)
+        .lean();
+      cleanupJobs = await queuePhotoAssetCleanup(storedPhotos, {
+        session: dbSession,
+      });
+
+      // Las operaciones se ejecutan en serie porque MongoDB no admite
+      // paralelismo dentro de una transacción.
+      await Routine.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await Training.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await Session.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await Photo.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await Preference.deleteMany(
+        { userId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await WeightEntry.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await Exercise.deleteMany(
+        { ownerId: { $in: ownerIds }, type: "custom" },
+        { session: dbSession },
+      );
+      await PlanTemplate.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await TrainingPlan.deleteMany(
+        {
+          $or: [
+            { athleteId: { $in: ownerIds } },
+            { coachId: { $in: ownerIds } },
+            { createdById: { $in: ownerIds } },
+          ],
+        },
+        { session: dbSession },
+      );
+      await User.deleteMany(
+        { isDemo: true, demoWorkspaceId: workspaceId },
+        { session: dbSession },
+      );
+      deleted = true;
+    });
+  } finally {
+    await dbSession.endSession();
+  }
+  if (!deleted) return false;
+  await processPhotoAssetCleanupJobs({
+    ids: cleanupJobs.map((job) => job._id),
+  });
   return true;
 };
 

@@ -10,12 +10,14 @@ const [
   { default: CodexImageRequest },
   { default: Routine },
   { default: TrainingPlan },
+  { uploadExerciseMedia },
 ] =
   await Promise.all([
     import("../src/config/db.js"),
     import("../src/models/CodexImageRequest.js"),
     import("../src/models/Routine.js"),
     import("../src/models/TrainingPlan.js"),
+    import("../src/utils/exerciseMediaUpload.js"),
   ]);
 
 const usage = () => {
@@ -135,25 +137,39 @@ const complete = async (requestId, filePath) => {
   if (![".jpg", ".jpeg", ".png", ".webp"].includes(extension)) {
     throw new Error("La propuesta debe ser JPG, PNG o WebP");
   }
-  const relativeFilename = `codex-proposals/${request._id}${extension}`;
-  const uploadsDirectory = path.resolve("uploads");
-  const destination = path.resolve(uploadsDirectory, relativeFilename);
-  await fs.mkdir(path.dirname(destination), { recursive: true });
-  await fs.copyFile(absolutePath, destination);
-  const baseUrl = String(
-    process.env.CODEX_IMAGE_BASE_URL ||
-      `http://localhost:${process.env.PORT || 4000}`,
-  ).replace(/\/$/, "");
-  const uploaded = {
-    url: `${baseUrl}/uploads/${relativeFilename.replace(/\\/g, "/")}`,
-    publicId: "",
-    storage: "local",
-    filename: relativeFilename.replace(/\\/g, "/"),
-    bytes: stats.size,
-    width: 0,
-    height: 0,
-    format: extension.slice(1).replace("jpeg", "jpg"),
-  };
+  const cloudinaryFolder =
+    process.env.CLOUDINARY_EXERCISES_FOLDER || "gym/exercises";
+  const cloudinaryUpload = await uploadExerciseMedia(absolutePath, {
+    publicId: `${cloudinaryFolder}/codex-proposals/${request._id}`,
+  });
+  let uploaded;
+  if (cloudinaryUpload?.url) {
+    uploaded = {
+      ...cloudinaryUpload,
+      storage: "cloudinary",
+      filename: "",
+    };
+  } else {
+    const relativeFilename = `codex-proposals/${request._id}${extension}`;
+    const uploadsDirectory = path.resolve("uploads");
+    const destination = path.resolve(uploadsDirectory, relativeFilename);
+    await fs.mkdir(path.dirname(destination), { recursive: true });
+    await fs.copyFile(absolutePath, destination);
+    const baseUrl = String(
+      process.env.CODEX_IMAGE_BASE_URL ||
+        `http://localhost:${process.env.PORT || 4000}`,
+    ).replace(/\/$/, "");
+    uploaded = {
+      url: `${baseUrl}/uploads/${relativeFilename.replace(/\\/g, "/")}`,
+      publicId: "",
+      storage: "local",
+      filename: relativeFilename.replace(/\\/g, "/"),
+      bytes: stats.size,
+      width: 0,
+      height: 0,
+      format: extension.slice(1).replace("jpeg", "jpg"),
+    };
+  }
   request.status = "ready";
   request.result = uploaded;
   request.completedAt = new Date();
