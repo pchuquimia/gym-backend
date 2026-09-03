@@ -16,6 +16,7 @@ const SAME_IMAGE_TERMINAL_STATUSES = [
 const DEFAULT_MAX_OUTSTANDING = 25;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const SYSTEM_REQUESTED_BY = "system:auto-image-queue";
+const MAX_INSTRUCTION_LENGTH = 13000;
 
 const positiveInteger = (value, fallback, maximum = 500) => {
   const parsed = Number.parseInt(value, 10);
@@ -81,7 +82,7 @@ export const enqueueCodexImageRequestForExercise = async ({
 
   const cleanInstruction = String(instruction || "")
     .trim()
-    .slice(0, 2000);
+    .slice(0, MAX_INSTRUCTION_LENGTH);
   const attempt = parentRequestId
     ? Math.max(Number(latest?.attempt) || 1, 1) + 1
     : 1;

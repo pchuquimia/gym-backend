@@ -5,7 +5,7 @@ const CodexImageRequestSchema = new mongoose.Schema(
     exerciseId: { type: String, required: true, index: true, trim: true },
     exerciseName: { type: String, required: true, trim: true },
     referenceImage: { type: String, required: true, trim: true },
-    instruction: { type: String, default: "", maxlength: 2000, trim: true },
+    instruction: { type: String, default: "", maxlength: 13000, trim: true },
     prompt: { type: String, required: true, maxlength: 32000 },
     status: {
       type: String,

@@ -13,6 +13,14 @@ describe("exerciseImageWorkspaceService", () => {
     expect(instruction).toContain("AJUSTE ESPECIFICO:\nConservar el agarre");
   });
 
+  it("conserva una instruccion maestra extensa sin recortarla a 1600 caracteres", () => {
+    const master = "Guia visual detallada. ".repeat(180);
+    const instruction = combineImageInstructions(master, "");
+
+    expect(master.trim().length).toBeGreaterThan(1600);
+    expect(instruction).toBe(`INSTRUCCION MAESTRA:\n${master.trim()}`);
+  });
+
   it("prioriza ejercicios del plan activo y conserva su contexto", () => {
     const items = buildExerciseImageWorkspaceItems({
       routines: [

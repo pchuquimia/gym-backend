@@ -6,6 +6,9 @@ import { enqueueCodexImageRequestForExercise } from "./exerciseCodexAutoQueueSer
 
 const CURRENT_PLAN_STATUSES = ["draft", "scheduled", "active", "paused"];
 const ACTIVE_REQUEST_STATUSES = new Set(["pending", "processing", "ready"]);
+const MASTER_INSTRUCTION_MAX_LENGTH = 12000;
+const SPECIFIC_INSTRUCTION_MAX_LENGTH = 800;
+const COMBINED_INSTRUCTION_MAX_LENGTH = 13000;
 
 const exerciseImage = (exercise = {}) =>
   exercise.media?.image?.url || exercise.image || exercise.thumb || "";
@@ -13,17 +16,17 @@ const exerciseImage = (exercise = {}) =>
 export const combineImageInstructions = (master = "", specific = "") => {
   const cleanMaster = String(master || "")
     .trim()
-    .slice(0, 1600);
+    .slice(0, MASTER_INSTRUCTION_MAX_LENGTH);
   const cleanSpecific = String(specific || "")
     .trim()
-    .slice(0, 800);
+    .slice(0, SPECIFIC_INSTRUCTION_MAX_LENGTH);
   return [
     cleanMaster ? `INSTRUCCION MAESTRA:\n${cleanMaster}` : "",
     cleanSpecific ? `AJUSTE ESPECIFICO:\n${cleanSpecific}` : "",
   ]
     .filter(Boolean)
     .join("\n\n")
-    .slice(0, 2000);
+    .slice(0, COMBINED_INSTRUCTION_MAX_LENGTH);
 };
 
 export const buildExerciseImageWorkspaceItems = ({
