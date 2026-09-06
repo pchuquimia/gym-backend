@@ -87,6 +87,52 @@ describe("API shell", () => {
     }
   });
 
+  test("el callback de Google rechaza un POST sin token CSRF y vuelve al frontend", async () => {
+    const previousClientUrl = process.env.CLIENT_URL;
+    process.env.CLIENT_URL = "https://rirfit.com";
+    try {
+      const response = await request(app)
+        .post("/api/auth/google/callback")
+        .type("form")
+        .send({ credential: "x".repeat(100) });
+
+      expect(response.status).toBe(303);
+      expect(response.headers.location).toBe(
+        "https://rirfit.com/?google_error=invalid_csrf",
+      );
+    } finally {
+      if (previousClientUrl === undefined) delete process.env.CLIENT_URL;
+      else process.env.CLIENT_URL = previousClientUrl;
+    }
+  });
+
+  test("el callback de Google acepta el formulario y conserva errores como redireccion", async () => {
+    const previousClientId = process.env.GOOGLE_CLIENT_ID;
+    const previousClientUrl = process.env.CLIENT_URL;
+    delete process.env.GOOGLE_CLIENT_ID;
+    process.env.CLIENT_URL = "https://rirfit.com";
+    try {
+      const response = await request(app)
+        .post("/api/auth/google/callback")
+        .set("Cookie", "g_csrf_token=token-seguro")
+        .type("form")
+        .send({
+          credential: "x".repeat(100),
+          g_csrf_token: "token-seguro",
+        });
+
+      expect(response.status).toBe(303);
+      expect(response.headers.location).toBe(
+        "https://rirfit.com/?google_error=google_auth_not_configured",
+      );
+    } finally {
+      if (previousClientId === undefined) delete process.env.GOOGLE_CLIENT_ID;
+      else process.env.GOOGLE_CLIENT_ID = previousClientId;
+      if (previousClientUrl === undefined) delete process.env.CLIENT_URL;
+      else process.env.CLIENT_URL = previousClientUrl;
+    }
+  });
+
   test("el acceso con Facebook falla claramente si no esta configurado", async () => {
     const previous = {
       appId: process.env.FACEBOOK_APP_ID,

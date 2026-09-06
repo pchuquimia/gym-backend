@@ -187,6 +187,14 @@ const facebookRedirect = (req, res, parameters = {}) => {
   return res.redirect(url.toString());
 };
 
+const googleRedirect = (res, parameters = {}) => {
+  const url = new URL(getClientUrl());
+  Object.entries(parameters).forEach(([key, value]) =>
+    url.searchParams.set(key, value),
+  );
+  return res.redirect(303, url.toString());
+};
+
 const requestEmailVerification = asyncHandler(async (req, res) => {
   if (!isEmailConfigured()) {
     const err = new Error(
@@ -587,7 +595,7 @@ const facebookCallback = async (req, res) => {
   }
 };
 
-const googleLogin = asyncHandler(async (req, res) => {
+const completeGoogleLogin = async (req) => {
   const identity = await verifyGoogleCredential(req.body.credential);
   const hasEmailMarketingConsent = Object.prototype.hasOwnProperty.call(
     req.body,
@@ -610,6 +618,7 @@ const googleLogin = asyncHandler(async (req, res) => {
       "Este correo ya está asociado a otra cuenta de Google.",
     );
     error.statusCode = 409;
+    error.code = "GOOGLE_ACCOUNT_CONFLICT";
     throw error;
   }
 
@@ -650,6 +659,7 @@ const googleLogin = asyncHandler(async (req, res) => {
           "No pudimos asociar esta cuenta de Google. Intenta nuevamente.",
         );
         conflict.statusCode = 409;
+        conflict.code = "GOOGLE_ACCOUNT_CONFLICT";
         throw conflict;
       }
     }
@@ -694,10 +704,46 @@ const googleLogin = asyncHandler(async (req, res) => {
   }
 
   const token = signToken(user, session.sessionId);
+  return { token, user };
+};
+
+const googleLogin = asyncHandler(async (req, res) => {
+  const { token, user } = await completeGoogleLogin(req);
   setAuthCookie(res, token, { persistent: req.body.remember === true });
   res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
 });
+
+const googleCallback = async (req, res) => {
+  try {
+    const csrfCookie = String(req.cookies?.g_csrf_token || "");
+    const csrfBody = String(req.body?.g_csrf_token || "");
+    const credential = String(req.body?.credential || "");
+
+    if (!csrfCookie || !csrfBody || csrfCookie !== csrfBody) {
+      return googleRedirect(res, { google_error: "invalid_csrf" });
+    }
+    if (credential.length < 100 || credential.length > 10000) {
+      return googleRedirect(res, { google_error: "invalid_credential" });
+    }
+
+    const { token } = await completeGoogleLogin(req);
+    setAuthCookie(res, token, { persistent: req.body?.state === "remember" });
+    res.set("Cache-Control", "no-store");
+    return googleRedirect(res, { google: "success" });
+  } catch (error) {
+    const allowedCodes = new Set([
+      "GOOGLE_AUTH_NOT_CONFIGURED",
+      "GOOGLE_ACCOUNT_CONFLICT",
+      "INVALID_GOOGLE_CREDENTIAL",
+    ]);
+    return googleRedirect(res, {
+      google_error: allowedCodes.has(error?.code)
+        ? error.code.toLowerCase()
+        : "login_failed",
+    });
+  }
+};
 
 const demoStatus = (req, res) => {
   const enabled = isDemoModeEnabled() && isDemoRequestOriginAllowed(req);
@@ -1141,6 +1187,7 @@ export {
   register,
   login,
   googleLogin,
+  googleCallback,
   facebookLogin,
   facebookCallback,
   demoLogin,

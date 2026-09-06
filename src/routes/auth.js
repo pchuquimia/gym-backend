@@ -11,6 +11,7 @@ import {
   getProfile,
   getProfileSummary,
   getSessions,
+  googleCallback,
   googleLogin,
   facebookCallback,
   facebookLogin,
@@ -148,6 +149,7 @@ router.post(
   ],
   login,
 );
+router.post("/google/callback", authLimiter, googleCallback);
 router.post(
   "/google",
   authLimiter,
