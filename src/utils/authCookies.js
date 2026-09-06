@@ -43,8 +43,10 @@ export const getCookieOptions = () => {
   return options;
 };
 
-export const setAuthCookie = (res, token) => {
-  res.cookie("jwt", token, getCookieOptions());
+export const setAuthCookie = (res, token, { persistent = true } = {}) => {
+  const options = getCookieOptions();
+  if (!persistent) delete options.maxAge;
+  res.cookie("jwt", token, options);
 };
 
 export const clearAuthCookie = (res) => {

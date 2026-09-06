@@ -87,6 +87,54 @@ describe("API shell", () => {
     }
   });
 
+  test("el acceso con Facebook falla claramente si no esta configurado", async () => {
+    const previous = {
+      appId: process.env.FACEBOOK_APP_ID,
+      appSecret: process.env.FACEBOOK_APP_SECRET,
+      callbackUrl: process.env.FACEBOOK_CALLBACK_URL,
+    };
+    delete process.env.FACEBOOK_APP_ID;
+    delete process.env.FACEBOOK_APP_SECRET;
+    delete process.env.FACEBOOK_CALLBACK_URL;
+    try {
+      const response = await request(app).get("/api/auth/facebook");
+      expect(response.status).toBe(503);
+      expect(response.body.code).toBe("FACEBOOK_AUTH_NOT_CONFIGURED");
+    } finally {
+      if (previous.appId === undefined) delete process.env.FACEBOOK_APP_ID;
+      else process.env.FACEBOOK_APP_ID = previous.appId;
+      if (previous.appSecret === undefined)
+        delete process.env.FACEBOOK_APP_SECRET;
+      else process.env.FACEBOOK_APP_SECRET = previous.appSecret;
+      if (previous.callbackUrl === undefined)
+        delete process.env.FACEBOOK_CALLBACK_URL;
+      else process.env.FACEBOOK_CALLBACK_URL = previous.callbackUrl;
+    }
+  });
+
+  test("el callback de Facebook vuelve al frontend local durante desarrollo", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousFacebookClientUrl = process.env.FACEBOOK_CLIENT_URL;
+    process.env.NODE_ENV = "development";
+    delete process.env.FACEBOOK_CLIENT_URL;
+    try {
+      const response = await request(app)
+        .get("/api/auth/facebook/callback?state=invalid")
+        .set("Host", "localhost:4000");
+
+      expect(response.status).toBe(302);
+      expect(response.headers.location).toBe(
+        "http://localhost:5173/?facebook_error=invalid_state",
+      );
+    } finally {
+      if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previousNodeEnv;
+      if (previousFacebookClientUrl === undefined)
+        delete process.env.FACEBOOK_CLIENT_URL;
+      else process.env.FACEBOOK_CLIENT_URL = previousFacebookClientUrl;
+    }
+  });
+
   test("rechaza una preferencia de correo que no sea booleana", async () => {
     const response = await request(app).post("/api/auth/register").send({
       name: "Atleta Nuevo",

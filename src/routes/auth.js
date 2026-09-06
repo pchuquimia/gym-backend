@@ -12,6 +12,8 @@ import {
   getProfileSummary,
   getSessions,
   googleLogin,
+  facebookCallback,
+  facebookLogin,
   login,
   logout,
   logoutAll,
@@ -141,6 +143,7 @@ router.post(
   [
     loginIdentifierRule(),
     body("password").isString().notEmpty().withMessage("Contrasena requerida"),
+    body("remember").optional().isBoolean().toBoolean(),
     validateLogin,
   ],
   login,
@@ -158,10 +161,13 @@ router.post(
       .isBoolean()
       .withMessage("Preferencia de correo invalida")
       .toBoolean(),
+    body("remember").optional().isBoolean().toBoolean(),
     validate,
   ],
   googleLogin,
 );
+router.get("/facebook", authLimiter, facebookLogin);
+router.get("/facebook/callback", authLimiter, facebookCallback);
 router.post(
   "/verify-email",
   authLimiter,

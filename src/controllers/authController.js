@@ -5,6 +5,10 @@ import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
 import { createDemoWorkspace } from "../services/demoWorkspaceService.js";
 import { verifyGoogleCredential } from "../services/googleAuthService.js";
+import {
+  createFacebookAuthorizationUrl,
+  verifyFacebookAuthorizationCode,
+} from "../services/facebookAuthService.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { clearAuthCookie, setAuthCookie } from "../utils/authCookies.js";
 import {
@@ -138,6 +142,50 @@ const getClientUrl = () =>
     .split(",")[0]
     .trim()
     .replace(/\/$/, "");
+
+const FACEBOOK_STATE_COOKIE = "rirfit_facebook_oauth_state";
+const FACEBOOK_REMEMBER_COOKIE = "rirfit_facebook_oauth_remember";
+const FACEBOOK_MARKETING_COOKIE = "rirfit_facebook_oauth_marketing";
+const facebookOAuthCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: "lax",
+  maxAge: 10 * 60 * 1000,
+  path: "/api/auth/facebook",
+});
+
+const clearFacebookOAuthCookies = (res) => {
+  const options = facebookOAuthCookieOptions();
+  delete options.maxAge;
+  res.clearCookie(FACEBOOK_STATE_COOKIE, options);
+  res.clearCookie(FACEBOOK_REMEMBER_COOKIE, options);
+  res.clearCookie(FACEBOOK_MARKETING_COOKIE, options);
+};
+
+const getFacebookClientUrl = (req) => {
+  const configured = String(process.env.FACEBOOK_CLIENT_URL || "")
+    .trim()
+    .replace(/\/$/, "");
+  if (configured) return configured;
+
+  const hostname = String(req.hostname || "").toLowerCase();
+  const isLocal =
+    process.env.NODE_ENV !== "production" &&
+    (hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      /^192\.168\./.test(hostname) ||
+      /^10\./.test(hostname) ||
+      /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname));
+  return isLocal ? `http://${hostname}:5173` : getClientUrl();
+};
+
+const facebookRedirect = (req, res, parameters = {}) => {
+  const url = new URL(getFacebookClientUrl(req));
+  Object.entries(parameters).forEach(([key, value]) =>
+    url.searchParams.set(key, value),
+  );
+  return res.redirect(url.toString());
+};
 
 const requestEmailVerification = asyncHandler(async (req, res) => {
   if (!isEmailConfigured()) {
@@ -388,10 +436,156 @@ const login = asyncHandler(async (req, res) => {
   user.lastLoginAt = lastLoginAt;
 
   const token = signToken(user, session.sessionId);
-  setAuthCookie(res, token);
+  setAuthCookie(res, token, { persistent: req.body.remember === true });
   res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
 });
+
+const facebookLogin = (req, res) => {
+  const state = crypto.randomBytes(32).toString("hex");
+  const options = facebookOAuthCookieOptions();
+  res.cookie(FACEBOOK_STATE_COOKIE, state, options);
+  res.cookie(
+    FACEBOOK_REMEMBER_COOKIE,
+    req.query.remember === "1" ? "1" : "0",
+    options,
+  );
+  if (["0", "1"].includes(req.query.marketing)) {
+    res.cookie(FACEBOOK_MARKETING_COOKIE, req.query.marketing, options);
+  }
+  res.set("Cache-Control", "no-store");
+  return res.redirect(createFacebookAuthorizationUrl(state));
+};
+
+const facebookCallback = async (req, res) => {
+  const expectedState = String(req.cookies?.[FACEBOOK_STATE_COOKIE] || "");
+  const suppliedState = String(req.query.state || "");
+  const expectedStateBuffer = Buffer.from(expectedState);
+  const suppliedStateBuffer = Buffer.from(suppliedState);
+  const remember = req.cookies?.[FACEBOOK_REMEMBER_COOKIE] === "1";
+  const marketingCookie = req.cookies?.[FACEBOOK_MARKETING_COOKIE];
+  clearFacebookOAuthCookies(res);
+
+  if (req.query.error) {
+    return facebookRedirect(req, res, { facebook_error: "cancelled" });
+  }
+  if (
+    !expectedState ||
+    !suppliedState ||
+    expectedStateBuffer.length !== suppliedStateBuffer.length ||
+    !crypto.timingSafeEqual(expectedStateBuffer, suppliedStateBuffer)
+  ) {
+    return facebookRedirect(req, res, { facebook_error: "invalid_state" });
+  }
+
+  try {
+    const identity = await verifyFacebookAuthorizationCode(req.query.code);
+    let user = await User.findOne({
+      facebookSubject: identity.subject,
+    }).select(
+      "+facebookSubject +emailVerificationToken +emailVerificationExpiresAt",
+    );
+
+    if (!user) {
+      user = await User.findOne({ email: identity.email }).select(
+        "+facebookSubject +emailVerificationToken +emailVerificationExpiresAt",
+      );
+    }
+
+    if (user?.facebookSubject && user.facebookSubject !== identity.subject) {
+      const conflict = new Error(
+        "Este correo ya está asociado a otra cuenta de Facebook.",
+      );
+      conflict.code = "FACEBOOK_ACCOUNT_CONFLICT";
+      throw conflict;
+    }
+
+    const hasMarketingConsent = ["0", "1"].includes(marketingCookie);
+    const marketingConsent = marketingCookie === "1";
+
+    if (!user) {
+      try {
+        user = await User.create({
+          name: identity.name,
+          email: identity.email,
+          password: crypto.randomBytes(48).toString("base64url"),
+          facebookSubject: identity.subject,
+          role: "Cliente",
+          trainingMode: "independent",
+          onboarding: { status: "pending", completedAt: null },
+          emailPreferences: {
+            productUpdates: marketingConsent,
+            consentedAt: marketingConsent ? new Date() : null,
+          },
+          profile: {
+            weight: null,
+            height: null,
+            goal: "mantenimiento",
+            experienceLevel: "beginner",
+            weeklyFrequency: 3,
+          },
+          emailVerificationRequired: false,
+          emailVerifiedAt: new Date(),
+        });
+      } catch (error) {
+        if (error?.code !== 11000) throw error;
+        user = await User.findOne({ email: identity.email }).select(
+          "+facebookSubject +emailVerificationToken +emailVerificationExpiresAt",
+        );
+        if (
+          !user ||
+          (user.facebookSubject && user.facebookSubject !== identity.subject)
+        ) {
+          const conflict = new Error(
+            "No pudimos asociar esta cuenta de Facebook.",
+          );
+          conflict.code = "FACEBOOK_ACCOUNT_CONFLICT";
+          throw conflict;
+        }
+      }
+    }
+
+    if (!user.isActive) throw invalidCredentials();
+
+    const lastLoginAt = new Date();
+    const session = createSession(req);
+    const verifiedAt = user.emailVerifiedAt || lastLoginAt;
+    const loginFields = {
+      facebookSubject: identity.subject,
+      failedLoginAttempts: 0,
+      lockUntil: null,
+      lastLoginAt,
+      emailVerificationRequired: false,
+      emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
+      emailVerifiedAt: verifiedAt,
+    };
+    if (hasMarketingConsent) {
+      loginFields["emailPreferences.productUpdates"] = marketingConsent;
+      loginFields["emailPreferences.consentedAt"] = marketingConsent
+        ? lastLoginAt
+        : null;
+    }
+    await persistLoginSession(user._id, session, loginFields);
+
+    const token = signToken(user, session.sessionId);
+    setAuthCookie(res, token, { persistent: remember });
+    res.set("Cache-Control", "no-store");
+    return facebookRedirect(req, res, { facebook: "success" });
+  } catch (error) {
+    const allowedCodes = new Set([
+      "FACEBOOK_AUTH_NOT_CONFIGURED",
+      "FACEBOOK_EMAIL_REQUIRED",
+      "FACEBOOK_ACCOUNT_CONFLICT",
+      "INVALID_FACEBOOK_CREDENTIAL",
+    ]);
+    return facebookRedirect(req, res, {
+      facebook_error: allowedCodes.has(error?.code)
+        ? error.code.toLowerCase()
+        : "login_failed",
+    });
+  }
+};
 
 const googleLogin = asyncHandler(async (req, res) => {
   const identity = await verifyGoogleCredential(req.body.credential);
@@ -500,7 +694,7 @@ const googleLogin = asyncHandler(async (req, res) => {
   }
 
   const token = signToken(user, session.sessionId);
-  setAuthCookie(res, token);
+  setAuthCookie(res, token, { persistent: req.body.remember === true });
   res.set("Cache-Control", "no-store");
   res.json(authResponse(user, token));
 });
@@ -947,6 +1141,8 @@ export {
   register,
   login,
   googleLogin,
+  facebookLogin,
+  facebookCallback,
   demoLogin,
   demoStatus,
   verifyEmail,

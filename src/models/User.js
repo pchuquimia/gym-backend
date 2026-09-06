@@ -52,6 +52,13 @@ const UserSchema = new mongoose.Schema(
       index: true,
       select: false,
     },
+    facebookSubject: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+      select: false,
+    },
     role: {
       type: String,
       enum: USER_ROLES,
