@@ -33,6 +33,13 @@ const UserSchema = new mongoose.Schema(
       required: true,
       select: false,
     },
+    googleSubject: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+      select: false,
+    },
     role: {
       type: String,
       enum: USER_ROLES,
@@ -187,14 +194,14 @@ const UserSchema = new mongoose.Schema(
     activeSessions: {
       type: [
         {
-        sessionId: { type: String, required: true },
-        device: { type: String, default: "Dispositivo" },
-        browser: { type: String, default: "Navegador" },
-        os: { type: String, default: "" },
-        ip: { type: String, default: "" },
-        userAgent: { type: String, default: "" },
-        createdAt: { type: Date, default: Date.now },
-        lastSeenAt: { type: Date, default: Date.now },
+          sessionId: { type: String, required: true },
+          device: { type: String, default: "Dispositivo" },
+          browser: { type: String, default: "Navegador" },
+          os: { type: String, default: "" },
+          ip: { type: String, default: "" },
+          userAgent: { type: String, default: "" },
+          createdAt: { type: Date, default: Date.now },
+          lastSeenAt: { type: Date, default: Date.now },
         },
       ],
       validate: maxArrayLength(20, "Las sesiones activas"),

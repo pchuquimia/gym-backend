@@ -71,4 +71,19 @@ describe("API shell", () => {
       else process.env.EMAIL_PROVIDER = previousProvider;
     }
   });
+
+  test("el acceso con Google falla claramente si no esta configurado", async () => {
+    const previousClientId = process.env.GOOGLE_CLIENT_ID;
+    delete process.env.GOOGLE_CLIENT_ID;
+    try {
+      const response = await request(app)
+        .post("/api/auth/google")
+        .send({ credential: "x".repeat(100) });
+      expect(response.status).toBe(503);
+      expect(response.body.code).toBe("GOOGLE_AUTH_NOT_CONFIGURED");
+    } finally {
+      if (previousClientId === undefined) delete process.env.GOOGLE_CLIENT_ID;
+      else process.env.GOOGLE_CLIENT_ID = previousClientId;
+    }
+  });
 });

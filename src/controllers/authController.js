@@ -4,6 +4,7 @@ import User from "../models/User.js";
 import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
 import { createDemoWorkspace } from "../services/demoWorkspaceService.js";
+import { verifyGoogleCredential } from "../services/googleAuthService.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { clearAuthCookie, setAuthCookie } from "../utils/authCookies.js";
 import {
@@ -360,6 +361,96 @@ const login = asyncHandler(async (req, res) => {
   user.failedLoginAttempts = 0;
   user.lockUntil = null;
   user.lastLoginAt = lastLoginAt;
+
+  const token = signToken(user, session.sessionId);
+  setAuthCookie(res, token);
+  res.set("Cache-Control", "no-store");
+  res.json(authResponse(user, token));
+});
+
+const googleLogin = asyncHandler(async (req, res) => {
+  const identity = await verifyGoogleCredential(req.body.credential);
+
+  let user = await User.findOne({ googleSubject: identity.subject }).select(
+    "+googleSubject +emailVerificationToken +emailVerificationExpiresAt",
+  );
+
+  if (!user) {
+    user = await User.findOne({ email: identity.email }).select(
+      "+googleSubject +emailVerificationToken +emailVerificationExpiresAt",
+    );
+  }
+
+  if (user?.googleSubject && user.googleSubject !== identity.subject) {
+    const error = new Error(
+      "Este correo ya está asociado a otra cuenta de Google.",
+    );
+    error.statusCode = 409;
+    throw error;
+  }
+
+  if (!user) {
+    try {
+      user = await User.create({
+        name: identity.name,
+        email: identity.email,
+        password: crypto.randomBytes(48).toString("base64url"),
+        googleSubject: identity.subject,
+        role: "Cliente",
+        trainingMode: "independent",
+        onboarding: { status: "pending", completedAt: null },
+        profile: {
+          weight: null,
+          height: null,
+          goal: "mantenimiento",
+          experienceLevel: "beginner",
+          weeklyFrequency: 3,
+        },
+        emailVerificationRequired: false,
+        emailVerifiedAt: new Date(),
+      });
+    } catch (error) {
+      if (error?.code !== 11000) throw error;
+      user = await User.findOne({ email: identity.email }).select(
+        "+googleSubject +emailVerificationToken +emailVerificationExpiresAt",
+      );
+      if (
+        !user ||
+        (user.googleSubject && user.googleSubject !== identity.subject)
+      ) {
+        const conflict = new Error(
+          "No pudimos asociar esta cuenta de Google. Intenta nuevamente.",
+        );
+        conflict.statusCode = 409;
+        throw conflict;
+      }
+    }
+  }
+
+  if (!user.isActive) throw invalidCredentials();
+
+  const lastLoginAt = new Date();
+  const session = createSession(req);
+  const verifiedAt = user.emailVerifiedAt || lastLoginAt;
+  await persistLoginSession(user._id, session, {
+    googleSubject: identity.subject,
+    failedLoginAttempts: 0,
+    lockUntil: null,
+    lastLoginAt,
+    emailVerificationRequired: false,
+    emailVerificationToken: null,
+    emailVerificationExpiresAt: null,
+    emailVerifiedAt: verifiedAt,
+  });
+
+  user.googleSubject = identity.subject;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
+  user.lastLoginAt = lastLoginAt;
+  user.emailVerificationRequired = false;
+  user.emailVerificationToken = null;
+  user.emailVerificationExpiresAt = null;
+  user.emailVerifiedAt = verifiedAt;
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
@@ -795,6 +886,7 @@ const logoutAll = asyncHandler(async (req, res) => {
 export {
   register,
   login,
+  googleLogin,
   demoLogin,
   demoStatus,
   verifyEmail,

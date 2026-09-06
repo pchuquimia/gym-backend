@@ -10,6 +10,7 @@ import {
   getProfile,
   getProfileSummary,
   getSessions,
+  googleLogin,
   login,
   logout,
   logoutAll,
@@ -26,6 +27,7 @@ import {
 import { protect } from "../middleware/authMiddleware.js";
 import { passwordRules, validate } from "../middleware/validate.js";
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
+import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
 
 const router = Router();
 
@@ -47,7 +49,11 @@ const demoLimiter = rateLimit({
 });
 
 const emailRule = () =>
-  body("email").trim().isEmail().withMessage("Email invalido").normalizeEmail();
+  body("email")
+    .trim()
+    .isEmail()
+    .withMessage("Email invalido")
+    .customSanitizer(normalizeAuthEmail);
 
 const validateLogin = (req, res, next) => {
   const errors = validationResult(req);
@@ -101,6 +107,18 @@ router.post(
     validateLogin,
   ],
   login,
+);
+router.post(
+  "/google",
+  authLimiter,
+  [
+    body("credential")
+      .isString()
+      .isLength({ min: 100, max: 10000 })
+      .withMessage("Credencial de Google invalida"),
+    validate,
+  ],
+  googleLogin,
 );
 router.post(
   "/verify-email",
