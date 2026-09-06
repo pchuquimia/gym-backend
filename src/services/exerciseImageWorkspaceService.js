@@ -89,10 +89,10 @@ export const buildExerciseImageWorkspaceItems = ({
     .flatMap((exercise) => {
       const id = String(exercise._id || exercise.id || "");
       const usage = usageByExercise.get(id);
-      if (!usage) return [];
+      const exerciseUsage = usage || { routines: new Map(), plans: new Map() };
       const latestRequest = latestRequestByExercise.get(id);
-      const routineRows = [...usage.routines.values()];
-      const planRows = [...usage.plans.values()];
+      const routineRows = [...exerciseUsage.routines.values()];
+      const planRows = [...exerciseUsage.plans.values()];
       return [
         {
           id,
@@ -143,30 +143,13 @@ export const listExerciseImageWorkspace = async ({ query = "" } = {}) => {
       "name status weeklySchedule.routineId",
     ).lean(),
   ]);
-  const exerciseIds = [
-    ...new Set(
-      routines.flatMap((routine) =>
-        (routine.exercises || []).flatMap((item) => [
-          item.exerciseId,
-          ...(item.alternatives || []).map(
-            (alternative) => alternative.exerciseId,
-          ),
-        ]),
-      ),
-    ),
-  ].filter(Boolean);
-
-  const [exercises, requests] = exerciseIds.length
-    ? await Promise.all([
-        Exercise.find(
-          { _id: { $in: exerciseIds } },
-          "name localizedNames bodyRegion primaryMuscleGroup primaryMuscle muscle equipment image thumb media.image isActive",
-        ).lean(),
-        CodexImageRequest.find({ exerciseId: { $in: exerciseIds } })
-          .sort({ createdAt: -1 })
-          .lean(),
-      ])
-    : [[], []];
+  const [exercises, requests] = await Promise.all([
+    Exercise.find(
+      {},
+      "name localizedNames bodyRegion primaryMuscleGroup primaryMuscle muscle equipment image thumb media.image isActive type ownerId",
+    ).lean(),
+    CodexImageRequest.find({}).sort({ createdAt: -1 }).lean(),
+  ]);
 
   const normalizedQuery = String(query || "")
     .trim()

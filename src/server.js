@@ -1,5 +1,6 @@
 import { loadBackendEnvironment } from "./config/loadEnv.js";
 import { assertSecureJwtSecret } from "./config/security.js";
+import { assertEmailConfiguration } from "./config/email.js";
 
 loadBackendEnvironment();
 
@@ -18,6 +19,12 @@ for (const key of requiredEnv) {
 }
 
 assertSecureJwtSecret(process.env.JWT_SECRET);
+if (
+  String(process.env.EMAIL_PROVIDER || "").trim().toLowerCase() !== "" &&
+  String(process.env.EMAIL_PROVIDER || "").trim().toLowerCase() !== "disabled"
+) {
+  assertEmailConfiguration();
+}
 
 const [{ default: app }, { connectDB }] = await Promise.all([
   import("./app.js"),

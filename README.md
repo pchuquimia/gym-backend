@@ -68,12 +68,39 @@ API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ej
 | Worker metricas | `METRICS_WORKER_POLL_MS`, `METRICS_WORKER_MAX_ATTEMPTS`                                     |
 | Demo publica    | `DEMO_MODE`, `DEMO_WORKSPACE_HOURS`, `DEMO_HISTORY_TRAININGS`, `DEMO_CLIENT_URL`            |
 | Autenticación   | `EMAIL_VERIFICATION_REQUIRED`                                                               |
-| Correo          | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
+| Correo (Resend) | `EMAIL_PROVIDER`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_REPLY_TO`                          |
+| Correo (SMTP)   | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`          |
 | Cloudinary      | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` y carpetas asociadas |
 
 `DEV_ADMIN_LOGIN=true` habilita `/api/auth/dev-admin` exclusivamente cuando
 `NODE_ENV=development`. La ruta no se registra en staging ni producción,
 aunque la variable se configure por error.
+
+### Correo transaccional con Resend
+
+El backend utiliza Resend mediante su transporte SMTP compatible con
+Nodemailer. No se guarda la API key en el repositorio. En desarrollo y en el
+servicio backend de producción configura:
+
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_xxxxxxxxx
+EMAIL_FROM=Apex Performance <no-reply@mail.tudominio.com>
+EMAIL_REPLY_TO=soporte@tudominio.com
+EMAIL_VERIFICATION_REQUIRED=true
+```
+
+`EMAIL_FROM` debe pertenecer a un dominio verificado en Resend. Antes de
+habilitar el registro en producción, valida credenciales y conectividad con:
+
+```powershell
+npm run email:check
+```
+
+La integración cubre verificación y reenvío de verificación, recuperación de
+contraseña y confirmación del nuevo correo al cambiarlo desde el perfil. Si se
+requiere otro proveedor, se conserva la configuración SMTP genérica. Usa
+`EMAIL_PROVIDER=disabled` para mantener el correo deshabilitado explícitamente.
 
 La creación y rotación de administradores exige `ADMIN_EMAIL` y una
 `ADMIN_PASSWORD` fuerte inyectados de forma explícita. El script nunca imprime

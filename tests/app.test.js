@@ -56,4 +56,19 @@ describe("API shell", () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ enabled: false, roles: [] });
   });
+
+  test("el reenvio de verificacion falla claramente si correo esta deshabilitado", async () => {
+    const previousProvider = process.env.EMAIL_PROVIDER;
+    process.env.EMAIL_PROVIDER = "disabled";
+    try {
+      const response = await request(app)
+        .post("/api/auth/resend-verification")
+        .send({ email: "persona@example.com" });
+      expect(response.status).toBe(503);
+      expect(response.body.code).toBe("EMAIL_NOT_CONFIGURED");
+    } finally {
+      if (previousProvider === undefined) delete process.env.EMAIL_PROVIDER;
+      else process.env.EMAIL_PROVIDER = previousProvider;
+    }
+  });
 });

@@ -18,6 +18,7 @@ import {
   localizeExerciseReferences,
 } from "../utils/exerciseLocalization.js";
 import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
+import { isEmailConfigured } from "../config/email.js";
 
 const router = Router();
 const SUMMARY_FIELDS =
@@ -125,11 +126,7 @@ router.get("/bootstrap", async (req, res, next) => {
         profile: profileUser?.profile || {},
         security: profileUser?.security || {},
         capabilities: {
-          emailChange: Boolean(
-            process.env.SMTP_HOST &&
-              process.env.SMTP_USER &&
-              process.env.SMTP_PASSWORD,
-          ),
+          emailChange: isEmailConfigured(),
         },
       },
       intelligence: intelligenceResult.data,

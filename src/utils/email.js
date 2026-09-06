@@ -1,22 +1,22 @@
 import nodemailer from "nodemailer";
+import {
+  assertEmailConfiguration,
+  getEmailConfiguration,
+  isEmailConfigured,
+} from "../config/email.js";
 
-const smtpConfigured = () =>
-  Boolean(
-    process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_FROM,
-  );
+let cachedTransport = null;
+let cachedTransportKey = "";
 
-const createTransport = () =>
-  nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT),
-    secure: String(process.env.SMTP_SECURE).toLowerCase() === "true",
-    auth: process.env.SMTP_USER
-      ? {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASSWORD,
-        }
-      : undefined,
-  });
+const getTransport = () => {
+  const configuration = assertEmailConfiguration();
+  const nextKey = JSON.stringify(configuration.transport);
+  if (!cachedTransport || cachedTransportKey !== nextKey) {
+    cachedTransport = nodemailer.createTransport(configuration.transport);
+    cachedTransportKey = nextKey;
+  }
+  return { configuration, transport: cachedTransport };
+};
 
 const escapeHtml = (value) =>
   String(value)
@@ -27,16 +27,10 @@ const escapeHtml = (value) =>
     .replaceAll("'", "&#039;");
 
 export const sendPasswordResetEmail = async ({ email, name, resetUrl }) => {
-  if (!smtpConfigured()) {
-    const err = new Error(
-      "La recuperación por correo no está configurada temporalmente.",
-    );
-    err.statusCode = 503;
-    throw err;
-  }
-
-  await createTransport().sendMail({
-    from: process.env.SMTP_FROM,
+  const { configuration, transport } = getTransport();
+  return transport.sendMail({
+    from: configuration.from,
+    replyTo: configuration.replyTo || undefined,
     to: email,
     subject: "Restablece tu contraseña de Apex Performance",
     text: `Hola ${name}. Restablece tu contraseña desde este enlace: ${resetUrl}. El enlace vence en 30 minutos.`,
@@ -45,16 +39,10 @@ export const sendPasswordResetEmail = async ({ email, name, resetUrl }) => {
 };
 
 export const sendVerificationEmail = async ({ email, name, verifyUrl }) => {
-  if (!smtpConfigured()) {
-    const err = new Error(
-      "La verificación por correo no está configurada temporalmente.",
-    );
-    err.statusCode = 503;
-    throw err;
-  }
-
-  await createTransport().sendMail({
-    from: process.env.SMTP_FROM,
+  const { configuration, transport } = getTransport();
+  return transport.sendMail({
+    from: configuration.from,
+    replyTo: configuration.replyTo || undefined,
     to: email,
     subject: "Verifica tu cuenta de Apex Performance",
     text: `Hola ${name}. Verifica tu cuenta desde este enlace: ${verifyUrl}. El enlace vence en 24 horas.`,
@@ -62,4 +50,15 @@ export const sendVerificationEmail = async ({ email, name, verifyUrl }) => {
   });
 };
 
-export const isEmailConfigured = smtpConfigured;
+export const verifyEmailTransport = async () => {
+  const { transport } = getTransport();
+  return transport.verify();
+};
+
+export const resetEmailTransport = () => {
+  cachedTransport?.close?.();
+  cachedTransport = null;
+  cachedTransportKey = "";
+};
+
+export { getEmailConfiguration, isEmailConfigured };

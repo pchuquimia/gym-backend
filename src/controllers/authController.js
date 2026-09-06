@@ -136,6 +136,51 @@ const getClientUrl = () =>
     .trim()
     .replace(/\/$/, "");
 
+const requestEmailVerification = asyncHandler(async (req, res) => {
+  if (!isEmailConfigured()) {
+    const err = new Error(
+      "La verificación por correo no está configurada temporalmente.",
+    );
+    err.statusCode = 503;
+    err.code = "EMAIL_NOT_CONFIGURED";
+    throw err;
+  }
+
+  const user = await User.findOne({ email: req.body.email }).select(
+    "+emailVerificationToken +emailVerificationExpiresAt",
+  );
+  if (!user || !user.emailVerificationRequired) {
+    return res.json({ ok: true });
+  }
+
+  const previousToken = user.emailVerificationToken || null;
+  const previousExpiration = user.emailVerificationExpiresAt || null;
+  const token = crypto.randomBytes(32).toString("hex");
+  user.emailVerificationToken = crypto
+    .createHash("sha256")
+    .update(token)
+    .digest("hex");
+  user.emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  await user.save({ validateBeforeSave: false });
+
+  const verifyUrl = `${getClientUrl()}/verificar-correo?token=${token}`;
+  try {
+    await sendVerificationEmail({
+      email: user.email,
+      name: user.name,
+      verifyUrl,
+    });
+  } catch (error) {
+    await User.findByIdAndUpdate(user._id, {
+      emailVerificationToken: previousToken,
+      emailVerificationExpiresAt: previousExpiration,
+    });
+    console.error("No se pudo reenviar el correo de verificación", error);
+  }
+
+  return res.json({ ok: true });
+});
+
 const requestPasswordReset = asyncHandler(async (req, res) => {
   if (!isEmailConfigured()) {
     const err = new Error(
@@ -753,6 +798,7 @@ export {
   demoLogin,
   demoStatus,
   verifyEmail,
+  requestEmailVerification,
   requestPasswordReset,
   resetPassword,
   devAdminLogin,

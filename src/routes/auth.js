@@ -15,6 +15,7 @@ import {
   logoutAll,
   me,
   register,
+  requestEmailVerification,
   requestPasswordReset,
   resetPassword,
   updateProfile,
@@ -109,6 +110,12 @@ router.post(
     validate,
   ],
   verifyEmail,
+);
+router.post(
+  "/resend-verification",
+  authLimiter,
+  [emailRule(), validate],
+  requestEmailVerification,
 );
 
 router.post(
