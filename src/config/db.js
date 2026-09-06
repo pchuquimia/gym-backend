@@ -16,7 +16,7 @@ export const getMongoConnectionOptions = () => {
     maxIdleTimeMS: 60_000,
     heartbeatFrequencyMS: 10_000,
     waitQueueTimeoutMS: 5_000,
-    appName: "apex-performance-api",
+    appName: "rirfit-api",
     maxPoolSize,
     minPoolSize: Number.isFinite(configuredMinPoolSize)
       ? Math.max(0, Math.min(configuredMinPoolSize, maxPoolSize))

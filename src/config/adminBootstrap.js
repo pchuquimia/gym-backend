@@ -8,7 +8,7 @@ export const getAdminBootstrapConfig = (
 ) => {
   const email = normalizeEmail(env.ADMIN_EMAIL);
   const password = String(env.ADMIN_PASSWORD || "");
-  const name = String(env.ADMIN_NAME || "Administrador APEX").trim();
+  const name = String(env.ADMIN_NAME || "Administrador RIRFIT").trim();
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new Error("ADMIN_EMAIL es obligatorio y debe ser valido");

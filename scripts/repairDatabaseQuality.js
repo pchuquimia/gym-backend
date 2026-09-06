@@ -18,7 +18,7 @@ if (!process.env.MONGO_URI) throw new Error("MONGO_URI no esta configurado");
 await mongoose.connect(process.env.MONGO_URI, {
   ...getMongoConnectionOptions(),
   minPoolSize: 0,
-  appName: "apex-performance-database-quality",
+  appName: "rirfit-database-quality",
 });
 
 const db = mongoose.connection.db;

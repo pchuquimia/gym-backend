@@ -27,6 +27,8 @@ import { persistPlanStatus } from "../services/trainingPlanTransactionService.js
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
+const COACH_CODE_PREFIX = "RIRFIT";
+const LEGACY_COACH_CODE_PREFIX = "APEX";
 
 router.use(protect);
 
@@ -34,13 +36,24 @@ const canonicalCoachCode = (value) => {
   const compact = String(value || "")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "");
-  if (!compact.startsWith("APEX") || compact.length !== 12) return "";
-  return `APEX-${compact.slice(4)}`;
+  if (
+    compact.startsWith(COACH_CODE_PREFIX) &&
+    compact.length === COACH_CODE_PREFIX.length + 8
+  ) {
+    return `${COACH_CODE_PREFIX}-${compact.slice(COACH_CODE_PREFIX.length)}`;
+  }
+  if (
+    compact.startsWith(LEGACY_COACH_CODE_PREFIX) &&
+    compact.length === LEGACY_COACH_CODE_PREFIX.length + 8
+  ) {
+    return `${LEGACY_COACH_CODE_PREFIX}-${compact.slice(LEGACY_COACH_CODE_PREFIX.length)}`;
+  }
+  return "";
 };
 
 const createCoachCode = async () => {
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const code = `APEX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+    const code = `${COACH_CODE_PREFIX}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
     if (!(await User.exists({ coachCode: code }))) return code;
   }
   throw new Error("No se pudo generar un código de coach");
@@ -48,7 +61,12 @@ const createCoachCode = async () => {
 
 const ensureCoachCode = async (userId) => {
   const current = await User.findById(userId, "coachCode").lean();
-  if (current?.coachCode) return current.coachCode;
+  if (
+    current?.coachCode &&
+    !current.coachCode.startsWith(`${LEGACY_COACH_CODE_PREFIX}-`)
+  ) {
+    return current.coachCode;
+  }
   const code = await createCoachCode();
   const updated = await User.findByIdAndUpdate(
     userId,

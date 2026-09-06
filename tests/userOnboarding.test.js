@@ -5,7 +5,7 @@ describe("user onboarding", () => {
     const user = new User({
       name: "Atleta Nuevo",
       email: "nuevo@example.com",
-      password: "Apex1234",
+      password: "Rirfit1234",
       role: "Cliente",
       onboarding: { status: "pending" },
       profile: { weight: null, height: null },
@@ -21,7 +21,7 @@ describe("user onboarding", () => {
     const user = new User({
       name: "Atleta Existente",
       email: "existente@example.com",
-      password: "Apex1234",
+      password: "Rirfit1234",
       role: "Cliente",
     });
 

@@ -73,7 +73,7 @@ describe("Database quality guards", () => {
     expect(mongoose.get("runValidators")).toBe(true);
     expect(getMongoConnectionOptions()).toMatchObject({
       waitQueueTimeoutMS: 5_000,
-      appName: "apex-performance-api",
+      appName: "rirfit-api",
     });
   });
 });

@@ -10,15 +10,15 @@ describe("email configuration", () => {
     const configuration = getEmailConfiguration({
       EMAIL_PROVIDER: "resend",
       RESEND_API_KEY: "re_test_key",
-      EMAIL_FROM: "Apex Performance <no-reply@mail.apex.test>",
-      EMAIL_REPLY_TO: "soporte@apex.test",
+      EMAIL_FROM: "RIRFIT <no-reply@mail.rirfit.test>",
+      EMAIL_REPLY_TO: "soporte@rirfit.test",
     });
 
     expect(configuration).toMatchObject({
       configured: true,
       provider: "resend",
-      from: "Apex Performance <no-reply@mail.apex.test>",
-      replyTo: "soporte@apex.test",
+      from: "RIRFIT <no-reply@mail.rirfit.test>",
+      replyTo: "soporte@rirfit.test",
       transport: {
         host: "smtp.resend.com",
         port: 465,
@@ -28,7 +28,7 @@ describe("email configuration", () => {
     });
     expect(isEmailConfigured({
       RESEND_API_KEY: "re_test_key",
-      EMAIL_FROM: "no-reply@mail.apex.test",
+      EMAIL_FROM: "no-reply@mail.rirfit.test",
     })).toBe(true);
   });
 

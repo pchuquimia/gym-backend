@@ -131,7 +131,7 @@ const createDemoUser = async ({
   const compactWorkspace = workspaceId.replaceAll("-", "").slice(0, 16);
   return User.create({
     name: suffix ? `${ROLE_LABELS[roleKey]} - ${suffix}` : ROLE_LABELS[roleKey],
-    email: `demo-${roleKey}-${suffix || "principal"}-${compactWorkspace}@demo.apex.local`,
+    email: `demo-${roleKey}-${suffix || "principal"}-${compactWorkspace}@demo.rirfit.local`,
     password: `Demo#${crypto.randomUUID()}!`,
     role,
     isActive: true,

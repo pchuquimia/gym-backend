@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "c3d72663-a926-4615-981c-3c341659031b",
-    "name": "Apex Performance API",
+    "name": "RIRFIT API",
     "description": "Pruebas de contrato para la API local. Ejecutar en orden para conservar la cookie de la sesion administrativa de desarrollo.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

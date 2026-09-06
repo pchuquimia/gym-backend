@@ -73,14 +73,14 @@ describe("public demo safety", () => {
 
   test("en produccion limita la demo al frontend dedicado", () => {
     process.env.NODE_ENV = "production";
-    process.env.DEMO_CLIENT_URL = "https://demo.apex.test";
+    process.env.DEMO_CLIENT_URL = "https://demo.rirfit.test";
     const requestFrom = (origin) => ({ get: () => origin });
 
     expect(
-      isDemoRequestOriginAllowed(requestFrom("https://demo.apex.test")),
+      isDemoRequestOriginAllowed(requestFrom("https://demo.rirfit.test")),
     ).toBe(true);
     expect(
-      isDemoRequestOriginAllowed(requestFrom("https://app.apex.test")),
+      isDemoRequestOriginAllowed(requestFrom("https://app.rirfit.test")),
     ).toBe(false);
     expect(isDemoRequestOriginAllowed(requestFrom(""))).toBe(false);
   });

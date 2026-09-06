@@ -1,6 +1,6 @@
-# Apex Performance - Backend
+# RIRFIT - Backend
 
-API de Apex Performance. Gestiona autenticación, usuarios, coaches, atletas, ejercicios, rutinas, planificaciones, entrenamientos, analítica, pesajes, fotografías y archivos multimedia.
+API de RIRFIT. Gestiona autenticación, usuarios, coaches, atletas, ejercicios, rutinas, planificaciones, entrenamientos, analítica, pesajes, fotografías y archivos multimedia.
 
 ## Tecnologías
 
@@ -85,8 +85,8 @@ servicio backend de producción configura:
 ```env
 EMAIL_PROVIDER=resend
 RESEND_API_KEY=re_xxxxxxxxx
-EMAIL_FROM=Apex Performance <no-reply@mail.tudominio.com>
-EMAIL_REPLY_TO=soporte@tudominio.com
+EMAIL_FROM=RIRFIT <no-reply@mail.rirfit.com>
+EMAIL_REPLY_TO=soporte@rirfit.com
 EMAIL_VERIFICATION_REQUIRED=true
 ```
 
