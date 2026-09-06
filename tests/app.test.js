@@ -86,4 +86,30 @@ describe("API shell", () => {
       else process.env.GOOGLE_CLIENT_ID = previousClientId;
     }
   });
+
+  test("rechaza una preferencia de correo que no sea booleana", async () => {
+    const response = await request(app).post("/api/auth/register").send({
+      name: "Atleta Nuevo",
+      email: "atleta@example.com",
+      password: "Rirfit1234",
+      confirmPassword: "Rirfit1234",
+      emailMarketingConsent: "quizas",
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "emailMarketingConsent" }),
+      ]),
+    );
+  });
+
+  test("rechaza identificadores de acceso con formato invalido", async () => {
+    const response = await request(app).post("/api/auth/login").send({
+      identifier: "usuario con espacios",
+      password: "Rirfit1234",
+    });
+
+    expect(response.status).toBe(401);
+  });
 });

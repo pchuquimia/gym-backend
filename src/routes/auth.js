@@ -1,6 +1,7 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { body, validationResult } from "express-validator";
+import validator from "validator";
 import {
   changePassword,
   completeOnboarding,
@@ -28,6 +29,11 @@ import { protect } from "../middleware/authMiddleware.js";
 import { passwordRules, validate } from "../middleware/validate.js";
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
+import {
+  isValidUsername,
+  normalizeUsername,
+  USERNAME_PATTERN,
+} from "../utils/normalizeUsername.js";
 
 const router = Router();
 
@@ -54,6 +60,30 @@ const emailRule = () =>
     .isEmail()
     .withMessage("Email invalido")
     .customSanitizer(normalizeAuthEmail);
+
+const usernameRule = () =>
+  body("username")
+    .trim()
+    .customSanitizer(normalizeUsername)
+    .matches(USERNAME_PATTERN)
+    .withMessage(
+      "El usuario debe tener entre 3 y 20 caracteres: letras, números o guion bajo",
+    );
+
+const loginIdentifierRule = () =>
+  body("identifier")
+    .customSanitizer((value, { req }) => value ?? req.body.email)
+    .trim()
+    .notEmpty()
+    .custom((value) =>
+      value.includes("@") ? validator.isEmail(value) : isValidUsername(value),
+    )
+    .withMessage("Usuario o correo invalido")
+    .customSanitizer((value) =>
+      value.includes("@")
+        ? normalizeAuthEmail(value)
+        : normalizeUsername(value),
+    );
 
 const validateLogin = (req, res, next) => {
   const errors = validationResult(req);
@@ -82,9 +112,11 @@ router.post(
   authLimiter,
   [
     body("name")
+      .optional()
       .trim()
       .isLength({ min: 2, max: 80 })
       .withMessage("Nombre invalido"),
+    usernameRule(),
     emailRule(),
     body("password")
       .isString()
@@ -93,6 +125,11 @@ router.post(
     body("confirmPassword")
       .custom((value, { req }) => value === req.body.password)
       .withMessage("Las contrasenas no coinciden"),
+    body("emailMarketingConsent")
+      .optional()
+      .isBoolean()
+      .withMessage("Preferencia de correo invalida")
+      .toBoolean(),
     validate,
   ],
   register,
@@ -102,7 +139,7 @@ router.post(
   "/login",
   authLimiter,
   [
-    emailRule(),
+    loginIdentifierRule(),
     body("password").isString().notEmpty().withMessage("Contrasena requerida"),
     validateLogin,
   ],
@@ -116,6 +153,11 @@ router.post(
       .isString()
       .isLength({ min: 100, max: 10000 })
       .withMessage("Credencial de Google invalida"),
+    body("emailMarketingConsent")
+      .optional()
+      .isBoolean()
+      .withMessage("Preferencia de correo invalida")
+      .toBoolean(),
     validate,
   ],
   googleLogin,
@@ -249,6 +291,11 @@ router.patch(
   "/onboarding",
   protect,
   [
+    body("name")
+      .trim()
+      .isLength({ min: 2, max: 80 })
+      .withMessage("Nombre invalido"),
+    usernameRule(),
     body("goal")
       .isIn(["volumen", "mantenimiento", "definicion"])
       .withMessage("Objetivo invalido"),

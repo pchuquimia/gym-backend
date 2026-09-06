@@ -7,6 +7,7 @@ import {
   SUBSCRIPTION_STATUSES,
 } from "../utils/subscription.js";
 import { maxArrayLength } from "./schemaValidation.js";
+import { USERNAME_PATTERN } from "../utils/normalizeUsername.js";
 
 export const USER_ROLES = ["Admin", "Entrenador", "Cliente"];
 export const TRAINING_MODES = ["independent", "coach_managed"];
@@ -26,6 +27,17 @@ const UserSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      index: true,
+    },
+    username: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+      minlength: 3,
+      maxlength: 20,
+      match: USERNAME_PATTERN,
       index: true,
     },
     password: {
@@ -159,6 +171,10 @@ const UserSchema = new mongoose.Schema(
       biometricEnabled: { type: Boolean, default: true },
       twoFactorEnabled: { type: Boolean, default: false },
     },
+    emailPreferences: {
+      productUpdates: { type: Boolean, default: false },
+      consentedAt: { type: Date, default: null },
+    },
     passwordChangedAt: {
       type: Date,
       default: null,
@@ -228,6 +244,7 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     id: this._id.toString(),
     name: this.name,
     email: this.email,
+    username: this.username || null,
     role: this.role,
     trainingMode:
       this.role === "Cliente" && this.assignedTrainerId
@@ -247,6 +264,7 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
     lastLoginAt: this.lastLoginAt,
     profile: this.profile,
     security: this.security,
+    emailPreferences: this.emailPreferences,
     passwordChangedAt: this.passwordChangedAt,
     emailVerificationRequired: this.emailVerificationRequired,
     emailVerifiedAt: this.emailVerifiedAt,

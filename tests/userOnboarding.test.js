@@ -12,9 +12,21 @@ describe("user onboarding", () => {
     });
 
     expect(user.toSafeJSON()).toMatchObject({
+      username: null,
       onboarding: { status: "pending", completedAt: null },
       profile: { weight: null, height: null },
     });
+  });
+
+  test("normaliza y expone el nombre de usuario", () => {
+    const user = new User({
+      name: "Atleta",
+      email: "usuario@example.com",
+      username: "Juan_Fit",
+      password: "Rirfit1234",
+    });
+
+    expect(user.toSafeJSON().username).toBe("juan_fit");
   });
 
   test("mantiene completas las cuentas heredadas sin estado explicito", () => {

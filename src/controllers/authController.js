@@ -19,6 +19,8 @@ import {
   isDemoRole,
 } from "../utils/demoMode.js";
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
+import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
+import { normalizeUsername } from "../utils/normalizeUsername.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -261,11 +263,25 @@ const resetPassword = asyncHandler(async (req, res) => {
 
 const register = asyncHandler(async (req, res) => {
   const { name, email, password } = req.body;
+  const username = normalizeUsername(req.body.username);
+  const accountName = String(name || "Atleta").trim() || "Atleta";
+  const emailMarketingConsent = req.body.emailMarketingConsent === true;
 
-  const existing = await User.exists({ email });
-  if (existing) {
+  const existing = await User.findOne({
+    $or: [{ email }, { username }],
+  })
+    .select("email username")
+    .lean();
+  if (existing?.email === email) {
     const err = new Error("El email ya está registrado");
     err.statusCode = 409;
+    err.code = "EMAIL_TAKEN";
+    throw err;
+  }
+  if (existing?.username === username) {
+    const err = new Error("El nombre de usuario ya está en uso");
+    err.statusCode = 409;
+    err.code = "USERNAME_TAKEN";
     throw err;
   }
 
@@ -277,12 +293,17 @@ const register = asyncHandler(async (req, res) => {
     ? crypto.randomBytes(32).toString("hex")
     : "";
   const user = await User.create({
-    name,
+    name: accountName,
     email,
+    username,
     password,
     role: "Cliente",
     trainingMode: "independent",
     onboarding: { status: "pending", completedAt: null },
+    emailPreferences: {
+      productUpdates: emailMarketingConsent,
+      consentedAt: emailMarketingConsent ? new Date() : null,
+    },
     profile: {
       weight: null,
       height: null,
@@ -328,8 +349,12 @@ const register = asyncHandler(async (req, res) => {
 });
 
 const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email }).select("+password");
+  const { password } = req.body;
+  const identifier = String(req.body.identifier || req.body.email || "").trim();
+  const query = identifier.includes("@")
+    ? { email: normalizeAuthEmail(identifier) }
+    : { username: normalizeUsername(identifier) };
+  const user = await User.findOne(query).select("+password");
 
   if (!user) throw invalidCredentials();
   if (!user.isActive) throw invalidCredentials();
@@ -370,6 +395,11 @@ const login = asyncHandler(async (req, res) => {
 
 const googleLogin = asyncHandler(async (req, res) => {
   const identity = await verifyGoogleCredential(req.body.credential);
+  const hasEmailMarketingConsent = Object.prototype.hasOwnProperty.call(
+    req.body,
+    "emailMarketingConsent",
+  );
+  const emailMarketingConsent = req.body.emailMarketingConsent === true;
 
   let user = await User.findOne({ googleSubject: identity.subject }).select(
     "+googleSubject +emailVerificationToken +emailVerificationExpiresAt",
@@ -399,6 +429,10 @@ const googleLogin = asyncHandler(async (req, res) => {
         role: "Cliente",
         trainingMode: "independent",
         onboarding: { status: "pending", completedAt: null },
+        emailPreferences: {
+          productUpdates: emailMarketingConsent,
+          consentedAt: emailMarketingConsent ? new Date() : null,
+        },
         profile: {
           weight: null,
           height: null,
@@ -432,7 +466,7 @@ const googleLogin = asyncHandler(async (req, res) => {
   const lastLoginAt = new Date();
   const session = createSession(req);
   const verifiedAt = user.emailVerifiedAt || lastLoginAt;
-  await persistLoginSession(user._id, session, {
+  const loginFields = {
     googleSubject: identity.subject,
     failedLoginAttempts: 0,
     lockUntil: null,
@@ -441,7 +475,14 @@ const googleLogin = asyncHandler(async (req, res) => {
     emailVerificationToken: null,
     emailVerificationExpiresAt: null,
     emailVerifiedAt: verifiedAt,
-  });
+  };
+  if (hasEmailMarketingConsent) {
+    loginFields["emailPreferences.productUpdates"] = emailMarketingConsent;
+    loginFields["emailPreferences.consentedAt"] = emailMarketingConsent
+      ? lastLoginAt
+      : null;
+  }
+  await persistLoginSession(user._id, session, loginFields);
 
   user.googleSubject = identity.subject;
   user.failedLoginAttempts = 0;
@@ -451,6 +492,12 @@ const googleLogin = asyncHandler(async (req, res) => {
   user.emailVerificationToken = null;
   user.emailVerificationExpiresAt = null;
   user.emailVerifiedAt = verifiedAt;
+  if (hasEmailMarketingConsent) {
+    user.emailPreferences = {
+      productUpdates: emailMarketingConsent,
+      consentedAt: emailMarketingConsent ? lastLoginAt : null,
+    };
+  }
 
   const token = signToken(user, session.sessionId);
   setAuthCookie(res, token);
@@ -786,10 +833,23 @@ const updateProfile = asyncHandler(async (req, res) => {
 });
 
 const completeOnboarding = asyncHandler(async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const usernameTaken = await User.exists({
+    _id: { $ne: req.user.id },
+    username,
+  });
+  if (usernameTaken) {
+    const err = new Error("El nombre de usuario ya está en uso");
+    err.statusCode = 409;
+    err.code = "USERNAME_TAKEN";
+    throw err;
+  }
   const user = await User.findOneAndUpdate(
     { _id: req.user.id, role: "Cliente" },
     {
       $set: {
+        name: req.body.name,
+        username,
         "profile.goal": req.body.goal,
         "profile.experienceLevel": req.body.experienceLevel,
         "profile.weeklyFrequency": req.body.weeklyFrequency,
