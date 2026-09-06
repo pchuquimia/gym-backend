@@ -13,6 +13,7 @@ import {
   getSessions,
   googleCallback,
   googleLogin,
+  googlePrepare,
   facebookCallback,
   facebookLogin,
   login,
@@ -150,6 +151,7 @@ router.post(
   login,
 );
 router.post("/google/callback", authLimiter, googleCallback);
+router.get("/google/prepare", authLimiter, googlePrepare);
 router.post(
   "/google",
   authLimiter,

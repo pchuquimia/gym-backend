@@ -146,6 +146,8 @@ const getClientUrl = () =>
 const FACEBOOK_STATE_COOKIE = "rirfit_facebook_oauth_state";
 const FACEBOOK_REMEMBER_COOKIE = "rirfit_facebook_oauth_remember";
 const FACEBOOK_MARKETING_COOKIE = "rirfit_facebook_oauth_marketing";
+const GOOGLE_STATE_COOKIE = "rirfit_google_oauth_state";
+const GOOGLE_REMEMBER_COOKIE = "rirfit_google_oauth_remember";
 const facebookOAuthCookieOptions = () => ({
   httpOnly: true,
   secure: process.env.NODE_ENV === "production",
@@ -160,6 +162,21 @@ const clearFacebookOAuthCookies = (res) => {
   res.clearCookie(FACEBOOK_STATE_COOKIE, options);
   res.clearCookie(FACEBOOK_REMEMBER_COOKIE, options);
   res.clearCookie(FACEBOOK_MARKETING_COOKIE, options);
+};
+
+const googleOAuthCookieOptions = () => ({
+  httpOnly: true,
+  secure: process.env.NODE_ENV === "production",
+  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+  maxAge: 10 * 60 * 1000,
+  path: "/api/auth/google",
+});
+
+const clearGoogleOAuthCookies = (res) => {
+  const options = googleOAuthCookieOptions();
+  delete options.maxAge;
+  res.clearCookie(GOOGLE_STATE_COOKIE, options);
+  res.clearCookie(GOOGLE_REMEMBER_COOKIE, options);
 };
 
 const getFacebookClientUrl = (req) => {
@@ -714,13 +731,40 @@ const googleLogin = asyncHandler(async (req, res) => {
   res.json(authResponse(user, token));
 });
 
+const googlePrepare = (req, res) => {
+  const state = crypto.randomBytes(32).toString("hex");
+  const options = googleOAuthCookieOptions();
+  res.cookie(GOOGLE_STATE_COOKIE, state, options);
+  res.cookie(
+    GOOGLE_REMEMBER_COOKIE,
+    req.query.remember === "1" ? "1" : "0",
+    options,
+  );
+  res.set("Cache-Control", "no-store");
+  return res.json({ state });
+};
+
 const googleCallback = async (req, res) => {
   try {
+    const expectedState = String(req.cookies?.[GOOGLE_STATE_COOKIE] || "");
+    const suppliedState = String(req.body?.state || "");
+    const expectedStateBuffer = Buffer.from(expectedState);
+    const suppliedStateBuffer = Buffer.from(suppliedState);
+    const remember = req.cookies?.[GOOGLE_REMEMBER_COOKIE] === "1";
     const csrfCookie = String(req.cookies?.g_csrf_token || "");
     const csrfBody = String(req.body?.g_csrf_token || "");
     const credential = String(req.body?.credential || "");
+    clearGoogleOAuthCookies(res);
 
-    if (!csrfCookie || !csrfBody || csrfCookie !== csrfBody) {
+    if (
+      !expectedState ||
+      !suppliedState ||
+      expectedStateBuffer.length !== suppliedStateBuffer.length ||
+      !crypto.timingSafeEqual(expectedStateBuffer, suppliedStateBuffer)
+    ) {
+      return googleRedirect(res, { google_error: "invalid_state" });
+    }
+    if (csrfCookie && csrfBody && csrfCookie !== csrfBody) {
       return googleRedirect(res, { google_error: "invalid_csrf" });
     }
     if (credential.length < 100 || credential.length > 10000) {
@@ -728,7 +772,7 @@ const googleCallback = async (req, res) => {
     }
 
     const { token } = await completeGoogleLogin(req);
-    setAuthCookie(res, token, { persistent: req.body?.state === "remember" });
+    setAuthCookie(res, token, { persistent: remember });
     res.set("Cache-Control", "no-store");
     return googleRedirect(res, { google: "success" });
   } catch (error) {
@@ -1187,6 +1231,7 @@ export {
   register,
   login,
   googleLogin,
+  googlePrepare,
   googleCallback,
   facebookLogin,
   facebookCallback,

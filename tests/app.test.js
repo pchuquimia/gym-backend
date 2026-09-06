@@ -87,7 +87,22 @@ describe("API shell", () => {
     }
   });
 
-  test("el callback de Google rechaza un POST sin token CSRF y vuelve al frontend", async () => {
+  test("Google prepara un estado seguro antes de iniciar la redireccion", async () => {
+    const response = await request(app).get(
+      "/api/auth/google/prepare?remember=1",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.state).toMatch(/^[a-f0-9]{64}$/);
+    expect(response.headers["set-cookie"].join(";")).toMatch(
+      /rirfit_google_oauth_state=/,
+    );
+    expect(response.headers["set-cookie"].join(";")).toMatch(
+      /rirfit_google_oauth_remember=1/,
+    );
+  });
+
+  test("el callback de Google rechaza un POST sin estado y vuelve al frontend", async () => {
     const previousClientUrl = process.env.CLIENT_URL;
     process.env.CLIENT_URL = "https://rirfit.com";
     try {
@@ -98,7 +113,7 @@ describe("API shell", () => {
 
       expect(response.status).toBe(303);
       expect(response.headers.location).toBe(
-        "https://rirfit.com/?google_error=invalid_csrf",
+        "https://rirfit.com/?google_error=invalid_state",
       );
     } finally {
       if (previousClientUrl === undefined) delete process.env.CLIENT_URL;
@@ -114,11 +129,15 @@ describe("API shell", () => {
     try {
       const response = await request(app)
         .post("/api/auth/google/callback")
-        .set("Cookie", "g_csrf_token=token-seguro")
+        .set(
+          "Cookie",
+          "g_csrf_token=token-seguro; rirfit_google_oauth_state=estado-seguro; rirfit_google_oauth_remember=0",
+        )
         .type("form")
         .send({
           credential: "x".repeat(100),
           g_csrf_token: "token-seguro",
+          state: "estado-seguro",
         });
 
       expect(response.status).toBe(303);
