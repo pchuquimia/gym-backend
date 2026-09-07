@@ -6,7 +6,12 @@ import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
 import { buildTrainingIntelligence } from "../utils/trainingIntelligence.js";
-import { deleteCache, getCache, setCache } from "./cacheService.js";
+import {
+  deleteCache,
+  deleteCacheByPrefix,
+  getCache,
+  setCache,
+} from "./cacheService.js";
 
 const RECORD_LIMIT = 2000;
 const INTELLIGENCE_CACHE_TTL_SECONDS = 60;
@@ -173,9 +178,8 @@ export const markAthleteIntelligenceDirty = async (ownerId, today) => {
     deleteCache(
       intelligenceCacheKey(ownerId, false, today),
       intelligenceCacheKey(ownerId, true, today),
-      `dashboard:${ownerId}:${ownerId}:basic:${today}`,
-      `dashboard:${ownerId}:${ownerId}:advanced:${today}`,
     ),
+    deleteCacheByPrefix(`dashboard:${ownerId}:`),
   ]);
 };
 

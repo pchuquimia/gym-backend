@@ -102,6 +102,38 @@ export const deleteCache = async (...keys) => {
   }
 };
 
+export const deleteCacheByPrefix = async (prefix) => {
+  const normalizedPrefix = String(prefix || "").trim();
+  if (!normalizedPrefix) return;
+
+  [...memoryCache.keys()]
+    .filter((key) => key.startsWith(normalizedPrefix))
+    .forEach((key) => memoryCache.delete(key));
+
+  const redis = await getRedis();
+  if (!redis) return;
+
+  try {
+    let pendingKeys = [];
+    for await (const entry of redis.scanIterator({
+      MATCH: `${normalizedPrefix}*`,
+      COUNT: 100,
+    })) {
+      const keys = Array.isArray(entry) ? entry : [entry];
+      pendingKeys.push(...keys.filter(Boolean));
+      if (pendingKeys.length >= 100) {
+        await redis.del(pendingKeys);
+        pendingKeys = [];
+      }
+    }
+    if (pendingKeys.length) await redis.del(pendingKeys);
+  } catch (error) {
+    console.warn(
+      `[cache] No se pudo invalidar el prefijo ${normalizedPrefix}: ${error.message}`,
+    );
+  }
+};
+
 export const getCacheStatus = () => ({
   provider: String(process.env.REDIS_URL || "").trim() ? "redis" : "memory",
   connected: Boolean(redisClient?.isReady),

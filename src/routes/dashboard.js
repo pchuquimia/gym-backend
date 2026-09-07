@@ -49,7 +49,7 @@ router.get("/bootstrap", async (req, res, next) => {
     const advanced =
       hasPremiumFeature(req.user, PREMIUM_FEATURES.LOAD_RECOVERY) &&
       hasPremiumFeature(req.user, PREMIUM_FEATURES.EXERCISE_PROGRESSION);
-    const bootstrapCacheKey = `dashboard:${req.user.id}:${ownerId}:${advanced ? "advanced" : "basic"}:${today}`;
+    const bootstrapCacheKey = `dashboard:${ownerId}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}`;
     const cachedBootstrap = await getCache(bootstrapCacheKey);
     if (cachedBootstrap) {
       res.set("Cache-Control", "private, no-store");
