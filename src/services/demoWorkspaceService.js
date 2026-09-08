@@ -9,6 +9,7 @@ import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
+import HydrationEntry from "../models/HydrationEntry.js";
 import {
   processPhotoAssetCleanupJobs,
   queuePhotoAssetCleanup,
@@ -473,6 +474,10 @@ export const deleteDemoWorkspace = async (workspaceId) => {
         { session: dbSession },
       );
       await WeightEntry.deleteMany(
+        { ownerId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await HydrationEntry.deleteMany(
         { ownerId: { $in: ownerIds } },
         { session: dbSession },
       );

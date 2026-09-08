@@ -5,6 +5,7 @@ import {
 } from "../middleware/authMiddleware.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
 import AthleteDailyMetric from "../models/AthleteDailyMetric.js";
+import HydrationEntry from "../models/HydrationEntry.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
 import Training from "../models/Training.js";
@@ -65,6 +66,7 @@ router.get("/bootstrap", async (req, res, next) => {
       activePlan,
       dailyMetrics,
       weighIns,
+      hydrationEntries,
       profileUser,
       intelligenceResult,
     ] = await measureDatabase(res, () =>
@@ -87,7 +89,10 @@ router.get("/bootstrap", async (req, res, next) => {
           .limit(120)
           .lean(),
         WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(2).lean(),
-        User.findById(req.user.id).select("profile security").lean(),
+        HydrationEntry.find({ ownerId, dateKey: today })
+          .sort({ createdAt: 1, _id: 1 })
+          .lean(),
+        User.findById(ownerId).select("profile security").lean(),
         advanced
           ? getAthleteIntelligence({ ownerId, advanced, today })
           : Promise.resolve({ data: null, source: "disabled" }),
@@ -101,6 +106,14 @@ router.get("/bootstrap", async (req, res, next) => {
     const localizedDetails = localized.slice(0, details.length);
     const localizedRoutines = localized.slice(details.length);
     const todayWeighIn = weighIns.find((entry) => entry.dateKey === today);
+    const hydrationGoalMl = Math.min(
+      6000,
+      Math.max(500, Number(profileUser?.profile?.hydrationGoalMl) || 2500),
+    );
+    const hydrationTotalMl = hydrationEntries.reduce(
+      (sum, entry) => sum + Number(entry.amountMl || 0),
+      0,
+    );
 
     const response = {
       ownerId,
@@ -121,6 +134,17 @@ router.get("/bootstrap", async (req, res, next) => {
           latest: weighIns[0] || null,
           previous: weighIns[1] || null,
         },
+      },
+      todayHydration: {
+        dateKey: today,
+        totalMl: hydrationTotalMl,
+        goalMl: hydrationGoalMl,
+        remainingMl: Math.max(0, hydrationGoalMl - hydrationTotalMl),
+        completed: hydrationTotalMl >= hydrationGoalMl,
+        progress: Math.min(
+          100,
+          Math.round((hydrationTotalMl / hydrationGoalMl) * 100),
+        ),
       },
       profile: {
         profile: profileUser?.profile || {},

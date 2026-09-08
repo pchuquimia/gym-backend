@@ -160,6 +160,7 @@ const UserSchema = new mongoose.Schema(
       },
       weeklyFrequency: { type: Number, min: 1, max: 7, default: 3 },
       calories: { type: Number, default: 2500 },
+      hydrationGoalMl: { type: Number, min: 500, max: 6000, default: 2500 },
       units: { type: String, enum: ["metric", "imperial"], default: "metric" },
       language: { type: String, enum: ["es", "en"], default: "es" },
       privacy: {

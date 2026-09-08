@@ -17,6 +17,7 @@ import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import PlanTemplate from "../models/PlanTemplate.js";
 import WeightEntry from "../models/WeightEntry.js";
+import HydrationEntry from "../models/HydrationEntry.js";
 import AthleteCheckIn from "../models/AthleteCheckIn.js";
 import AthleteDailyMetric from "../models/AthleteDailyMetric.js";
 import AthleteIntelligenceSnapshot from "../models/AthleteIntelligenceSnapshot.js";
@@ -387,6 +388,7 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         plans,
         planTemplates,
         weighIns,
+        hydrationEntries,
         checkIns,
         dailyMetrics,
         snapshots,
@@ -405,6 +407,7 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         TrainingPlan.deleteMany({ athleteId: ownerId }, { session: dbSession }),
         PlanTemplate.deleteMany({ ownerId }, { session: dbSession }),
         WeightEntry.deleteMany({ ownerId }, { session: dbSession }),
+        HydrationEntry.deleteMany({ ownerId }, { session: dbSession }),
         AthleteCheckIn.deleteMany(
           { athleteId: ownerId },
           { session: dbSession },
@@ -439,6 +442,7 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         plans: plans.deletedCount,
         planTemplates: planTemplates.deletedCount,
         weighIns: weighIns.deletedCount,
+        hydrationEntries: hydrationEntries.deletedCount,
         checkIns: checkIns.deletedCount,
         dailyMetrics: dailyMetrics.deletedCount,
         snapshots: snapshots.deletedCount,
