@@ -355,6 +355,12 @@ router.patch(
       .isFloat({ min: 80, max: 250 })
       .withMessage("Altura invalida")
       .toFloat(),
+    body("healthNotes")
+      .optional({ checkFalsy: true })
+      .isString()
+      .trim()
+      .isLength({ max: 500 })
+      .withMessage("La información de salud es demasiado extensa"),
     validate,
   ],
   completeOnboarding,

@@ -123,7 +123,7 @@ router.get(
     try {
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode",
+        "assignedTrainerId trainingMode onboarding",
       ).lean();
       const coach = athlete?.assignedTrainerId
         ? await User.findOne(
@@ -169,7 +169,7 @@ router.post(
       }
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode",
+        "assignedTrainerId trainingMode onboarding",
       );
       if (!athlete)
         return res.status(404).json({ error: "Usuario no encontrado" });
@@ -192,6 +192,7 @@ router.post(
       });
       athlete.assignedTrainerId = nextCoachId;
       athlete.trainingMode = "coach_managed";
+      athlete.onboarding.accountType = "athlete";
       await athlete.save();
       res.json({ connected: true, coach, trainingMode: "coach_managed" });
     } catch (err) {
@@ -257,7 +258,7 @@ router.post(
       }
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode",
+        "assignedTrainerId trainingMode onboarding",
       );
       if (!athlete) {
         return res.status(404).json({ error: "Usuario no encontrado" });
@@ -318,6 +319,7 @@ router.post(
       });
       athlete.assignedTrainerId = nextCoachId;
       athlete.trainingMode = "coach_managed";
+      athlete.onboarding.accountType = "athlete";
       await athlete.save();
 
       res.set("Cache-Control", "no-store");
@@ -464,7 +466,7 @@ const athleteFilter = (coachId, athleteId) => ({
 const getAthlete = async (coachId, athleteId) =>
   User.findOne(
     athleteFilter(coachId, athleteId),
-    "name email role profile.goal profile.weight profile.height profile.avatarPhotoId",
+    "name email role onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId",
   ).lean();
 
 const requestToday = (value) => {
@@ -486,7 +488,7 @@ router.get(
           assignedTrainerId: req.user.id,
           isActive: true,
         },
-        "name email profile.goal profile.weight profile.height profile.avatarPhotoId updatedAt",
+        "name email onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
       )
         .sort({ name: 1 })
         .lean();
@@ -902,7 +904,7 @@ router.get("/athletes", async (req, res, next) => {
         assignedTrainerId: req.user.id,
         isActive: true,
       },
-      "name email profile.goal profile.weight profile.height profile.avatarPhotoId updatedAt",
+      "name email onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
     )
       .sort({ name: 1 })
       .lean();

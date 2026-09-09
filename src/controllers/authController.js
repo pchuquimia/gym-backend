@@ -1146,6 +1146,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
         "profile.weeklyFrequency": req.body.weeklyFrequency,
         "profile.weight": req.body.weight,
         "profile.height": req.body.height,
+        "profile.healthNotes": String(req.body.healthNotes || "").trim(),
         "onboarding.accountType": "athlete",
         "onboarding.status": "complete",
         "onboarding.completedAt": new Date(),
