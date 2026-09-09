@@ -366,6 +366,11 @@ const register = asyncHandler(async (req, res) => {
   const verificationToken = verificationRequired
     ? crypto.randomBytes(32).toString("hex")
     : "";
+  const coachInvitationToken = /^[A-Za-z0-9_-]{43}$/.test(
+    String(req.body.coachInvitationToken || ""),
+  )
+    ? String(req.body.coachInvitationToken)
+    : "";
   const user = await User.create({
     name: accountName,
     email,
@@ -395,7 +400,11 @@ const register = asyncHandler(async (req, res) => {
   });
 
   if (verificationRequired) {
-    const verifyUrl = `${getClientUrl()}/verificar-correo?token=${verificationToken}`;
+    const verifyUrl = `${getClientUrl()}/verificar-correo?token=${verificationToken}${
+      coachInvitationToken
+        ? `&invite=${encodeURIComponent(coachInvitationToken)}`
+        : ""
+    }`;
     try {
       await sendVerificationEmail({
         email: user.email,

@@ -136,6 +136,11 @@ router.post(
       .isBoolean()
       .withMessage("Preferencia de correo invalida")
       .toBoolean(),
+    body("coachInvitationToken")
+      .optional()
+      .isString()
+      .matches(/^[A-Za-z0-9_-]{43}$/)
+      .withMessage("Invitacion de coach invalida"),
     validate,
   ],
   register,

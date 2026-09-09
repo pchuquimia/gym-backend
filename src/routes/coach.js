@@ -11,6 +11,7 @@ import PlanTemplate from "../models/PlanTemplate.js";
 import Training from "../models/Training.js";
 import User from "../models/User.js";
 import AthleteCheckIn from "../models/AthleteCheckIn.js";
+import CoachInvitation from "../models/CoachInvitation.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
@@ -32,6 +33,78 @@ import {
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
+const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+const invitationTokenHash = (token) =>
+  crypto.createHash("sha256").update(token).digest("hex");
+
+const normalizeInvitationToken = (value) => {
+  const token = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : "";
+};
+
+const invitationClientUrl = (token) => {
+  const clientUrl = String(
+    process.env.CLIENT_URL ||
+      process.env.CLIENT_URLS ||
+      "http://localhost:5173",
+  )
+    .split(",")[0]
+    .trim()
+    .replace(/\/$/, "");
+  return `${clientUrl}/invitacion/${token}`;
+};
+
+router.get("/invitations/:token", async (req, res, next) => {
+  try {
+    const token = normalizeInvitationToken(req.params.token);
+    if (!token) {
+      return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+    }
+    const invitation = await CoachInvitation.findOne({
+      tokenHash: invitationTokenHash(token),
+    }).lean();
+    if (!invitation) {
+      return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+    }
+    if (invitation.status !== "pending") {
+      return res.status(410).json({
+        error:
+          invitation.status === "accepted"
+            ? "Esta invitaciÃ³n ya fue utilizada"
+            : "Esta invitaciÃ³n fue cancelada",
+        code: `INVITATION_${invitation.status.toUpperCase()}`,
+      });
+    }
+    if (new Date(invitation.expiresAt).getTime() <= Date.now()) {
+      return res.status(410).json({
+        error: "Esta invitaciÃ³n ha vencido",
+        code: "INVITATION_EXPIRED",
+      });
+    }
+    const coach = await User.findOne(
+      {
+        _id: invitation.coachId,
+        role: { $in: ["Admin", "Entrenador"] },
+        isActive: true,
+      },
+      "name role",
+    ).lean();
+    if (!coach) {
+      return res
+        .status(410)
+        .json({ error: "Esta invitaciÃ³n ya no estÃ¡ disponible" });
+    }
+    res.set("Cache-Control", "private, no-store");
+    return res.json({
+      invitationId: String(invitation._id),
+      coach: { name: coach.name, role: coach.role },
+      expiresAt: invitation.expiresAt,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
 
 router.use(protect);
 
@@ -153,6 +226,120 @@ router.delete(
   },
 );
 
+router.post(
+  "/invitations/:token/accept",
+  authorizeRoles("Cliente"),
+  async (req, res, next) => {
+    let claimedInvitation = null;
+    try {
+      const token = normalizeInvitationToken(req.params.token);
+      if (!token) {
+        return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+      }
+      const tokenHash = invitationTokenHash(token);
+      const invitation = await CoachInvitation.findOne({ tokenHash }).lean();
+      if (!invitation) {
+        return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+      }
+      if (
+        invitation.status !== "pending" ||
+        new Date(invitation.expiresAt).getTime() <= Date.now()
+      ) {
+        return res.status(410).json({
+          error:
+            invitation.status === "accepted"
+              ? "Esta invitaciÃ³n ya fue utilizada"
+              : invitation.status === "revoked"
+                ? "Esta invitaciÃ³n fue cancelada"
+                : "Esta invitaciÃ³n ha vencido",
+          code: "INVITATION_UNAVAILABLE",
+        });
+      }
+      const athlete = await User.findById(
+        req.user.id,
+        "assignedTrainerId trainingMode",
+      );
+      if (!athlete) {
+        return res.status(404).json({ error: "Usuario no encontrado" });
+      }
+      const coach = await User.findOne(
+        {
+          _id: invitation.coachId,
+          role: { $in: ["Admin", "Entrenador"] },
+          isActive: true,
+        },
+        "name email role profile.avatarPhotoId",
+      ).lean();
+      if (!coach) {
+        return res
+          .status(410)
+          .json({ error: "Esta invitaciÃ³n ya no estÃ¡ disponible" });
+      }
+      const previousCoachId = String(athlete.assignedTrainerId || "");
+      const nextCoachId = String(coach._id);
+      if (
+        previousCoachId &&
+        previousCoachId !== nextCoachId &&
+        req.body.confirmTransfer !== true
+      ) {
+        return res.status(409).json({
+          error: "Confirma el cambio de coach",
+          code: "COACH_TRANSFER_CONFIRMATION_REQUIRED",
+          coach: { name: coach.name },
+        });
+      }
+
+      claimedInvitation = await CoachInvitation.findOneAndUpdate(
+        {
+          _id: invitation._id,
+          status: "pending",
+          expiresAt: { $gt: new Date() },
+        },
+        {
+          $set: {
+            status: "accepted",
+            acceptedById: String(athlete._id),
+            acceptedAt: new Date(),
+          },
+        },
+        { new: true },
+      );
+      if (!claimedInvitation) {
+        return res.status(409).json({
+          error: "Esta invitaciÃ³n acaba de ser utilizada",
+          code: "INVITATION_ALREADY_CLAIMED",
+        });
+      }
+
+      await transitionAthleteCoach({
+        athleteId: athlete._id,
+        previousCoachId,
+        nextCoachId,
+      });
+      athlete.assignedTrainerId = nextCoachId;
+      athlete.trainingMode = "coach_managed";
+      await athlete.save();
+
+      res.set("Cache-Control", "no-store");
+      return res.json({
+        connected: true,
+        coach,
+        trainingMode: "coach_managed",
+      });
+    } catch (error) {
+      if (claimedInvitation?._id) {
+        await CoachInvitation.updateOne(
+          { _id: claimedInvitation._id, acceptedById: String(req.user.id) },
+          {
+            $set: { status: "pending", acceptedById: null, acceptedAt: null },
+          },
+        ).catch(() => {});
+      }
+      return next(error);
+    }
+  },
+);
+
 router.get(
   "/link-code",
   authorizeRoles("Admin", "Entrenador"),
@@ -182,6 +369,85 @@ router.post(
       res.json({ coachCode });
     } catch (err) {
       next(err);
+    }
+  },
+);
+
+router.get(
+  "/invitations",
+  authorizeRoles("Admin", "Entrenador"),
+  async (req, res, next) => {
+    try {
+      const invitations = await CoachInvitation.find({
+        coachId: String(req.user.id),
+        status: "pending",
+        expiresAt: { $gt: new Date() },
+      })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean();
+      res.set("Cache-Control", "private, no-store");
+      return res.json(
+        invitations.map((invitation) => ({
+          id: String(invitation._id),
+          status: invitation.status,
+          expiresAt: invitation.expiresAt,
+          createdAt: invitation.createdAt,
+        })),
+      );
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+router.post(
+  "/invitations",
+  authorizeRoles("Admin", "Entrenador"),
+  async (req, res, next) => {
+    try {
+      const token = crypto.randomBytes(32).toString("base64url");
+      const expiresAt = new Date(Date.now() + INVITATION_TTL_MS);
+      const invitation = await CoachInvitation.create({
+        coachId: String(req.user.id),
+        tokenHash: invitationTokenHash(token),
+        expiresAt,
+      });
+      res.set("Cache-Control", "no-store");
+      return res.status(201).json({
+        id: String(invitation._id),
+        invitationUrl: invitationClientUrl(token),
+        expiresAt,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  },
+);
+
+router.delete(
+  "/invitations/:invitationId",
+  authorizeRoles("Admin", "Entrenador"),
+  async (req, res, next) => {
+    try {
+      if (!/^[a-f\d]{24}$/i.test(String(req.params.invitationId || ""))) {
+        return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+      }
+      const invitation = await CoachInvitation.findOneAndUpdate(
+        {
+          _id: req.params.invitationId,
+          coachId: String(req.user.id),
+          status: "pending",
+        },
+        { $set: { status: "revoked" } },
+        { new: true },
+      );
+      if (!invitation) {
+        return res.status(404).json({ error: "InvitaciÃ³n no encontrada" });
+      }
+      return res.json({ ok: true });
+    } catch (error) {
+      return next(error);
     }
   },
 );
