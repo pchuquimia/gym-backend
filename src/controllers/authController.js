@@ -47,6 +47,19 @@ const authResponse = (user, token) => ({
   token,
 });
 
+const ensureShareableAvatarPhoto = async (userId, avatarPhotoId) => {
+  if (!avatarPhotoId) return null;
+  const photo = await Photo.findOneAndUpdate(
+    { _id: avatarPhotoId, ownerId: userId },
+    { $set: { visibility: "coach" } },
+    { new: true, runValidators: true },
+  );
+  if (photo) return photo;
+  const error = new Error("La foto seleccionada no pertenece a tu cuenta");
+  error.statusCode = 400;
+  throw error;
+};
+
 const parseDevice = (userAgent = "") => {
   const ua = String(userAgent);
   const isIphone = /iphone/i.test(ua);
@@ -1040,15 +1053,7 @@ const updateAccount = asyncHandler(async (req, res) => {
   }
   const profileFields = ["birthDate", "weight", "height", "avatarPhotoId"];
   if (req.body.avatarPhotoId) {
-    const photo = await Photo.exists({
-      _id: req.body.avatarPhotoId,
-      ownerId: req.user.id,
-    });
-    if (!photo) {
-      const err = new Error("La foto seleccionada no pertenece a tu cuenta");
-      err.statusCode = 400;
-      throw err;
-    }
+    await ensureShareableAvatarPhoto(req.user.id, req.body.avatarPhotoId);
   }
   profileFields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -1104,15 +1109,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   ];
   const payload = {};
   if (req.body.avatarPhotoId) {
-    const photo = await Photo.exists({
-      _id: req.body.avatarPhotoId,
-      ownerId: req.user.id,
-    });
-    if (!photo) {
-      const err = new Error("La foto seleccionada no pertenece a tu cuenta");
-      err.statusCode = 400;
-      throw err;
-    }
+    await ensureShareableAvatarPhoto(req.user.id, req.body.avatarPhotoId);
   }
   allowed.forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(req.body, key)) {

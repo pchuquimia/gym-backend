@@ -845,6 +845,55 @@ router.get("/plan-catalog", async (req, res, next) => {
   }
 });
 
+router.get("/plans", async (req, res, next) => {
+  try {
+    const athletes = await User.find(
+      {
+        role: "Cliente",
+        assignedTrainerId: req.user.id,
+        isActive: true,
+      },
+      "name email profile.avatarPhotoId",
+    ).lean();
+    const athleteIds = athletes.map((athlete) => String(athlete._id));
+    if (!athleteIds.length) {
+      res.set("Cache-Control", "private, no-store");
+      return res.json([]);
+    }
+
+    const plans = await TrainingPlan.find({
+      coachId: String(req.user.id),
+      athleteId: { $in: athleteIds },
+      status: { $ne: "cancelled" },
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+    const athleteById = new Map(
+      athletes.map((athlete) => [String(athlete._id), athlete]),
+    );
+
+    res.set("Cache-Control", "private, no-store");
+    return res.json(
+      plans.map((plan) => {
+        const athlete = athleteById.get(String(plan.athleteId));
+        return {
+          ...plan,
+          athlete: athlete
+            ? {
+                id: String(athlete._id),
+                name: athlete.name,
+                email: athlete.email,
+                avatarPhotoId: athlete.profile?.avatarPhotoId || null,
+              }
+            : null,
+        };
+      }),
+    );
+  } catch (err) {
+    return next(err);
+  }
+});
+
 router.get("/athletes", async (req, res, next) => {
   try {
     const athletes = await User.find(

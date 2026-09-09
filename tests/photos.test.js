@@ -4,7 +4,10 @@ import request from "supertest";
 import app from "../src/app.js";
 import Photo from "../src/models/Photo.js";
 import { describePhotoAsset } from "../src/services/photoAssetCleanupService.js";
-import { normalizePhotoDate } from "../src/routes/photos.js";
+import {
+  normalizePhotoDate,
+  resolveUploadedPhotoVisibility,
+} from "../src/routes/photos.js";
 import {
   filenameFromStoredUrl,
   privatePhotoUploadsDir,
@@ -34,6 +37,19 @@ describe("progress photo safeguards", () => {
       filenameFromStoredUrl("https://example.com/uploads/progress-1.webp"),
     ).toBe("progress-1.webp");
     expect(filenameFromStoredUrl("not-a-url")).toBe("");
+  });
+
+  test("shares profile photos with the assigned coach by default", () => {
+    expect(
+      resolveUploadedPhotoVisibility({
+        type: "profile",
+        requestedVisibility: "private",
+      }),
+    ).toBe("coach");
+  });
+
+  test("keeps non-profile photos private when visibility is omitted", () => {
+    expect(resolveUploadedPhotoVisibility({ type: "gym" })).toBe("private");
   });
 
   test("queues known managed assets but leaves external URLs untouched", () => {

@@ -205,8 +205,15 @@ const getPhotoReadFilter = async (req, baseFilter = {}) => {
 
 const canReadPhoto = async (req, photo) => {
   if (String(photo.ownerId) === String(req.user.id)) return true;
-  if (photo.visibility !== "coach") return false;
-  return ensureCanAccessOwner(req, photo.ownerId);
+  if (!(await ensureCanAccessOwner(req, photo.ownerId))) return false;
+  if (photo.visibility === "coach") return true;
+  if (photo.type !== "profile") return false;
+  return Boolean(
+    await User.exists({
+      _id: photo.ownerId,
+      "profile.avatarPhotoId": String(photo._id),
+    }),
+  );
 };
 
 const normalizeChoice = (value, allowed, fallback, label) => {
@@ -216,6 +223,18 @@ const normalizeChoice = (value, allowed, fallback, label) => {
   error.statusCode = 400;
   throw error;
 };
+
+export const resolveUploadedPhotoVisibility = ({
+  uploadedByCoach = false,
+  type = "gym",
+  requestedVisibility,
+} = {}) =>
+  normalizeChoice(
+    uploadedByCoach || type === "profile" ? "coach" : requestedVisibility,
+    allowedVisibilities,
+    "private",
+    "Visibilidad",
+  );
 
 const validateSessionLink = async (ownerId, value) => {
   const sessionId = String(value || "").trim();
@@ -449,25 +468,25 @@ router.post("/upload", receivePhoto, async (req, res, next) => {
     }
     const sessionId = await validateSessionLink(ownerId, req.body.sessionId);
     stored = await storeUploadedFile(req.file, mimeType);
+    const type = normalizeChoice(
+      req.body.type,
+      allowedPhotoTypes,
+      "gym",
+      "Contexto",
+    );
     const photo = await Photo.create({
       ...stored,
       date,
       label: String(req.body.label || "")
         .trim()
         .slice(0, 240),
-      type: normalizeChoice(
-        req.body.type,
-        allowedPhotoTypes,
-        "gym",
-        "Contexto",
-      ),
+      type,
       view: normalizeChoice(req.body.view, allowedPhotoViews, "front", "Vista"),
-      visibility: normalizeChoice(
-        uploadedByCoach ? "coach" : req.body.visibility,
-        allowedVisibilities,
-        "private",
-        "Visibilidad",
-      ),
+      visibility: resolveUploadedPhotoVisibility({
+        uploadedByCoach,
+        type,
+        requestedVisibility: req.body.visibility,
+      }),
       sessionId,
       ownerId,
       routineName: String(req.body.routineName || "")
