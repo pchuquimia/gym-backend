@@ -1,6 +1,7 @@
 import {
   buildTrainingRegistrationKey,
   normalizeTrainingDateKey,
+  resolvePlannedTrainingSlot,
   validateTrainingSubmission,
 } from "../src/utils/trainingSubmission.js";
 
@@ -26,6 +27,57 @@ describe("training submission", () => {
         routineId: "routine_1",
       }),
     ).toBe("v1:athlete_1:2026-08-18:routine_1");
+  });
+
+  test("distingue por dia una rutina reutilizada en la misma semana", () => {
+    const weeklySchedule = [
+      {
+        slotId: "lunes_lower_a",
+        dayIndex: 1,
+        type: "training",
+        routineId: "lower_a",
+      },
+      {
+        slotId: "miercoles_lower_a",
+        dayIndex: 3,
+        type: "training",
+        routineId: "lower_a",
+      },
+    ];
+
+    expect(
+      resolvePlannedTrainingSlot({
+        weeklySchedule,
+        scheduleMode: "fixed",
+        routineId: "lower_a",
+        date: "2026-09-09",
+      }),
+    ).toMatchObject({ slotId: "miercoles_lower_a", dayIndex: 3 });
+  });
+
+  test("mantiene el bloque esperado cuando el plan es secuencial", () => {
+    const weeklySchedule = [
+      {
+        slotId: "primera_lower_a",
+        type: "training",
+        routineId: "lower_a",
+      },
+      {
+        slotId: "segunda_lower_a",
+        type: "training",
+        routineId: "lower_a",
+      },
+    ];
+
+    expect(
+      resolvePlannedTrainingSlot({
+        weeklySchedule,
+        scheduleMode: "sequential",
+        cycleIndex: 1,
+        routineId: "lower_a",
+        date: "2026-09-09",
+      }),
+    ).toMatchObject({ slotId: "segunda_lower_a" });
   });
 
   test("rechaza un entrenamiento sin series registradas", () => {

@@ -27,6 +27,7 @@ import {
 import {
   buildTrainingRegistrationKey,
   normalizeTrainingDateKey,
+  resolvePlannedTrainingSlot,
   validateTrainingSubmission,
 } from "../utils/trainingSubmission.js";
 import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
@@ -686,6 +687,23 @@ router.post("/", async (req, res, next) => {
       const expectedCycleIndex = Number(
         linkedPlan.cycleProgress?.currentIndex || 0,
       );
+      const plannedSlot = resolvePlannedTrainingSlot({
+        weeklySchedule: linkedPlan.weeklySchedule || [],
+        scheduleMode: linkedPlan.scheduleMode,
+        cycleIndex: expectedCycleIndex,
+        routineId: payload.routineId,
+        date: payload.date,
+      });
+      if (
+        plannedSlot?.slotId &&
+        String(plannedSlot.slotId) !== String(linkedPlanSlot.slotId)
+      ) {
+        linkedPlanSlot = plannedSlot;
+        linkedPlanSlotIndex = (linkedPlan.weeklySchedule || []).findIndex(
+          (day) => String(day.slotId) === String(plannedSlot.slotId),
+        );
+        payload.trainingPlanSlotId = plannedSlot.slotId;
+      }
       const requiresAcknowledgement =
         (linkedPlan.scheduleMode === "fixed" &&
           Number(linkedPlanSlot.dayIndex) !== mondayDayIndex) ||

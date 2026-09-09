@@ -31,6 +31,36 @@ export const buildTrainingRegistrationKey = ({ ownerId, date, routineId }) => {
   return parts.every(Boolean) ? `v1:${parts.join(":")}` : undefined;
 };
 
+export const resolvePlannedTrainingSlot = ({
+  weeklySchedule = [],
+  scheduleMode = "fixed",
+  cycleIndex = 0,
+  routineId,
+  date,
+}) => {
+  const normalizedDate = normalizeTrainingDateKey(date);
+  const normalizedRoutineId = String(routineId || "");
+  if (!normalizedDate || !normalizedRoutineId) return null;
+
+  if (scheduleMode !== "fixed") {
+    const expectedSlot = weeklySchedule[Number(cycleIndex) || 0];
+    return expectedSlot?.type === "training" &&
+      String(expectedSlot.routineId || "") === normalizedRoutineId
+      ? expectedSlot
+      : null;
+  }
+
+  const parsedDate = new Date(`${normalizedDate}T00:00:00Z`);
+  const dayIndex = ((parsedDate.getUTCDay() + 6) % 7) + 1;
+  const matches = weeklySchedule.filter(
+    (slot) =>
+      slot.type === "training" &&
+      Number(slot.dayIndex) === dayIndex &&
+      String(slot.routineId || "") === normalizedRoutineId,
+  );
+  return matches.length === 1 ? matches[0] : null;
+};
+
 export const validateTrainingSubmission = ({
   date,
   exercises,
