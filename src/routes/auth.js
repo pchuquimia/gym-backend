@@ -4,6 +4,7 @@ import { body, validationResult } from "express-validator";
 import validator from "validator";
 import {
   changePassword,
+  completeCoachOnboarding,
   completeOnboarding,
   demoLogin,
   demoStatus,
@@ -24,6 +25,7 @@ import {
   requestEmailVerification,
   requestPasswordReset,
   resetPassword,
+  selectOnboardingAccountType,
   updateProfile,
   updateAccount,
   updateSecurity,
@@ -296,6 +298,30 @@ router.patch(
     validate,
   ],
   updateProfile,
+);
+router.patch(
+  "/onboarding/account-type",
+  protect,
+  [
+    body("accountType")
+      .isIn(["athlete", "coach"])
+      .withMessage("Tipo de cuenta invalido"),
+    validate,
+  ],
+  selectOnboardingAccountType,
+);
+router.patch(
+  "/onboarding/coach",
+  protect,
+  [
+    body("name")
+      .trim()
+      .isLength({ min: 2, max: 80 })
+      .withMessage("Nombre invalido"),
+    usernameRule(),
+    validate,
+  ],
+  completeCoachOnboarding,
 );
 router.patch(
   "/onboarding",

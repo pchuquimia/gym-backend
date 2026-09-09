@@ -13,8 +13,28 @@ describe("user onboarding", () => {
 
     expect(user.toSafeJSON()).toMatchObject({
       username: null,
-      onboarding: { status: "pending", completedAt: null },
+      onboarding: {
+        accountType: null,
+        status: "pending",
+        completedAt: null,
+      },
       profile: { weight: null, height: null },
+    });
+  });
+
+  test("expone el tipo de cuenta profesional durante el onboarding", () => {
+    const user = new User({
+      name: "Coach Nuevo",
+      email: "coach@example.com",
+      username: "coach_nuevo",
+      password: "Rirfit1234",
+      role: "Entrenador",
+      onboarding: { accountType: "coach", status: "pending" },
+    });
+
+    expect(user.toSafeJSON()).toMatchObject({
+      role: "Entrenador",
+      onboarding: { accountType: "coach", status: "pending" },
     });
   });
 

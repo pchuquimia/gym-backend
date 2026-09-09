@@ -25,6 +25,7 @@ import {
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
 import { normalizeUsername } from "../utils/normalizeUsername.js";
+import { ensureCoachCode } from "../utils/coachCode.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -1139,6 +1140,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
         "profile.weeklyFrequency": req.body.weeklyFrequency,
         "profile.weight": req.body.weight,
         "profile.height": req.body.height,
+        "onboarding.accountType": "athlete",
         "onboarding.status": "complete",
         "onboarding.completedAt": new Date(),
       },
@@ -1150,6 +1152,72 @@ const completeOnboarding = asyncHandler(async (req, res) => {
     err.statusCode = 403;
     throw err;
   }
+  res.set("Cache-Control", "no-store");
+  res.json({ user: sanitizeUser(user) });
+});
+
+const selectOnboardingAccountType = asyncHandler(async (req, res) => {
+  const accountType = req.body.accountType;
+  const nextRole = accountType === "coach" ? "Entrenador" : "Cliente";
+  const user = await User.findOne({
+    _id: req.user.id,
+    role: { $in: ["Cliente", "Entrenador"] },
+    "onboarding.status": "pending",
+  });
+
+  if (!user || user.assignedTrainerId) {
+    const err = new Error(
+      "Esta eleccion solo esta disponible durante la configuracion inicial",
+    );
+    err.statusCode = 403;
+    err.code = "ACCOUNT_TYPE_SELECTION_UNAVAILABLE";
+    throw err;
+  }
+
+  user.role = nextRole;
+  user.trainingMode = "independent";
+  user.onboarding.accountType = accountType;
+  await user.save();
+
+  res.set("Cache-Control", "no-store");
+  res.json({ user: sanitizeUser(user) });
+});
+
+const completeCoachOnboarding = asyncHandler(async (req, res) => {
+  const username = normalizeUsername(req.body.username);
+  const usernameTaken = await User.exists({
+    _id: { $ne: req.user.id },
+    username,
+  });
+  if (usernameTaken) {
+    const err = new Error("El nombre de usuario ya esta en uso");
+    err.statusCode = 409;
+    err.code = "USERNAME_TAKEN";
+    throw err;
+  }
+
+  const user = await User.findOne({
+    _id: req.user.id,
+    role: "Entrenador",
+    "onboarding.status": "pending",
+    "onboarding.accountType": "coach",
+  });
+  if (!user) {
+    const err = new Error(
+      "La configuracion profesional ya no esta disponible para esta cuenta",
+    );
+    err.statusCode = 403;
+    err.code = "COACH_ONBOARDING_UNAVAILABLE";
+    throw err;
+  }
+
+  user.name = req.body.name.trim();
+  user.username = username;
+  user.coachCode = await ensureCoachCode(user._id);
+  user.onboarding.status = "complete";
+  user.onboarding.completedAt = new Date();
+  await user.save();
+
   res.set("Cache-Control", "no-store");
   res.json({ user: sanitizeUser(user) });
 });
@@ -1247,6 +1315,8 @@ export {
   getProfile,
   updateProfile,
   completeOnboarding,
+  selectOnboardingAccountType,
+  completeCoachOnboarding,
   getProfileSummary,
   updateAccount,
   updateSecurity,

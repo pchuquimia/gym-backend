@@ -107,6 +107,11 @@ const UserSchema = new mongoose.Schema(
       index: true,
     },
     onboarding: {
+      accountType: {
+        type: String,
+        enum: ["athlete", "coach"],
+        default: undefined,
+      },
       status: {
         type: String,
         enum: ["pending", "complete"],
@@ -259,6 +264,7 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
         ? "coach_managed"
         : this.trainingMode || "independent",
     onboarding: {
+      accountType: this.onboarding?.accountType || null,
       status: this.onboarding?.status || "complete",
       completedAt: this.onboarding?.completedAt || null,
     },
