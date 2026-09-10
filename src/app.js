@@ -25,6 +25,8 @@ import hydrationRoutes from "./routes/hydration.js";
 import checkInsRoutes from "./routes/checkIns.js";
 import billingRoutes from "./routes/billing.js";
 import dashboardRoutes from "./routes/dashboard.js";
+import measurementsRoutes from "./routes/measurements.js";
+import assessmentsRoutes from "./routes/assessments.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { performanceTiming } from "./middleware/performanceTiming.js";
 import { getCacheStatus } from "./services/cacheService.js";
@@ -163,6 +165,8 @@ app.use("/api/hydration", hydrationRoutes);
 app.use("/api/check-ins", checkInsRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/measurements", measurementsRoutes);
+app.use("/api/assessments", assessmentsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

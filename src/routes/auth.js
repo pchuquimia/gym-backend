@@ -361,6 +361,14 @@ router.patch(
       .trim()
       .isLength({ max: 500 })
       .withMessage("La información de salud es demasiado extensa"),
+    body("intakeAnswers")
+      .optional()
+      .isArray({ max: 30 })
+      .withMessage("Las respuestas de evaluacion no son validas"),
+    body("intakeAnswers.*.key")
+      .optional()
+      .isString()
+      .isLength({ min: 1, max: 50 }),
     validate,
   ],
   completeOnboarding,

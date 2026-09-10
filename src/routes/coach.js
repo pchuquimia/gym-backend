@@ -12,6 +12,9 @@ import Training from "../models/Training.js";
 import User from "../models/User.js";
 import AthleteCheckIn from "../models/AthleteCheckIn.js";
 import CoachInvitation from "../models/CoachInvitation.js";
+import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
+import AthleteMeasurement from "../models/AthleteMeasurement.js";
+import AthleteAssessment from "../models/AthleteAssessment.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
@@ -30,6 +33,12 @@ import {
   COACH_CODE_PREFIX,
   ensureCoachCode,
 } from "../utils/coachCode.js";
+import {
+  defaultCoachWorkflow,
+  normalizeFollowUp,
+  normalizeIntakeQuestions,
+  resolvePlanFollowUp,
+} from "../utils/coachWorkflow.js";
 
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
@@ -53,6 +62,29 @@ const invitationClientUrl = (token) => {
     .trim()
     .replace(/\/$/, "");
   return `${clientUrl}/invitacion/${token}`;
+};
+
+const startCoachIntake = (athlete, coachId) => {
+  const normalizedCoachId = String(coachId || "");
+  athlete.coachIntake = {
+    coachId: normalizedCoachId,
+    settingsVersion: null,
+    status: "pending",
+    requestedAt: new Date(),
+    submittedAt: null,
+    answers: [],
+  };
+};
+
+const clearCoachIntake = (athlete) => {
+  athlete.coachIntake = {
+    coachId: null,
+    settingsVersion: null,
+    status: "pending",
+    requestedAt: null,
+    submittedAt: null,
+    answers: [],
+  };
 };
 
 router.get("/invitations/:token", async (req, res, next) => {
@@ -123,7 +155,7 @@ router.get(
     try {
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode onboarding",
+        "assignedTrainerId trainingMode onboarding coachIntake",
       ).lean();
       const coach = athlete?.assignedTrainerId
         ? await User.findOne(
@@ -143,6 +175,32 @@ router.get(
       });
     } catch (err) {
       next(err);
+    }
+  },
+);
+
+router.get(
+  "/intake-form",
+  authorizeRoles("Cliente"),
+  async (req, res, next) => {
+    try {
+      if (!req.user.assignedTrainerId) {
+        return res.status(409).json({ error: "No tienes un coach asignado" });
+      }
+      const settings = await CoachWorkflowSettings.findOne({
+        coachId: String(req.user.assignedTrainerId),
+      }).lean();
+      const workflow = settings || defaultCoachWorkflow();
+      res.set("Cache-Control", "private, no-store");
+      return res.json({
+        coachId: String(req.user.assignedTrainerId),
+        version: settings?.updatedAt?.toISOString?.() || "default-v1",
+        questions: normalizeIntakeQuestions(workflow.intakeQuestions).filter(
+          (question) => question.enabled,
+        ),
+      });
+    } catch (error) {
+      return next(error);
     }
   },
 );
@@ -169,7 +227,7 @@ router.post(
       }
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode onboarding",
+        "assignedTrainerId trainingMode onboarding coachIntake",
       );
       if (!athlete)
         return res.status(404).json({ error: "Usuario no encontrado" });
@@ -193,6 +251,7 @@ router.post(
       athlete.assignedTrainerId = nextCoachId;
       athlete.trainingMode = "coach_managed";
       athlete.onboarding.accountType = "athlete";
+      startCoachIntake(athlete, nextCoachId);
       await athlete.save();
       res.json({ connected: true, coach, trainingMode: "coach_managed" });
     } catch (err) {
@@ -208,7 +267,7 @@ router.delete(
     try {
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode",
+        "assignedTrainerId trainingMode coachIntake",
       );
       if (!athlete)
         return res.status(404).json({ error: "Usuario no encontrado" });
@@ -219,6 +278,7 @@ router.delete(
       });
       athlete.assignedTrainerId = null;
       athlete.trainingMode = "independent";
+      clearCoachIntake(athlete);
       await athlete.save();
       res.json({ connected: false, coach: null, trainingMode: "independent" });
     } catch (err) {
@@ -258,7 +318,7 @@ router.post(
       }
       const athlete = await User.findById(
         req.user.id,
-        "assignedTrainerId trainingMode onboarding",
+        "assignedTrainerId trainingMode onboarding coachIntake",
       );
       if (!athlete) {
         return res.status(404).json({ error: "Usuario no encontrado" });
@@ -320,6 +380,7 @@ router.post(
       athlete.assignedTrainerId = nextCoachId;
       athlete.trainingMode = "coach_managed";
       athlete.onboarding.accountType = "athlete";
+      startCoachIntake(athlete, nextCoachId);
       await athlete.save();
 
       res.set("Cache-Control", "no-store");
@@ -456,6 +517,69 @@ router.delete(
 
 router.use(authorizeRoles("Admin", "Entrenador"));
 
+router.get("/workflow-settings", async (req, res, next) => {
+  try {
+    const settings = await CoachWorkflowSettings.findOne({
+      coachId: String(req.user.id),
+    }).lean();
+    const defaults = defaultCoachWorkflow();
+    res.set("Cache-Control", "private, no-store");
+    return res.json({
+      coachId: String(req.user.id),
+      intakeQuestions: normalizeIntakeQuestions(
+        settings?.intakeQuestions || defaults.intakeQuestions,
+      ),
+      followUp: normalizeFollowUp(settings?.followUp || defaults.followUp),
+      updatedAt: settings?.updatedAt || null,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
+router.put("/workflow-settings", async (req, res, next) => {
+  try {
+    const intakeQuestions = normalizeIntakeQuestions(req.body.intakeQuestions);
+    if (!intakeQuestions.length) {
+      return res.status(400).json({ error: "Agrega al menos una pregunta" });
+    }
+    if (
+      new Set(intakeQuestions.map((question) => question.key)).size !==
+      intakeQuestions.length
+    ) {
+      return res
+        .status(400)
+        .json({ error: "Cada pregunta necesita un identificador único" });
+    }
+    const invalidChoice = intakeQuestions.find(
+      (question) =>
+        question.enabled &&
+        ["single_choice", "multiple_choice"].includes(question.type) &&
+        question.options.length < 2,
+    );
+    if (invalidChoice) {
+      return res.status(400).json({
+        error: `Agrega al menos dos opciones en “${invalidChoice.label}”`,
+      });
+    }
+    const followUp = normalizeFollowUp(req.body.followUp);
+    const settings = await CoachWorkflowSettings.findOneAndUpdate(
+      { coachId: String(req.user.id) },
+      { $set: { intakeQuestions, followUp } },
+      {
+        new: true,
+        upsert: true,
+        runValidators: true,
+        setDefaultsOnInsert: true,
+      },
+    ).lean();
+    res.set("Cache-Control", "no-store");
+    return res.json(settings);
+  } catch (error) {
+    return next(error);
+  }
+});
+
 const athleteFilter = (coachId, athleteId) => ({
   _id: athleteId,
   role: "Cliente",
@@ -466,7 +590,7 @@ const athleteFilter = (coachId, athleteId) => ({
 const getAthlete = async (coachId, athleteId) =>
   User.findOne(
     athleteFilter(coachId, athleteId),
-    "name email role onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId",
+    "name email role onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId",
   ).lean();
 
 const requestToday = (value) => {
@@ -488,7 +612,7 @@ router.get(
           assignedTrainerId: req.user.id,
           isActive: true,
         },
-        "name email onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+        "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
       )
         .sort({ name: 1 })
         .lean();
@@ -510,7 +634,15 @@ router.get(
 
       const todayKey = requestToday(req.query.today);
       const historyFrom = shiftDateKey(todayKey, -34);
-      const [trainings, plans, checkIns, routineCounts] = await Promise.all([
+      const [
+        trainings,
+        plans,
+        completedPlans,
+        checkIns,
+        routineCounts,
+        coachWorkflow,
+        finalAssessments,
+      ] = await Promise.all([
         Training.find({
           ownerId: { $in: athleteIds },
           date: { $gte: historyFrom },
@@ -526,15 +658,35 @@ router.get(
         })
           .sort({ status: 1, updatedAt: -1 })
           .lean(),
+        TrainingPlan.find({
+          athleteId: { $in: athleteIds },
+          coachId: req.user.id,
+          status: "completed",
+        })
+          .sort({ updatedAt: -1 })
+          .lean(),
         AthleteCheckIn.find({ athleteId: { $in: athleteIds } })
           .sort({ dateKey: -1, updatedAt: -1 })
           .lean(),
         Routine.aggregate([
           {
-            $match: { ownerId: { $in: athleteIds }, isArchived: { $ne: true } },
+            $match: {
+              ownerId: { $in: athleteIds },
+              isArchived: { $ne: true },
+            },
           },
           { $group: { _id: "$ownerId", count: { $sum: 1 } } },
         ]),
+        CoachWorkflowSettings.findOne({
+          coachId: String(req.user.id),
+        }).lean(),
+        AthleteAssessment.find({
+          athleteId: { $in: athleteIds },
+          coachId: req.user.id,
+          type: "final",
+        })
+          .sort({ createdAt: -1 })
+          .lean(),
       ]);
 
       const trainingsByAthlete = new Map();
@@ -551,6 +703,19 @@ router.get(
         const current = planByAthlete.get(key);
         if (!current || plan.status === "active") planByAthlete.set(key, plan);
       });
+      const completedPlanByAthlete = new Map();
+      completedPlans.forEach((plan) => {
+        const key = String(plan.athleteId);
+        if (!completedPlanByAthlete.has(key)) {
+          completedPlanByAthlete.set(key, plan);
+        }
+      });
+      const assessmentByPlan = new Map(
+        finalAssessments.map((assessment) => [
+          String(assessment.planId),
+          assessment,
+        ]),
+      );
       const checkInByAthlete = new Map();
       checkIns.forEach((checkIn) => {
         const key = String(checkIn.athleteId);
@@ -570,6 +735,87 @@ router.get(
           latestCheckIn: checkInByAthlete.get(id) || null,
           today: new Date(`${todayKey}T12:00:00.000Z`),
         });
+        if (
+          athlete.coachIntake?.status !== "submitted" ||
+          !athlete.coachIntake?.submittedAt
+        ) {
+          report.alerts.unshift({
+            code: "intake_pending",
+            severity: "medium",
+            title: "Evaluación inicial pendiente",
+            detail: "El alumno todavía no envió sus respuestas iniciales.",
+          });
+          if (report.priority === "normal") report.priority = "medium";
+        }
+        const athletePlan = planByAthlete.get(id) || null;
+        const reviewPolicy = athletePlan
+          ? resolvePlanFollowUp(athletePlan, coachWorkflow).review
+          : null;
+        if (athletePlan && reviewPolicy?.enabled) {
+          const start = new Date(athletePlan.startDate);
+          const today = new Date(`${todayKey}T12:00:00.000Z`);
+          start.setUTCHours(12, 0, 0, 0);
+          const elapsedWeeks = Math.max(
+            0,
+            Math.floor((today - start) / (7 * 86400000)),
+          );
+          const reviewWeek = Math.min(
+            Number(athletePlan.durationWeeks || 1),
+            (Math.floor(elapsedWeeks / reviewPolicy.intervalWeeks) + 1) *
+              reviewPolicy.intervalWeeks,
+          );
+          const reviewDate = new Date(start);
+          reviewDate.setUTCDate(reviewDate.getUTCDate() + reviewWeek * 7 - 1);
+          const daysUntilReview = Math.ceil((reviewDate - today) / 86400000);
+          if (
+            daysUntilReview >= 0 &&
+            daysUntilReview <= reviewPolicy.leadDays
+          ) {
+            report.alerts.unshift({
+              code: "plan_review_due",
+              severity: "medium",
+              title:
+                daysUntilReview === 0
+                  ? "Revisión del plan hoy"
+                  : `Revisión del plan en ${daysUntilReview} días`,
+              detail:
+                "Revisa evaluación, fotos, medidas y adherencia antes del siguiente bloque.",
+            });
+            if (report.priority === "normal") report.priority = "medium";
+          }
+        }
+        const completedPlan = completedPlanByAthlete.get(id) || null;
+        const completedPlanPolicy = completedPlan
+          ? resolvePlanFollowUp(completedPlan, coachWorkflow)
+          : null;
+        if (completedPlan && completedPlanPolicy?.finalEvaluation?.enabled) {
+          const assessment = assessmentByPlan.get(String(completedPlan._id));
+          if (!assessment) {
+            report.alerts.unshift({
+              code: "final_evaluation_pending",
+              severity: "medium",
+              title: "Evaluación final pendiente",
+              detail: `El alumno debe cerrar ${completedPlan.name} antes del siguiente bloque.`,
+            });
+            if (report.priority === "normal") report.priority = "medium";
+          } else {
+            const submittedAt = new Date(
+              `${String(assessment.dateKey).slice(0, 10)}T12:00:00.000Z`,
+            );
+            const daysSinceSubmission = Math.floor(
+              (new Date(`${todayKey}T12:00:00.000Z`) - submittedAt) / 86400000,
+            );
+            if (daysSinceSubmission >= 0 && daysSinceSubmission <= 7) {
+              report.alerts.unshift({
+                code: "final_evaluation_received",
+                severity: "medium",
+                title: "Evaluación final recibida",
+                detail: `Revisa las respuestas de ${completedPlan.name} y prepara el siguiente bloque.`,
+              });
+              if (report.priority === "normal") report.priority = "medium";
+            }
+          }
+        }
         const sortedTrainings = [...athleteTrainings].sort((a, b) =>
           b.date.localeCompare(a.date),
         );
@@ -904,7 +1150,7 @@ router.get("/athletes", async (req, res, next) => {
         assignedTrainerId: req.user.id,
         isActive: true,
       },
-      "name email onboarding profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+      "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
     )
       .sort({ name: 1 })
       .lean();
@@ -943,7 +1189,7 @@ router.delete("/athletes/:athleteId/relationship", async (req, res, next) => {
   try {
     const athlete = await User.findOne(
       athleteFilter(req.user.id, req.params.athleteId),
-      "assignedTrainerId trainingMode name",
+      "assignedTrainerId trainingMode coachIntake name",
     );
     if (!athlete) {
       return res.status(404).json({ error: "Atleta no encontrado" });
@@ -955,6 +1201,7 @@ router.delete("/athletes/:athleteId/relationship", async (req, res, next) => {
     });
     athlete.assignedTrainerId = null;
     athlete.trainingMode = "independent";
+    clearCoachIntake(athlete);
     await athlete.save();
     res.json({ ok: true, athleteId: String(athlete._id) });
   } catch (err) {
@@ -978,32 +1225,42 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       .sort({ updatedAt: -1 })
       .limit(12)
       .lean();
+    const coachWorkflow = await CoachWorkflowSettings.findOne({
+      coachId: String(req.user.id),
+    }).lean();
     const editablePlanIds = plans
       .filter((plan) =>
         ["draft", "scheduled", "active", "paused"].includes(plan.status),
       )
       .map((plan) => String(plan._id));
-    const [routines, recentTrainings] = await Promise.all([
-      Routine.find({
-        ownerId,
-        $or: [
-          { isArchived: { $ne: true } },
-          { trainingPlanId: { $in: editablePlanIds } },
-        ],
-      })
-        .sort({ updatedAt: -1 })
-        .select(
-          "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
-        )
-        .lean(),
-      Training.find({ ownerId })
-        .sort({ date: -1, createdAt: -1 })
-        .limit(12)
-        .select(
-          "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
-        )
-        .lean(),
-    ]);
+    const [routines, recentTrainings, latestMeasurement, latestAssessment] =
+      await Promise.all([
+        Routine.find({
+          ownerId,
+          $or: [
+            { isArchived: { $ne: true } },
+            { trainingPlanId: { $in: editablePlanIds } },
+          ],
+        })
+          .sort({ updatedAt: -1 })
+          .select(
+            "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
+          )
+          .lean(),
+        Training.find({ ownerId })
+          .sort({ date: -1, createdAt: -1 })
+          .limit(12)
+          .select(
+            "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
+          )
+          .lean(),
+        AthleteMeasurement.findOne({ athleteId: ownerId })
+          .sort({ dateKey: -1 })
+          .lean(),
+        AthleteAssessment.findOne({ athleteId: ownerId })
+          .sort({ dateKey: -1 })
+          .lean(),
+      ]);
 
     const totalVolume = recentTrainings.reduce(
       (sum, training) => sum + (Number(training.totalVolume) || 0),
@@ -1014,7 +1271,14 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       athlete: { ...athlete, id: ownerId },
       routines,
       recentTrainings,
-      plans,
+      plans: plans.map((plan) => ({
+        ...plan,
+        effectiveFollowUp: resolvePlanFollowUp(plan, coachWorkflow),
+      })),
+      followUpRecords: {
+        latestMeasurement: latestMeasurement || null,
+        latestAssessment: latestAssessment || null,
+      },
       metrics: {
         routines: routines.length,
         sessions: recentTrainings.length,
@@ -1166,6 +1430,10 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
         ? { name: sourcePlan.name, updatedAt: sourcePlan.updatedAt }
         : undefined,
       notes: req.body.notes,
+      followUp: {
+        useCoachDefaults: req.body.followUp?.useCoachDefaults !== false,
+        ...normalizeFollowUp(req.body.followUp),
+      },
       weeklySchedule: [],
     });
     createdPlanId = plan._id;
@@ -1437,6 +1705,10 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
     plan.scheduleMode = scheduleMode;
     plan.status = nextStatus;
     plan.notes = notes;
+    plan.followUp = {
+      useCoachDefaults: req.body.followUp?.useCoachDefaults !== false,
+      ...normalizeFollowUp(req.body.followUp, plan.followUp),
+    };
     plan.weeklySchedule = schedule.map((day) => ({
       ...day,
       sourceRoutineId: day.type === "training" ? day.sourceRoutineId : null,

@@ -18,7 +18,40 @@ describe("user onboarding", () => {
         status: "pending",
         completedAt: null,
       },
+      coachIntake: {
+        coachId: null,
+        status: "pending",
+        requestedAt: null,
+        submittedAt: null,
+      },
       profile: { weight: null, height: null },
+    });
+  });
+
+  test("separa la evaluacion del coach del onboarding general", () => {
+    const submittedAt = new Date("2026-09-09T13:24:00.000Z");
+    const user = new User({
+      name: "Atleta Supervisado",
+      email: "supervisado@example.com",
+      password: "Rirfit1234",
+      role: "Cliente",
+      assignedTrainerId: "coach-1",
+      trainingMode: "coach_managed",
+      onboarding: { accountType: "athlete", status: "complete" },
+      coachIntake: {
+        coachId: "coach-1",
+        status: "submitted",
+        submittedAt,
+      },
+    });
+
+    expect(user.toSafeJSON()).toMatchObject({
+      onboarding: { status: "complete" },
+      coachIntake: {
+        coachId: "coach-1",
+        status: "submitted",
+        submittedAt,
+      },
     });
   });
 

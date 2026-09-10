@@ -12,6 +12,11 @@ import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
+import Photo from "../models/Photo.js";
+import AthleteCheckIn from "../models/AthleteCheckIn.js";
+import AthleteMeasurement from "../models/AthleteMeasurement.js";
+import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
+import AthleteAssessment from "../models/AthleteAssessment.js";
 import { getAthleteIntelligence } from "../services/athleteMetricsService.js";
 import { getCache, setCache } from "../services/cacheService.js";
 import {
@@ -20,6 +25,10 @@ import {
 } from "../utils/exerciseLocalization.js";
 import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
 import { isEmailConfigured } from "../config/email.js";
+import {
+  buildTrackingMissions,
+  resolvePlanFollowUp,
+} from "../utils/coachWorkflow.js";
 
 const router = Router();
 const SUMMARY_FIELDS =
@@ -64,11 +73,17 @@ router.get("/bootstrap", async (req, res, next) => {
       routines,
       preference,
       activePlan,
+      latestCompletedPlan,
       dailyMetrics,
       weighIns,
       hydrationEntries,
       profileUser,
       intelligenceResult,
+      todayCheckIn,
+      todayPhotos,
+      todayMeasurement,
+      coachWorkflow,
+      finalAssessment,
     ] = await measureDatabase(res, () =>
       Promise.all([
         Training.find(ownerFilter, SUMMARY_FIELDS)
@@ -84,6 +99,15 @@ router.get("/bootstrap", async (req, res, next) => {
         TrainingPlan.findOne({ athleteId: ownerId, status: "active" })
           .sort({ updatedAt: -1 })
           .lean(),
+        TrainingPlan.findOne({
+          athleteId: ownerId,
+          status: "completed",
+          ...(req.user.assignedTrainerId
+            ? { coachId: String(req.user.assignedTrainerId) }
+            : { coachId: null }),
+        })
+          .sort({ updatedAt: -1 })
+          .lean(),
         AthleteDailyMetric.find({ ownerId })
           .sort({ dateKey: -1 })
           .limit(120)
@@ -96,6 +120,27 @@ router.get("/bootstrap", async (req, res, next) => {
         advanced
           ? getAthleteIntelligence({ ownerId, advanced, today })
           : Promise.resolve({ data: null, source: "disabled" }),
+        AthleteCheckIn.findOne({ athleteId: ownerId, dateKey: today }).lean(),
+        Photo.find({
+          ownerId,
+          date: today,
+          type: { $ne: "profile" },
+          visibility: "coach",
+        })
+          .select("view date")
+          .lean(),
+        AthleteMeasurement.findOne({
+          athleteId: ownerId,
+          dateKey: today,
+        }).lean(),
+        req.user.assignedTrainerId
+          ? CoachWorkflowSettings.findOne({
+              coachId: String(req.user.assignedTrainerId),
+            }).lean()
+          : Promise.resolve(null),
+        AthleteAssessment.findOne({ athleteId: ownerId, type: "final" })
+          .sort({ dateKey: -1 })
+          .lean(),
       ]),
     );
 
@@ -114,6 +159,15 @@ router.get("/bootstrap", async (req, res, next) => {
       (sum, entry) => sum + Number(entry.amountMl || 0),
       0,
     );
+    const completedPlanNeedsAssessment =
+      latestCompletedPlan &&
+      (!finalAssessment ||
+        String(finalAssessment.planId) !== String(latestCompletedPlan._id));
+    const trackingPlan =
+      activePlan || (completedPlanNeedsAssessment ? latestCompletedPlan : null);
+    const trackingPolicy = trackingPlan
+      ? resolvePlanFollowUp(trackingPlan, coachWorkflow)
+      : null;
 
     const response = {
       ownerId,
@@ -125,6 +179,25 @@ router.get("/bootstrap", async (req, res, next) => {
       routines: localizedRoutines,
       preference: normalizePreference(preference, req.user.id),
       activePlan: activePlan || null,
+      followUp: trackingPlan
+        ? {
+            policy: trackingPolicy,
+            missions: buildTrackingMissions({
+              plan: trackingPlan,
+              followUp: trackingPolicy,
+              todayKey: today,
+              todayCheckIn,
+              todayWeight: todayWeighIn,
+              todayPhotos,
+              todayMeasurement,
+              finalAssessment:
+                finalAssessment &&
+                String(finalAssessment.planId) === String(trackingPlan._id)
+                  ? finalAssessment
+                  : null,
+            }),
+          }
+        : { policy: null, missions: [] },
       dailyMetrics,
       todayWeighIn: {
         entries: todayWeighIn ? [todayWeighIn] : [],

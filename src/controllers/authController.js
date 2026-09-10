@@ -3,6 +3,7 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
+import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import { createDemoWorkspace } from "../services/demoWorkspaceService.js";
 import { verifyGoogleCredential } from "../services/googleAuthService.js";
 import {
@@ -26,6 +27,10 @@ import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
 import { normalizeUsername } from "../utils/normalizeUsername.js";
 import { ensureCoachCode } from "../utils/coachCode.js";
+import {
+  defaultCoachWorkflow,
+  normalizeIntakeQuestions,
+} from "../utils/coachWorkflow.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -1135,22 +1140,75 @@ const completeOnboarding = asyncHandler(async (req, res) => {
     err.code = "USERNAME_TAKEN";
     throw err;
   }
+  const completedAt = new Date();
+  let intakeAnswers = [];
+  let intakeSettingsVersion = null;
+  if (req.user.assignedTrainerId) {
+    const settings = await CoachWorkflowSettings.findOne({
+      coachId: String(req.user.assignedTrainerId),
+    }).lean();
+    const questions = normalizeIntakeQuestions(
+      settings?.intakeQuestions || defaultCoachWorkflow().intakeQuestions,
+    ).filter((question) => question.enabled);
+    const submittedAnswers = new Map(
+      (Array.isArray(req.body.intakeAnswers) ? req.body.intakeAnswers : []).map(
+        (answer) => [String(answer?.key || ""), answer?.value],
+      ),
+    );
+    const missingQuestion = questions.find((question) => {
+      if (!question.required) return false;
+      const value = submittedAnswers.get(question.key);
+      return Array.isArray(value)
+        ? value.length === 0
+        : String(value ?? "").trim() === "";
+    });
+    if (missingQuestion) {
+      const error = new Error(`Responde: ${missingQuestion.label}`);
+      error.statusCode = 400;
+      error.code = "INTAKE_REQUIRED_ANSWER";
+      throw error;
+    }
+    intakeAnswers = questions.map((question) => {
+      const raw = submittedAnswers.get(question.key);
+      const value = Array.isArray(raw)
+        ? raw
+            .map((item) => String(item).trim())
+            .filter(Boolean)
+            .slice(0, 12)
+        : String(raw ?? "")
+            .trim()
+            .slice(0, 1000);
+      return { key: question.key, label: question.label, value };
+    });
+    intakeSettingsVersion =
+      settings?.updatedAt?.toISOString?.() || "default-v1";
+  }
+  const completedFields = {
+    name: req.body.name,
+    username,
+    "profile.goal": req.body.goal,
+    "profile.experienceLevel": req.body.experienceLevel,
+    "profile.weeklyFrequency": req.body.weeklyFrequency,
+    "profile.weight": req.body.weight,
+    "profile.height": req.body.height,
+    "profile.healthNotes": String(req.body.healthNotes || "").trim(),
+    "onboarding.accountType": "athlete",
+    "onboarding.status": "complete",
+    "onboarding.completedAt": completedAt,
+  };
+  if (req.user.assignedTrainerId) {
+    Object.assign(completedFields, {
+      "coachIntake.coachId": String(req.user.assignedTrainerId),
+      "coachIntake.settingsVersion": intakeSettingsVersion,
+      "coachIntake.status": "submitted",
+      "coachIntake.submittedAt": completedAt,
+      "coachIntake.answers": intakeAnswers,
+    });
+  }
   const user = await User.findOneAndUpdate(
     { _id: req.user.id, role: "Cliente" },
     {
-      $set: {
-        name: req.body.name,
-        username,
-        "profile.goal": req.body.goal,
-        "profile.experienceLevel": req.body.experienceLevel,
-        "profile.weeklyFrequency": req.body.weeklyFrequency,
-        "profile.weight": req.body.weight,
-        "profile.height": req.body.height,
-        "profile.healthNotes": String(req.body.healthNotes || "").trim(),
-        "onboarding.accountType": "athlete",
-        "onboarding.status": "complete",
-        "onboarding.completedAt": new Date(),
-      },
+      $set: completedFields,
     },
     { new: true, runValidators: true },
   );

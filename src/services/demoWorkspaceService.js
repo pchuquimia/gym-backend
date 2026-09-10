@@ -141,6 +141,14 @@ const createDemoUser = async ({
     demoExpiresAt: expiresAt,
     assignedTrainerId,
     trainingMode: assignedTrainerId ? "coach_managed" : "independent",
+    coachIntake: assignedTrainerId
+      ? {
+          coachId: String(assignedTrainerId),
+          status: "submitted",
+          requestedAt: new Date(),
+          submittedAt: new Date(),
+        }
+      : undefined,
     coachCode: ["Admin", "Entrenador"].includes(role)
       ? `DEMO-${compactWorkspace.slice(0, 8).toUpperCase()}-${suffix || "P"}`
       : undefined,

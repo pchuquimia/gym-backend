@@ -3,6 +3,7 @@ import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
 import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
+import { deleteCacheByPrefix } from "../services/cacheService.js";
 
 const router = Router();
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -154,6 +155,7 @@ router.post("/", async (req, res, next) => {
     }
 
     await enqueueAthleteMetricRefresh(ownerId, dateKey);
+    await deleteCacheByPrefix(`dashboard:${ownerId}:`);
 
     res.status(existed ? 200 : 201).json(entry);
   } catch (error) {
@@ -180,6 +182,7 @@ router.delete("/:id", async (req, res, next) => {
       });
     }
     await enqueueAthleteMetricRefresh(entry.ownerId, entry.dateKey);
+    await deleteCacheByPrefix(`dashboard:${entry.ownerId}:`);
     res.json({ ok: true });
   } catch (error) {
     next(error);

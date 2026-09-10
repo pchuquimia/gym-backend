@@ -119,6 +119,27 @@ const UserSchema = new mongoose.Schema(
       },
       completedAt: { type: Date, default: null },
     },
+    coachIntake: {
+      coachId: { type: String, default: null },
+      settingsVersion: { type: String, default: null },
+      status: {
+        type: String,
+        enum: ["pending", "submitted"],
+        default: "pending",
+      },
+      requestedAt: { type: Date, default: null },
+      submittedAt: { type: Date, default: null },
+      answers: {
+        type: [
+          {
+            key: { type: String, required: true, maxlength: 50 },
+            label: { type: String, required: true, maxlength: 180 },
+            value: { type: mongoose.Schema.Types.Mixed, default: "" },
+          },
+        ],
+        default: [],
+      },
+    },
     coachCode: {
       type: String,
       default: undefined,
@@ -268,6 +289,14 @@ UserSchema.methods.toSafeJSON = function toSafeJSON() {
       accountType: this.onboarding?.accountType || null,
       status: this.onboarding?.status || "complete",
       completedAt: this.onboarding?.completedAt || null,
+    },
+    coachIntake: {
+      coachId: this.coachIntake?.coachId || null,
+      settingsVersion: this.coachIntake?.settingsVersion || null,
+      status: this.coachIntake?.status || "pending",
+      requestedAt: this.coachIntake?.requestedAt || null,
+      submittedAt: this.coachIntake?.submittedAt || null,
+      answers: this.coachIntake?.answers || [],
     },
     assignedTrainerId: this.assignedTrainerId || null,
     coachCode: ["Admin", "Entrenador"].includes(this.role)

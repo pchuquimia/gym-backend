@@ -23,6 +23,9 @@ import AthleteDailyMetric from "../models/AthleteDailyMetric.js";
 import AthleteIntelligenceSnapshot from "../models/AthleteIntelligenceSnapshot.js";
 import MetricRefreshJob from "../models/MetricRefreshJob.js";
 import RoutineAuditLog from "../models/RoutineAuditLog.js";
+import AthleteMeasurement from "../models/AthleteMeasurement.js";
+import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
+import AthleteAssessment from "../models/AthleteAssessment.js";
 import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 import {
   processPhotoAssetCleanupJobs,
@@ -31,7 +34,7 @@ import {
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode coachIntake isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
@@ -165,14 +168,33 @@ router.patch(
       }
       const effectiveTrainerId =
         nextRole === "Cliente" ? nextTrainerId || null : null;
+      const trainerChanged =
+        String(current.assignedTrainerId || "") !==
+        String(effectiveTrainerId || "");
+      if (trainerChanged) {
+        payload.coachIntake = effectiveTrainerId
+          ? {
+              coachId: String(effectiveTrainerId),
+              settingsVersion: null,
+              status: "pending",
+              requestedAt: new Date(),
+              submittedAt: null,
+              answers: [],
+            }
+          : {
+              coachId: null,
+              settingsVersion: null,
+              status: "pending",
+              requestedAt: null,
+              submittedAt: null,
+              answers: [],
+            };
+      }
       const user = await User.findByIdAndUpdate(req.params.id, payload, {
         new: true,
         runValidators: true,
       }).select(ADMIN_USER_FIELDS);
       if (!user) return res.status(404).json({ error: "Not found" });
-      const trainerChanged =
-        String(current.assignedTrainerId || "") !==
-        String(effectiveTrainerId || "");
       if (
         current.role === "Cliente" &&
         trainerChanged &&
@@ -201,6 +223,14 @@ router.patch(
             $set: {
               assignedTrainerId: null,
               trainingMode: "independent",
+              coachIntake: {
+                coachId: null,
+                settingsVersion: null,
+                status: "pending",
+                requestedAt: null,
+                submittedAt: null,
+                answers: [],
+              },
             },
           },
         );
@@ -394,6 +424,9 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         snapshots,
         metricJobs,
         routineAuditLogs,
+        measurements,
+        workflowSettings,
+        assessments,
       ] = await Promise.all([
         Routine.deleteMany({ ownerId }, { session: dbSession }),
         Training.deleteMany({ ownerId }, { session: dbSession }),
@@ -419,12 +452,32 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         ),
         MetricRefreshJob.deleteMany({ ownerId }, { session: dbSession }),
         RoutineAuditLog.deleteMany({ ownerId }, { session: dbSession }),
+        AthleteMeasurement.deleteMany(
+          { athleteId: ownerId },
+          { session: dbSession },
+        ),
+        CoachWorkflowSettings.deleteMany(
+          { coachId: ownerId },
+          { session: dbSession },
+        ),
+        AthleteAssessment.deleteMany(
+          { athleteId: ownerId },
+          { session: dbSession },
+        ),
         User.updateMany(
           { assignedTrainerId: ownerId },
           {
             $set: {
               assignedTrainerId: null,
               trainingMode: "independent",
+              coachIntake: {
+                coachId: null,
+                settingsVersion: null,
+                status: "pending",
+                requestedAt: null,
+                submittedAt: null,
+                answers: [],
+              },
             },
           },
           { session: dbSession, runValidators: true },
@@ -448,6 +501,9 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
         snapshots: snapshots.deletedCount,
         metricJobs: metricJobs.deletedCount,
         routineAuditLogs: routineAuditLogs.deletedCount,
+        measurements: measurements.deletedCount,
+        workflowSettings: workflowSettings.deletedCount,
+        assessments: assessments.deletedCount,
       });
     });
     const photoCleanup = await processPhotoAssetCleanupJobs({

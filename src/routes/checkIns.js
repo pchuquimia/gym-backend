@@ -13,6 +13,7 @@ import {
 import { PREMIUM_FEATURES } from "../utils/subscription.js";
 import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
 import { refreshAthleteDailyMetric } from "../services/athleteMetricsService.js";
+import { deleteCacheByPrefix } from "../services/cacheService.js";
 
 const router = Router();
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -144,6 +145,7 @@ router.post("/", async (req, res, next) => {
     ).lean();
     await refreshAthleteDailyMetric(athleteId, submittedDate);
     await enqueueAthleteMetricRefresh(athleteId, submittedDate);
+    await deleteCacheByPrefix(`dashboard:${athleteId}:`);
     res.status(201).json({ checkIn, recommendation: readiness.recommendation });
   } catch (error) {
     next(error);
