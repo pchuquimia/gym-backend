@@ -9,36 +9,85 @@ export const QUESTION_TYPES = [
 
 export const DEFAULT_INTAKE_QUESTIONS = [
   {
-    key: "medical_conditions",
-    label: "¿Tienes alguna condición médica que tu coach deba conocer?",
+    key: "specific_goal",
+    label: "¿Qué resultado concreto te gustaría conseguir y en cuánto tiempo?",
     type: "long_text",
     required: true,
     enabled: true,
     options: [],
   },
   {
-    key: "medications",
-    label: "¿Tomas medicamentos que puedan influir en tu entrenamiento?",
+    key: "recent_training",
+    label: "¿Has entrenado de manera constante durante los últimos tres meses?",
+    type: "yes_no",
+    required: true,
+    enabled: true,
+    options: [],
+    detailPrompt:
+      "Describe qué entrenamiento realizabas, cuántos días y con qué nivel de esfuerzo.",
+    detailRequired: true,
+  },
+  {
+    key: "weekly_availability",
+    label: "¿Qué días y horarios puedes reservar realmente para entrenar?",
     type: "long_text",
-    required: false,
+    required: true,
+    enabled: true,
+    options: [],
+  },
+  {
+    key: "session_duration",
+    label: "¿Cuánto tiempo puedes dedicar a cada sesión?",
+    type: "single_choice",
+    required: true,
+    enabled: true,
+    options: [
+      "30 minutos",
+      "45 minutos",
+      "60 minutos",
+      "75 minutos",
+      "90 minutos o más",
+    ],
+  },
+  {
+    key: "equipment",
+    label: "¿Dónde entrenarás y qué equipamiento tendrás disponible?",
+    type: "long_text",
+    required: true,
     enabled: true,
     options: [],
   },
   {
     key: "injuries",
-    label: "¿Tienes lesiones, dolor o movimientos que debamos evitar?",
-    type: "long_text",
+    label: "¿Tienes alguna lesión, dolor o limitación de movimiento?",
+    type: "yes_no",
     required: true,
     enabled: true,
     options: [],
+    detailPrompt: "¿Cuál es y qué movimientos te generan molestias?",
+    detailRequired: true,
   },
   {
-    key: "equipment",
-    label: "¿Dónde entrenarás y qué equipamiento tienes disponible?",
-    type: "long_text",
+    key: "medical_conditions",
+    label:
+      "¿Tienes alguna condición médica que pueda afectar tu entrenamiento?",
+    type: "yes_no",
     required: true,
     enabled: true,
     options: [],
+    detailPrompt: "Indica cuál y si tienes autorización médica para entrenar.",
+    detailRequired: true,
+  },
+  {
+    key: "medications",
+    label:
+      "¿Tomas medicamentos que puedan influir en tu entrenamiento o recuperación?",
+    type: "yes_no",
+    required: true,
+    enabled: true,
+    options: [],
+    detailPrompt: "Indica cuáles y qué consideraciones te dio tu médico.",
+    detailRequired: true,
   },
   {
     key: "preferences",
@@ -48,7 +97,87 @@ export const DEFAULT_INTAKE_QUESTIONS = [
     enabled: true,
     options: [],
   },
+  {
+    key: "recovery_quality",
+    label: "¿Cómo calificarías actualmente tu descanso y recuperación?",
+    type: "single_choice",
+    required: true,
+    enabled: true,
+    options: [
+      "1 · Muy mala",
+      "2 · Mala",
+      "3 · Regular",
+      "4 · Buena",
+      "5 · Muy buena",
+    ],
+  },
+  {
+    key: "stress_level",
+    label: "¿Cómo calificarías tu nivel habitual de estrés?",
+    type: "single_choice",
+    required: true,
+    enabled: true,
+    options: [
+      "1 · Muy bajo",
+      "2 · Bajo",
+      "3 · Moderado",
+      "4 · Alto",
+      "5 · Muy alto",
+    ],
+  },
+  {
+    key: "daily_activity",
+    label: "¿Cómo es tu actividad diaria fuera del entrenamiento?",
+    type: "single_choice",
+    required: true,
+    enabled: true,
+    options: ["Sedentaria", "Ligera", "Moderada", "Alta"],
+  },
 ];
+
+const LEGACY_DEFAULT_INTAKE_QUESTIONS = [
+  [
+    "medical_conditions",
+    "¿Tienes alguna condición médica que tu coach deba conocer?",
+    "long_text",
+    true,
+  ],
+  [
+    "medications",
+    "¿Tomas medicamentos que puedan influir en tu entrenamiento?",
+    "long_text",
+    false,
+  ],
+  [
+    "injuries",
+    "¿Tienes lesiones, dolor o movimientos que debamos evitar?",
+    "long_text",
+    true,
+  ],
+  [
+    "equipment",
+    "¿Dónde entrenarás y qué equipamiento tienes disponible?",
+    "long_text",
+    true,
+  ],
+  [
+    "preferences",
+    "¿Qué ejercicios disfrutas o prefieres evitar?",
+    "long_text",
+    false,
+  ],
+];
+
+const isLegacyDefaultIntake = (value) =>
+  Array.isArray(value) &&
+  value.length === LEGACY_DEFAULT_INTAKE_QUESTIONS.length &&
+  LEGACY_DEFAULT_INTAKE_QUESTIONS.every(
+    ([key, label, type, required], index) =>
+      value[index]?.key === key &&
+      value[index]?.label === label &&
+      value[index]?.type === type &&
+      Boolean(value[index]?.required) === required,
+  );
 
 export const DEFAULT_FOLLOW_UP = {
   checkIn: { enabled: true, cadence: "workout_days", weekdays: [] },
@@ -100,8 +229,13 @@ const uniqueStringsOrFallback = (value, allowed, fallback) => {
   return normalized.length ? normalized : [...fallback];
 };
 
-export const normalizeIntakeQuestions = (value) =>
-  (Array.isArray(value) ? value : DEFAULT_INTAKE_QUESTIONS)
+export const normalizeIntakeQuestions = (value) => {
+  const source = isLegacyDefaultIntake(value)
+    ? DEFAULT_INTAKE_QUESTIONS
+    : Array.isArray(value)
+      ? value
+      : DEFAULT_INTAKE_QUESTIONS;
+  return source
     .slice(0, 30)
     .map((question, index) => {
       const type = QUESTION_TYPES.includes(question?.type)
@@ -124,9 +258,20 @@ export const normalizeIntakeQuestions = (value) =>
         required: bool(question?.required, false),
         enabled: bool(question?.enabled, true),
         options,
+        detailPrompt:
+          type === "yes_no"
+            ? String(question?.detailPrompt || "")
+                .trim()
+                .slice(0, 180)
+            : "",
+        detailRequired:
+          type === "yes_no" && Boolean(question?.detailPrompt)
+            ? bool(question?.detailRequired, false)
+            : false,
       };
     })
     .filter((question) => question.label);
+};
 
 export const normalizeFollowUp = (value = {}, fallback = DEFAULT_FOLLOW_UP) => {
   const cadence = ["daily", "workout_days", "weekly"].includes(

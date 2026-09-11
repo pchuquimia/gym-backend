@@ -6,6 +6,7 @@ import {
   changePassword,
   completeCoachOnboarding,
   completeOnboarding,
+  deleteAccount,
   demoLogin,
   demoStatus,
   devAdminLogin,
@@ -222,6 +223,20 @@ router.post("/logout", logout);
 router.get("/me", protect, me);
 router.get("/profile", protect, getProfile);
 router.get("/profile-summary", protect, getProfileSummary);
+router.delete(
+  "/account",
+  authLimiter,
+  protect,
+  [
+    body("email").trim().isEmail().withMessage("Correo inválido"),
+    body("password").optional().isString().withMessage("Contraseña inválida"),
+    body("confirmation")
+      .equals("ELIMINAR")
+      .withMessage("Escribe ELIMINAR para confirmar"),
+    validate,
+  ],
+  deleteAccount,
+);
 router.patch(
   "/account",
   protect,

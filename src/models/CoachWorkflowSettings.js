@@ -13,6 +13,8 @@ const IntakeQuestionSchema = new mongoose.Schema(
     required: { type: Boolean, default: false },
     enabled: { type: Boolean, default: true },
     options: { type: [String], default: [] },
+    detailPrompt: { type: String, trim: true, maxlength: 180, default: "" },
+    detailRequired: { type: Boolean, default: false },
   },
   { _id: false },
 );

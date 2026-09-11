@@ -27,6 +27,72 @@ describe("coach workflow", () => {
     ]);
   });
 
+  test("incluye un formulario inicial realista sin repetir datos del perfil", () => {
+    const questions = defaultCoachWorkflow().intakeQuestions;
+    const recentTraining = questions.find(
+      (question) => question.key === "recent_training",
+    );
+    const injuries = questions.find((question) => question.key === "injuries");
+
+    expect(questions).toHaveLength(12);
+    expect(recentTraining).toEqual(
+      expect.objectContaining({
+        type: "yes_no",
+        detailRequired: true,
+      }),
+    );
+    expect(injuries).toEqual(
+      expect.objectContaining({
+        type: "yes_no",
+        detailRequired: true,
+        detailPrompt: expect.any(String),
+      }),
+    );
+  });
+
+  test("actualiza el formulario predeterminado anterior sin tocar formularios personalizados", () => {
+    const legacy = [
+      {
+        key: "medical_conditions",
+        label: "¿Tienes alguna condición médica que tu coach deba conocer?",
+        type: "long_text",
+        required: true,
+      },
+      {
+        key: "medications",
+        label: "¿Tomas medicamentos que puedan influir en tu entrenamiento?",
+        type: "long_text",
+        required: false,
+      },
+      {
+        key: "injuries",
+        label: "¿Tienes lesiones, dolor o movimientos que debamos evitar?",
+        type: "long_text",
+        required: true,
+      },
+      {
+        key: "equipment",
+        label: "¿Dónde entrenarás y qué equipamiento tienes disponible?",
+        type: "long_text",
+        required: true,
+      },
+      {
+        key: "preferences",
+        label: "¿Qué ejercicios disfrutas o prefieres evitar?",
+        type: "long_text",
+        required: false,
+      },
+    ];
+
+    expect(normalizeIntakeQuestions(legacy)).toHaveLength(12);
+    expect(
+      normalizeIntakeQuestions([
+        { ...legacy[0], label: "Pregunta personalizada" },
+        ...legacy.slice(1),
+      ]),
+    ).toHaveLength(5);
+  });
+
   test("el plan puede heredar o reemplazar el protocolo del coach", () => {
     const coach = defaultCoachWorkflow();
     coach.followUp.weight.intervalWeeks = 2;

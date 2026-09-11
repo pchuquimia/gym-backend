@@ -116,7 +116,9 @@ router.get("/bootstrap", async (req, res, next) => {
         HydrationEntry.find({ ownerId, dateKey: today })
           .sort({ createdAt: 1, _id: 1 })
           .lean(),
-        User.findById(ownerId).select("profile security").lean(),
+        User.findById(ownerId)
+          .select("profile security +googleSubject +facebookSubject")
+          .lean(),
         advanced
           ? getAthleteIntelligence({ ownerId, advanced, today })
           : Promise.resolve({ data: null, source: "disabled" }),
@@ -224,6 +226,9 @@ router.get("/bootstrap", async (req, res, next) => {
         security: profileUser?.security || {},
         capabilities: {
           emailChange: isEmailConfigured(),
+          requiresPasswordForDeletion: !(
+            profileUser?.googleSubject || profileUser?.facebookSubject
+          ),
         },
       },
       intelligence: intelligenceResult.data,

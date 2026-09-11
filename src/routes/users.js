@@ -8,29 +8,10 @@ import {
   getPlanForRole,
   SUBSCRIPTION_PLANS,
 } from "../utils/subscription.js";
-import Exercise from "../models/Exercise.js";
-import Photo from "../models/Photo.js";
-import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
-import Session from "../models/Session.js";
-import Training from "../models/Training.js";
 import TrainingPlan from "../models/TrainingPlan.js";
-import PlanTemplate from "../models/PlanTemplate.js";
-import WeightEntry from "../models/WeightEntry.js";
-import HydrationEntry from "../models/HydrationEntry.js";
-import AthleteCheckIn from "../models/AthleteCheckIn.js";
-import AthleteDailyMetric from "../models/AthleteDailyMetric.js";
-import AthleteIntelligenceSnapshot from "../models/AthleteIntelligenceSnapshot.js";
-import MetricRefreshJob from "../models/MetricRefreshJob.js";
-import RoutineAuditLog from "../models/RoutineAuditLog.js";
-import AthleteMeasurement from "../models/AthleteMeasurement.js";
-import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
-import AthleteAssessment from "../models/AthleteAssessment.js";
 import { transitionAthleteCoach } from "../utils/coachAssignment.js";
-import {
-  processPhotoAssetCleanupJobs,
-  queuePhotoAssetCleanup,
-} from "../services/photoAssetCleanupService.js";
+import { deleteAccountData } from "../services/accountDeletionService.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
@@ -368,8 +349,6 @@ router.patch(
 );
 
 router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
-  let dbSession;
-  let photoCleanupJobs = [];
   try {
     if (req.params.id === req.user.id) {
       return res.status(400).json({ error: "No puedes eliminar tu cuenta" });
@@ -382,142 +361,10 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
       });
     }
 
-    const ownerId = user._id.toString();
-    dbSession = await User.startSession();
-    const deleted = {};
-    await dbSession.withTransaction(async () => {
-      const storedPhotos = await Photo.find({ ownerId })
-        .session(dbSession)
-        .lean();
-      photoCleanupJobs = await queuePhotoAssetCleanup(storedPhotos, {
-        session: dbSession,
-      });
-      if (user.role === "Entrenador") {
-        await Routine.updateMany(
-          { assignedByCoachId: ownerId },
-          {
-            $set: {
-              assignedByCoachId: null,
-            },
-          },
-          { session: dbSession, runValidators: true },
-        );
-        await TrainingPlan.updateMany(
-          { coachId: ownerId },
-          { $set: { coachId: null } },
-          { session: dbSession, runValidators: true },
-        );
-      }
-      const [
-        routines,
-        trainings,
-        sessions,
-        photos,
-        preferences,
-        exercises,
-        plans,
-        planTemplates,
-        weighIns,
-        hydrationEntries,
-        checkIns,
-        dailyMetrics,
-        snapshots,
-        metricJobs,
-        routineAuditLogs,
-        measurements,
-        workflowSettings,
-        assessments,
-      ] = await Promise.all([
-        Routine.deleteMany({ ownerId }, { session: dbSession }),
-        Training.deleteMany({ ownerId }, { session: dbSession }),
-        Session.deleteMany({ ownerId }, { session: dbSession }),
-        Photo.deleteMany({ ownerId }, { session: dbSession }),
-        Preference.deleteMany({ userId: ownerId }, { session: dbSession }),
-        Exercise.deleteMany(
-          { ownerId, type: "custom" },
-          { session: dbSession },
-        ),
-        TrainingPlan.deleteMany({ athleteId: ownerId }, { session: dbSession }),
-        PlanTemplate.deleteMany({ ownerId }, { session: dbSession }),
-        WeightEntry.deleteMany({ ownerId }, { session: dbSession }),
-        HydrationEntry.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteCheckIn.deleteMany(
-          { athleteId: ownerId },
-          { session: dbSession },
-        ),
-        AthleteDailyMetric.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteIntelligenceSnapshot.deleteMany(
-          { ownerId },
-          { session: dbSession },
-        ),
-        MetricRefreshJob.deleteMany({ ownerId }, { session: dbSession }),
-        RoutineAuditLog.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteMeasurement.deleteMany(
-          { athleteId: ownerId },
-          { session: dbSession },
-        ),
-        CoachWorkflowSettings.deleteMany(
-          { coachId: ownerId },
-          { session: dbSession },
-        ),
-        AthleteAssessment.deleteMany(
-          { athleteId: ownerId },
-          { session: dbSession },
-        ),
-        User.updateMany(
-          { assignedTrainerId: ownerId },
-          {
-            $set: {
-              assignedTrainerId: null,
-              trainingMode: "independent",
-              coachIntake: {
-                coachId: null,
-                settingsVersion: null,
-                status: "pending",
-                requestedAt: null,
-                submittedAt: null,
-                answers: [],
-              },
-            },
-          },
-          { session: dbSession, runValidators: true },
-        ),
-      ]);
-
-      await User.deleteOne({ _id: ownerId }, { session: dbSession });
-      Object.assign(deleted, {
-        routines: routines.deletedCount,
-        trainings: trainings.deletedCount,
-        sessions: sessions.deletedCount,
-        photos: photos.deletedCount,
-        preferences: preferences.deletedCount,
-        exercises: exercises.deletedCount,
-        plans: plans.deletedCount,
-        planTemplates: planTemplates.deletedCount,
-        weighIns: weighIns.deletedCount,
-        hydrationEntries: hydrationEntries.deletedCount,
-        checkIns: checkIns.deletedCount,
-        dailyMetrics: dailyMetrics.deletedCount,
-        snapshots: snapshots.deletedCount,
-        metricJobs: metricJobs.deletedCount,
-        routineAuditLogs: routineAuditLogs.deletedCount,
-        measurements: measurements.deletedCount,
-        workflowSettings: workflowSettings.deletedCount,
-        assessments: assessments.deletedCount,
-      });
-    });
-    const photoCleanup = await processPhotoAssetCleanupJobs({
-      ids: photoCleanupJobs.map((job) => job._id),
-    });
-    res.json({
-      ok: true,
-      deleted,
-      photoCleanupPending: photoCleanup.pending,
-    });
+    const result = await deleteAccountData(req.params.id);
+    res.json({ ok: true, ...result });
   } catch (err) {
     next(err);
-  } finally {
-    if (dbSession) await dbSession.endSession();
   }
 });
 

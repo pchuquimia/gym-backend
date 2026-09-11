@@ -31,6 +31,7 @@ import {
   defaultCoachWorkflow,
   normalizeIntakeQuestions,
 } from "../utils/coachWorkflow.js";
+import { deleteAccountData } from "../services/accountDeletionService.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -1001,14 +1002,68 @@ const me = asyncHandler(async (req, res) => {
 });
 
 const getProfile = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id).select("profile security");
+  const user = await User.findById(req.user.id).select(
+    "profile security +googleSubject +facebookSubject",
+  );
   if (!user) return res.status(404).json({ error: "No encontrado" });
   res.set("Cache-Control", "no-store");
   res.json({
     profile: user.profile,
     security: user.security,
-    capabilities: { emailChange: isEmailConfigured() },
+    capabilities: {
+      emailChange: isEmailConfigured(),
+      requiresPasswordForDeletion: !(
+        user.googleSubject || user.facebookSubject
+      ),
+    },
   });
+});
+
+const deleteAccount = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id).select(
+    "+password +googleSubject +facebookSubject",
+  );
+  if (!user) {
+    const error = new Error("Cuenta no encontrada");
+    error.statusCode = 404;
+    throw error;
+  }
+  if (user.role === "Admin") {
+    const error = new Error(
+      "Las cuentas administrativas no se eliminan desde el perfil",
+    );
+    error.statusCode = 403;
+    throw error;
+  }
+  if (user.isDemo) {
+    const error = new Error("La cuenta de demostración no se puede eliminar");
+    error.statusCode = 403;
+    throw error;
+  }
+  if (req.body.confirmation !== "ELIMINAR") {
+    const error = new Error("Confirmación de eliminación inválida");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (normalizeAuthEmail(req.body.email) !== user.email) {
+    const error = new Error("El correo no coincide con tu cuenta");
+    error.statusCode = 400;
+    throw error;
+  }
+  const usesExternalLogin = Boolean(user.googleSubject || user.facebookSubject);
+  if (!usesExternalLogin) {
+    const passwordMatches = await user.comparePassword(req.body.password || "");
+    if (!passwordMatches) {
+      const error = new Error("La contraseña actual no es correcta");
+      error.statusCode = 401;
+      throw error;
+    }
+  }
+
+  const result = await deleteAccountData(user._id);
+  clearAuthCookie(res);
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, ...result });
 });
 
 const getProfileSummary = asyncHandler(async (req, res) => {
@@ -1168,6 +1223,19 @@ const completeOnboarding = asyncHandler(async (req, res) => {
       error.code = "INTAKE_REQUIRED_ANSWER";
       throw error;
     }
+    const missingDetail = questions.find((question) => {
+      if (question.type !== "yes_no" || !question.detailRequired) return false;
+      const value = String(submittedAnswers.get(question.key) ?? "").trim();
+      return /^sí\s*:?$/i.test(value);
+    });
+    if (missingDetail) {
+      const error = new Error(
+        missingDetail.detailPrompt || `Amplía: ${missingDetail.label}`,
+      );
+      error.statusCode = 400;
+      error.code = "INTAKE_REQUIRED_DETAIL";
+      throw error;
+    }
     intakeAnswers = questions.map((question) => {
       const raw = submittedAnswers.get(question.key);
       const value = Array.isArray(raw)
@@ -1181,7 +1249,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
       return { key: question.key, label: question.label, value };
     });
     intakeSettingsVersion =
-      settings?.updatedAt?.toISOString?.() || "default-v1";
+      settings?.updatedAt?.toISOString?.() || "default-v2";
   }
   const completedFields = {
     name: req.body.name,
@@ -1378,6 +1446,7 @@ export {
   logout,
   me,
   getProfile,
+  deleteAccount,
   updateProfile,
   completeOnboarding,
   selectOnboardingAccountType,

@@ -15,6 +15,7 @@ import CoachInvitation from "../models/CoachInvitation.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import AthleteMeasurement from "../models/AthleteMeasurement.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
+import CoachNotification from "../models/CoachNotification.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
@@ -194,7 +195,7 @@ router.get(
       res.set("Cache-Control", "private, no-store");
       return res.json({
         coachId: String(req.user.assignedTrainerId),
-        version: settings?.updatedAt?.toISOString?.() || "default-v1",
+        version: settings?.updatedAt?.toISOString?.() || "default-v2",
         questions: normalizeIntakeQuestions(workflow.intakeQuestions).filter(
           (question) => question.enabled,
         ),
@@ -600,6 +601,36 @@ const requestToday = (value) => {
     ? candidate
     : dateKey();
 };
+
+router.get("/notifications", async (req, res, next) => {
+  try {
+    const notifications = await CoachNotification.find({
+      coachId: req.user.id,
+    })
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .lean();
+    res.set("Cache-Control", "no-store");
+    res.json({
+      notifications,
+      unread: notifications.filter((item) => !item.readAt).length,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/notifications/read", async (req, res, next) => {
+  try {
+    await CoachNotification.updateMany(
+      { coachId: req.user.id, readAt: null },
+      { $set: { readAt: new Date() } },
+    );
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
 
 router.get(
   "/portfolio",
