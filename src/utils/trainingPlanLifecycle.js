@@ -21,7 +21,7 @@ const setPlanRoutineAvailability = (planIds, isAvailable) => {
 };
 
 export async function syncTrainingPlanLifecycle(athleteId) {
-  if (!athleteId) return;
+  if (!athleteId) return false;
   const today = startOfTodayUtc();
 
   const expired = await TrainingPlan.find(
@@ -48,7 +48,7 @@ export async function syncTrainingPlanLifecycle(athleteId) {
     .sort({ startDate: -1, updatedAt: -1 })
     .lean();
   const nextPlan = duePlans[0];
-  if (!nextPlan) return;
+  if (!nextPlan) return expiredIds.length > 0;
 
   const previousActive = await TrainingPlan.find(
     {
@@ -79,6 +79,7 @@ export async function syncTrainingPlanLifecycle(athleteId) {
     setPlanRoutineAvailability(previousIds, false),
     setPlanRoutineAvailability([String(nextPlan._id)], true),
   ]);
+  return true;
 }
 
 export const isFuturePlan = (plan) => {

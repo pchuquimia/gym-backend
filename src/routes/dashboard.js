@@ -18,13 +18,18 @@ import AthleteMeasurement from "../models/AthleteMeasurement.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import { getAthleteIntelligence } from "../services/athleteMetricsService.js";
-import { getCache, setCache } from "../services/cacheService.js";
+import {
+  deleteCacheByPrefix,
+  getCache,
+  setCache,
+} from "../services/cacheService.js";
 import {
   getExerciseLanguage,
   localizeExerciseReferences,
 } from "../utils/exerciseLocalization.js";
 import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
 import { isEmailConfigured } from "../config/email.js";
+import { syncTrainingPlanLifecycle } from "../utils/trainingPlanLifecycle.js";
 import {
   buildTrackingMissions,
   resolvePlanFollowUp,
@@ -59,6 +64,10 @@ router.get("/bootstrap", async (req, res, next) => {
     const advanced =
       hasPremiumFeature(req.user, PREMIUM_FEATURES.LOAD_RECOVERY) &&
       hasPremiumFeature(req.user, PREMIUM_FEATURES.EXERCISE_PROGRESSION);
+    const lifecycleChanged = await syncTrainingPlanLifecycle(ownerId);
+    if (lifecycleChanged) {
+      await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+    }
     const bootstrapCacheKey = `dashboard:${ownerId}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}`;
     const cachedBootstrap = await getCache(bootstrapCacheKey);
     if (cachedBootstrap) {
@@ -73,6 +82,8 @@ router.get("/bootstrap", async (req, res, next) => {
       routines,
       preference,
       activePlan,
+      scheduledPlan,
+      draftPlan,
       latestCompletedPlan,
       dailyMetrics,
       weighIns,
@@ -99,6 +110,20 @@ router.get("/bootstrap", async (req, res, next) => {
         TrainingPlan.findOne({ athleteId: ownerId, status: "active" })
           .sort({ updatedAt: -1 })
           .lean(),
+        TrainingPlan.findOne({ athleteId: ownerId, status: "scheduled" })
+          .sort({ startDate: 1, updatedAt: -1 })
+          .select("name status startDate endDate durationWeeks")
+          .lean(),
+        req.user.assignedTrainerId
+          ? TrainingPlan.findOne({
+              athleteId: ownerId,
+              coachId: String(req.user.assignedTrainerId),
+              status: "draft",
+            })
+              .sort({ updatedAt: -1 })
+              .select("name status updatedAt")
+              .lean()
+          : Promise.resolve(null),
         TrainingPlan.findOne({
           athleteId: ownerId,
           status: "completed",
@@ -181,6 +206,17 @@ router.get("/bootstrap", async (req, res, next) => {
       routines: localizedRoutines,
       preference: normalizePreference(preference, req.user.id),
       activePlan: activePlan || null,
+      planning: activePlan
+        ? { status: "active", name: activePlan.name }
+        : scheduledPlan
+          ? {
+              status: "scheduled",
+              name: scheduledPlan.name,
+              startDate: scheduledPlan.startDate,
+            }
+          : draftPlan
+            ? { status: "draft", name: draftPlan.name }
+            : { status: "awaiting_plan" },
       followUp: trackingPlan
         ? {
             policy: trackingPolicy,

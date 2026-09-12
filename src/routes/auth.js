@@ -384,6 +384,11 @@ router.patch(
       .optional()
       .isString()
       .isLength({ min: 1, max: 50 }),
+    body("intakeSettingsVersion")
+      .optional()
+      .isString()
+      .isLength({ min: 1, max: 80 })
+      .withMessage("La versiÃ³n de la evaluaciÃ³n no es vÃ¡lida"),
     validate,
   ],
   completeOnboarding,

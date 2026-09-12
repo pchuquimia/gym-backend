@@ -3,6 +3,7 @@ import AthleteAssessment from "../models/AthleteAssessment.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import { deleteCacheByPrefix } from "../services/cacheService.js";
+import CoachNotification from "../models/CoachNotification.js";
 
 const router = Router();
 const localDateKey = () => {
@@ -52,6 +53,11 @@ router.post("/final", async (req, res, next) => {
         .status(400)
         .json({ error: "Indica cómo avanzaste hacia tu objetivo" });
     }
+    const existingAssessment = await AthleteAssessment.exists({
+      athleteId,
+      planId: String(plan._id),
+      type: "final",
+    });
     const assessment = await AthleteAssessment.findOneAndUpdate(
       { athleteId, planId: String(plan._id), type: "final" },
       {
@@ -80,6 +86,16 @@ router.post("/final", async (req, res, next) => {
       },
     ).lean();
     await deleteCacheByPrefix(`dashboard:${athleteId}:`);
+    if (!existingAssessment) {
+      await CoachNotification.create({
+        coachId: String(plan.coachId),
+        athleteId,
+        entityId: String(assessment._id),
+        type: "final_assessment_submitted",
+        title: "Evaluación final recibida",
+        message: `${req.user.name || "Tu alumno"} completó la evaluación de ${plan.name}.`,
+      }).catch(() => {});
+    }
     return res.status(201).json({ assessment });
   } catch (error) {
     return next(error);

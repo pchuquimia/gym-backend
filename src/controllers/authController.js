@@ -4,6 +4,7 @@ import User from "../models/User.js";
 import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
+import CoachNotification from "../models/CoachNotification.js";
 import { createDemoWorkspace } from "../services/demoWorkspaceService.js";
 import { verifyGoogleCredential } from "../services/googleAuthService.js";
 import {
@@ -1205,6 +1206,22 @@ const completeOnboarding = asyncHandler(async (req, res) => {
     const questions = normalizeIntakeQuestions(
       settings?.intakeQuestions || defaultCoachWorkflow().intakeQuestions,
     ).filter((question) => question.enabled);
+    const currentSettingsVersion =
+      settings?.updatedAt?.toISOString?.() || "default-v2";
+    const submittedSettingsVersion = String(
+      req.body.intakeSettingsVersion || "",
+    ).trim();
+    if (
+      submittedSettingsVersion &&
+      submittedSettingsVersion !== currentSettingsVersion
+    ) {
+      const error = new Error(
+        "Tu coach actualizÃ³ la evaluaciÃ³n. Revisa el formulario actualizado.",
+      );
+      error.statusCode = 409;
+      error.code = "INTAKE_FORM_UPDATED";
+      throw error;
+    }
     const submittedAnswers = new Map(
       (Array.isArray(req.body.intakeAnswers) ? req.body.intakeAnswers : []).map(
         (answer) => [String(answer?.key || ""), answer?.value],
@@ -1248,8 +1265,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
             .slice(0, 1000);
       return { key: question.key, label: question.label, value };
     });
-    intakeSettingsVersion =
-      settings?.updatedAt?.toISOString?.() || "default-v2";
+    intakeSettingsVersion = currentSettingsVersion;
   }
   const completedFields = {
     name: req.body.name,
@@ -1284,6 +1300,18 @@ const completeOnboarding = asyncHandler(async (req, res) => {
     const err = new Error("El onboarding solo esta disponible para atletas");
     err.statusCode = 403;
     throw err;
+  }
+  if (
+    user.assignedTrainerId &&
+    req.user.coachIntake?.status !== "submitted"
+  ) {
+    await CoachNotification.create({
+      coachId: String(user.assignedTrainerId),
+      athleteId: String(user._id),
+      type: "intake_submitted",
+      title: "Evaluación inicial recibida",
+      message: `${user.name || "Tu alumno"} completó su evaluación y ya puedes preparar su planificación.`,
+    }).catch(() => {});
   }
   res.set("Cache-Control", "no-store");
   res.json({ user: sanitizeUser(user) });

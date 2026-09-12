@@ -19,6 +19,7 @@ import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import CoachInvitation from "../models/CoachInvitation.js";
 import CoachNotification from "../models/CoachNotification.js";
+import UserNotification from "../models/UserNotification.js";
 import {
   processPhotoAssetCleanupJobs,
   queuePhotoAssetCleanup,
@@ -95,6 +96,7 @@ export const deleteAccountData = async (userId) => {
         assessments,
         invitations,
         notifications,
+        userNotifications,
       ] = await Promise.all([
         Routine.deleteMany({ ownerId }, { session: dbSession }),
         Training.deleteMany({ ownerId }, { session: dbSession }),
@@ -139,7 +141,19 @@ export const deleteAccountData = async (userId) => {
           { session: dbSession },
         ),
         CoachNotification.deleteMany(
-          { coachId: ownerId },
+          {
+            $or: [
+              { coachId: ownerId },
+              {
+                athleteId: ownerId,
+                type: { $ne: "athlete_account_deleted" },
+              },
+            ],
+          },
+          { session: dbSession },
+        ),
+        UserNotification.deleteMany(
+          { userId: ownerId },
           { session: dbSession },
         ),
         User.updateMany(
@@ -184,6 +198,7 @@ export const deleteAccountData = async (userId) => {
         assessments: assessments.deletedCount,
         invitations: invitations.deletedCount,
         notifications: notifications.deletedCount,
+        userNotifications: userNotifications.deletedCount,
       });
     });
   } finally {

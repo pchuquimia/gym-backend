@@ -1,19 +1,16 @@
 import { Router } from "express";
 import AthleteCheckIn from "../models/AthleteCheckIn.js";
-import {
-  ensureCanAccessOwner,
-  protect,
-  requireFeature,
-} from "../middleware/authMiddleware.js";
+import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import {
   calculateReadiness,
   dateKey,
   shiftDateKey,
 } from "../utils/coachPremium.js";
-import { PREMIUM_FEATURES } from "../utils/subscription.js";
+import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
 import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
 import { refreshAthleteDailyMetric } from "../services/athleteMetricsService.js";
 import { deleteCacheByPrefix } from "../services/cacheService.js";
+import CoachNotification from "../models/CoachNotification.js";
 
 const router = Router();
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -30,7 +27,18 @@ const PAIN_AREAS = new Set([
 ]);
 
 router.use(protect);
-router.use(requireFeature(PREMIUM_FEATURES.DAILY_CHECKIN));
+router.use((req, _res, next) => {
+  if (
+    req.user.trainingMode === "coach_managed" ||
+    hasPremiumFeature(req.user, PREMIUM_FEATURES.DAILY_CHECKIN)
+  ) {
+    return next();
+  }
+  const error = new Error("Esta funcionalidad requiere un plan premium");
+  error.statusCode = 403;
+  error.code = "PREMIUM_FEATURE_REQUIRED";
+  return next(error);
+});
 
 const requestedAthleteId = (req) =>
   String(req.query.athleteId || req.body.athleteId || req.user.id).trim();
@@ -122,6 +130,10 @@ router.post("/", async (req, res, next) => {
     ]
       .filter((item) => PAIN_AREAS.has(item))
       .slice(0, 8);
+    const previousCheckIn = await AthleteCheckIn.findOne({
+      athleteId,
+      dateKey: submittedDate,
+    }).lean();
     const checkIn = await AthleteCheckIn.findOneAndUpdate(
       { athleteId, dateKey: submittedDate },
       {
@@ -146,6 +158,20 @@ router.post("/", async (req, res, next) => {
     await refreshAthleteDailyMetric(athleteId, submittedDate);
     await enqueueAthleteMetricRefresh(athleteId, submittedDate);
     await deleteCacheByPrefix(`dashboard:${athleteId}:`);
+    if (
+      req.user.assignedTrainerId &&
+      ["adjust", "recover"].includes(readiness.state) &&
+      !["adjust", "recover"].includes(previousCheckIn?.readinessState)
+    ) {
+      await CoachNotification.create({
+        coachId: String(req.user.assignedTrainerId),
+        athleteId,
+        entityId: String(checkIn._id),
+        type: "critical_check_in",
+        title: "Check-in que requiere atención",
+        message: `${req.user.name || "Tu alumno"} reportó una disponibilidad de ${readiness.score}/100.`,
+      }).catch(() => {});
+    }
     res.status(201).json({ checkIn, recommendation: readiness.recommendation });
   } catch (error) {
     next(error);
