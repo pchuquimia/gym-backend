@@ -1,4 +1,6 @@
 import { Router } from "express";
+import mongoose from "mongoose";
+import { clearExerciseFacetCache } from "./exercises.js";
 import {
   authorizeRoles,
   ensureCanAccessOwner,
@@ -6,6 +8,7 @@ import {
   protect,
 } from "../middleware/authMiddleware.js";
 import Training from "../models/Training.js";
+import TrainingDraft from "../models/TrainingDraft.js";
 import Exercise from "../models/Exercise.js";
 import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
@@ -30,7 +33,15 @@ import {
   resolvePlannedTrainingSlot,
   validateTrainingSubmission,
 } from "../utils/trainingSubmission.js";
-import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
+import {
+  HISTORICAL_WEIGHT_BASES,
+  normalizeHistoricalExerciseConfig,
+} from "../utils/historicalExerciseConfig.js";
+import {
+  applyTrainingValueEdits,
+  normalizeHistoricalValueEdits,
+} from "../utils/historicalValueEdits.js";
+import { convertHistoricalWeight } from "../utils/exerciseWeightMigration.js";
 import { toTrainingWeightConfig } from "../utils/weightConfig.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
 import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
@@ -44,6 +55,22 @@ import {
   calculateTimingSummary,
   normalizeTimeEvents,
 } from "../utils/trainingTiming.js";
+
+const clearCompletedTrainingDraft = async ({
+  ownerId,
+  startedById,
+  trainingId,
+}) => {
+  try {
+    await TrainingDraft.deleteOne({
+      ownerId: String(ownerId),
+      startedById: String(startedById),
+      trainingRequestId: String(trainingId),
+    });
+  } catch (error) {
+    console.error("No se pudo limpiar el borrador finalizado", error);
+  }
+};
 
 const router = Router();
 
@@ -261,6 +288,7 @@ router.get("/exercise-counts", async (req, res, next) => {
                 ],
               },
             },
+            historicalName: { $first: "$exercises.exerciseName" },
           },
         },
       ]).option({ maxTimeMS: 10000 }),
@@ -277,6 +305,7 @@ router.get("/exercise-counts", async (req, res, next) => {
             _id: "$exerciseId",
             recordIds: { $addToSet: { $toString: "$_id" } },
             lastDate: { $max: "$date" },
+            historicalName: { $first: "$exerciseName" },
           },
         },
       ]).option({ maxTimeMS: 10000 }),
@@ -313,6 +342,7 @@ router.get("/exercise-counts", async (req, res, next) => {
           legacyRecordIds: new Set(),
           lastDate: null,
           historicalGroup: "",
+          historicalName: "",
         });
       }
       return counts.get(exerciseId);
@@ -328,6 +358,7 @@ router.get("/exercise-counts", async (req, res, next) => {
           ? row.lastDate
           : count.lastDate;
       count.historicalGroup = row.historicalGroup || "";
+      count.historicalName = row.historicalName || "";
     });
     sessionRows.forEach((row) => {
       const exerciseId = String(row._id || "");
@@ -338,6 +369,8 @@ router.get("/exercise-counts", async (req, res, next) => {
         !count.lastDate || String(row.lastDate) > String(count.lastDate)
           ? row.lastDate
           : count.lastDate;
+      if (!count.historicalName)
+        count.historicalName = row.historicalName || "";
     });
 
     const groupRecordIds = new Map();
@@ -362,6 +395,7 @@ router.get("/exercise-counts", async (req, res, next) => {
         });
         return {
           exerciseId: count.exerciseId,
+          name: count.historicalName || count.exerciseId,
           group,
           count: count.trainingRecordIds.size + count.legacyRecordIds.size,
           trainingCount: count.trainingRecordIds.size,
@@ -435,6 +469,236 @@ router.get("/exercise-history", async (req, res, next) => {
     next(error);
   }
 });
+
+// POST /api/trainings/exercise-weight-migration
+// Simula o aplica una conversión completa de un ejercicio para un atleta.
+router.post(
+  "/exercise-weight-migration",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const exerciseId = String(req.body.exerciseId || "").trim();
+      const apply = req.body.apply === true;
+      const conversion = String(req.body.conversion || "keep");
+      const sourceBases = new Set(
+        (Array.isArray(req.body.sourceBases) ? req.body.sourceBases : [])
+          .map(String)
+          .filter((basis) => HISTORICAL_WEIGHT_BASES.has(basis)),
+      );
+      if (!exerciseId) {
+        return res.status(400).json({ error: "Selecciona un ejercicio" });
+      }
+      if (!sourceBases.size) {
+        return res
+          .status(400)
+          .json({ error: "Selecciona los registros de origen" });
+      }
+      if (!["keep", "from_total", "to_total"].includes(conversion)) {
+        return res.status(400).json({ error: "La conversión no es válida" });
+      }
+
+      const targetConfig = normalizeHistoricalExerciseConfig(
+        {
+          movementMode: "bilateral",
+          weightBasis: req.body.targetConfig?.weightBasis,
+          barWeightKg: req.body.targetConfig?.barWeightKg,
+          implementCount: req.body.targetConfig?.implementCount,
+        },
+        {},
+      );
+      if (targetConfig.weightBasis === "legacy") {
+        return res
+          .status(400)
+          .json({ error: "El método futuro no puede ser histórico" });
+      }
+      const ownerFilter = await getAccessibleOwnerFilter(req);
+      const ownerId = ownerFilter.ownerId;
+      const [catalogExercise, trainings, sessions] = await Promise.all([
+        Exercise.findById(exerciseId),
+        Training.find({
+          ...ownerFilter,
+          "exercises.exerciseId": exerciseId,
+        }).sort({ date: 1 }),
+        Session.find({ ...ownerFilter, exerciseId }).sort({ date: 1 }),
+      ]);
+      if (!catalogExercise) {
+        return res.status(404).json({ error: "No se encontró el ejercicio" });
+      }
+
+      const transformWeight = (value, sourceConfig) =>
+        convertHistoricalWeight(value, {
+          conversion,
+          sourceConfig,
+          targetConfig,
+        });
+      const samples = [];
+      let trainingRecords = 0;
+      let sessionRecords = 0;
+      let values = 0;
+      const dates = new Set();
+      const changedTrainingIds = new Set();
+      const originalTrainings = [];
+      const originalSessions = [];
+
+      trainings.forEach((training) => {
+        let changed = false;
+        training.exercises.forEach((exercise) => {
+          if (
+            String(exercise.exerciseId) !== exerciseId ||
+            !sourceBases.has(exercise.weightBasis || "legacy")
+          )
+            return;
+          if (!changed) originalTrainings.push(training.toObject());
+          changed = true;
+          trainingRecords += 1;
+          const before = [];
+          const after = [];
+          exercise.sets.forEach((set) => {
+            const entries = set.entries.length ? set.entries : [set];
+            entries.forEach((entry) => {
+              const sourceValue = entry.weightKg;
+              const targetValue = transformWeight(sourceValue, exercise);
+              if (
+                Number.isFinite(Number(sourceValue)) &&
+                Number(sourceValue) > 0
+              ) {
+                before.push(Number(sourceValue));
+                after.push(Number(targetValue));
+                values += 1;
+              }
+              entry.weightKg = targetValue;
+            });
+            if (!set.entries.length)
+              set.weightKg = transformWeight(set.weightKg, exercise);
+          });
+          if (samples.length < 8) {
+            samples.push({
+              date: training.date,
+              routineName: training.routineName,
+              source: "training",
+              before,
+              after,
+            });
+          }
+          exercise.weightBasis = targetConfig.weightBasis;
+          exercise.barWeightKg = targetConfig.barWeightKg;
+          exercise.implementCount = targetConfig.implementCount;
+        });
+        if (changed) {
+          dates.add(training.date);
+          changedTrainingIds.add(String(training._id));
+          training.markModified("exercises");
+          const metrics = getTrainingLoadMetrics(training.exercises);
+          training.totalVolume = metrics.recordedKg;
+          training.volumeBreakdown = metrics;
+        }
+      });
+
+      sessions.forEach((session) => {
+        if (!sourceBases.has(session.weightBasis || "legacy")) return;
+        originalSessions.push(session.toObject());
+        sessionRecords += 1;
+        const before = [];
+        const after = [];
+        session.sets.forEach((set) => {
+          const sourceValue = set.weight;
+          const targetValue = transformWeight(sourceValue, session);
+          if (Number.isFinite(Number(sourceValue)) && Number(sourceValue) > 0) {
+            before.push(Number(sourceValue));
+            after.push(Number(targetValue));
+            values += 1;
+          }
+          set.weight = targetValue;
+        });
+        dates.add(session.date);
+        if (samples.length < 8) {
+          samples.push({
+            date: session.date,
+            routineName: session.routineName,
+            source: "session",
+            before,
+            after,
+          });
+        }
+        session.weightBasis = targetConfig.weightBasis;
+        session.barWeightKg = targetConfig.barWeightKg;
+        session.implementCount = targetConfig.implementCount;
+      });
+
+      const result = {
+        mode: apply ? "apply" : "preview",
+        exerciseId,
+        trainingRecords,
+        sessionRecords,
+        values,
+        dates: dates.size,
+        samples,
+        targetConfig: {
+          weightBasis: targetConfig.weightBasis,
+          barWeightKg: targetConfig.barWeightKg,
+          implementCount: targetConfig.implementCount,
+        },
+      };
+      if (!apply) return res.json(result);
+
+      const backupKey = `exercise-weight-editor:${exerciseId}:${new Date().toISOString()}`;
+      await mongoose.connection.db
+        .collection("databaseRepairBackups")
+        .insertOne({
+          repairKey: backupKey,
+          repairType: "exercise-weight-editor-v1",
+          ownerId,
+          exerciseId,
+          createdAt: new Date(),
+          exercise: catalogExercise.toObject(),
+          trainings: originalTrainings,
+          sessions: originalSessions,
+        });
+
+      catalogExercise.weightConfig = {
+        basis: targetConfig.weightBasis,
+        barWeightKg: targetConfig.barWeightKg,
+        implementCount: targetConfig.implementCount,
+      };
+      const dbSession = await mongoose.startSession();
+      try {
+        await dbSession.withTransaction(async () => {
+          await catalogExercise.save({ session: dbSession });
+          for (const training of trainings) {
+            if (changedTrainingIds.has(String(training._id))) {
+              await training.save({ session: dbSession });
+            }
+          }
+          for (const session of sessions) {
+            if (
+              originalSessions.some(
+                (item) => String(item._id) === String(session._id),
+              )
+            ) {
+              await session.save({ session: dbSession });
+            }
+          }
+        });
+      } finally {
+        await dbSession.endSession();
+      }
+      clearExerciseFacetCache();
+      for (const date of dates) {
+        try {
+          await queueAthleteMetricsRefresh(ownerId, date);
+        } catch (error) {
+          console.warn(
+            `[metrics] No se pudo encolar la fecha ${date}: ${error.message}`,
+          );
+        }
+      }
+      res.set("Cache-Control", "private, no-store");
+      res.json({ ...result, backupKey, verified: true });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 // GET /api/trainings/summary?from=&to=&routineId=
 router.get("/summary", async (req, res, next) => {
@@ -776,6 +1040,11 @@ router.post("/", async (req, res, next) => {
           ownerId,
         });
         if (existing) {
+          await clearCompletedTrainingDraft({
+            ownerId,
+            startedById: req.user.id,
+            trainingId: existing._id,
+          });
           res.set("Idempotent-Replay", "true");
           return res.status(200).json(existing);
         }
@@ -888,6 +1157,11 @@ router.post("/", async (req, res, next) => {
         });
       }
     }
+    await clearCompletedTrainingDraft({
+      ownerId: training.ownerId,
+      startedById: req.user.id,
+      trainingId: training._id,
+    });
     await queueAthleteMetricsRefresh(training.ownerId, training.date);
     const responseBody = training.toObject();
     if (registrationWarnings.length) {
@@ -948,10 +1222,20 @@ router.patch(
         return res.status(403).json({ error: "No autorizado" });
       }
 
-      const exerciseIndex = training.exercises.findIndex(
-        (exercise) =>
-          String(exercise.exerciseId || "") === String(req.params.exerciseId),
-      );
+      const requestedExerciseIndex = Number(req.body?.exerciseIndex);
+      const hasRequestedExerciseIndex = Number.isInteger(requestedExerciseIndex);
+      const indexedExercise = hasRequestedExerciseIndex
+        ? training.exercises[requestedExerciseIndex]
+        : null;
+      const exerciseIndex =
+        indexedExercise &&
+        String(indexedExercise.exerciseId || "") === String(req.params.exerciseId)
+          ? requestedExerciseIndex
+          : training.exercises.findIndex(
+              (exercise) =>
+                String(exercise.exerciseId || "") ===
+                String(req.params.exerciseId),
+            );
       if (exerciseIndex < 0) {
         return res.status(404).json({
           error: "El ejercicio no pertenece a este entrenamiento",
@@ -960,7 +1244,9 @@ router.patch(
 
       const exercise = training.exercises[exerciseIndex];
       const config = normalizeHistoricalExerciseConfig(req.body, exercise);
+      const valueEdits = normalizeHistoricalValueEdits(req.body.values);
       Object.assign(exercise, config);
+      applyTrainingValueEdits(exercise, valueEdits);
       training.markModified("exercises");
 
       const loadMetrics = getTrainingLoadMetrics(training.exercises);
@@ -975,6 +1261,7 @@ router.patch(
         date: training.date,
         routineName: training.routineName,
         exercise,
+        historyValuesUpdated: valueEdits.length,
         totalVolume: training.totalVolume,
         volumeBreakdown: training.volumeBreakdown,
       });

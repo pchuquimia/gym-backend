@@ -76,7 +76,7 @@ const SYSTEM_CATALOG_FILTER = {
 const VERSIONED_CATALOG_FIELDS =
   "name localizedNames nameSpanish nameEnglish slug aliases discovery category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
 
-const clearExerciseFacetCache = () => {
+export const clearExerciseFacetCache = () => {
   exerciseFacetCache.clear();
   exerciseListCache.clear();
   systemCatalogVersionCache = null;

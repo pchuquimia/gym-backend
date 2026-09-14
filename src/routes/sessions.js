@@ -7,7 +7,12 @@ import {
 } from "../middleware/authMiddleware.js";
 import Session from "../models/Session.js";
 import { normalizeHistoricalExerciseConfig } from "../utils/historicalExerciseConfig.js";
+import {
+  applySessionValueEdits,
+  normalizeHistoricalValueEdits,
+} from "../utils/historicalValueEdits.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
+import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
 import {
   applyCursorFilter,
   decodeCursor,
@@ -91,10 +96,23 @@ router.patch("/:id/config", authorizeRoles("Admin"), async (req, res, next) => {
       session,
       normalizeHistoricalExerciseConfig(req.body, session),
     );
+    const valueEdits = normalizeHistoricalValueEdits(req.body.values);
+    applySessionValueEdits(session, valueEdits);
+    session.markModified("sets");
     await session.save();
+    try {
+      await enqueueAthleteMetricRefresh(session.ownerId, session.date);
+    } catch (error) {
+      console.warn(
+        `[metrics] No se pudo encolar la fecha ${session.date}: ${error.message}`,
+      );
+    }
 
     res.set("Cache-Control", "private, no-store");
-    res.json(session);
+    res.json({
+      ...session.toObject(),
+      historyValuesUpdated: valueEdits.length,
+    });
   } catch (err) {
     next(err);
   }

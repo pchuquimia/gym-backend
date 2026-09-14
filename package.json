@@ -26,6 +26,7 @@
     "photos:migrate:apply": "node scripts/migrateProgressPhotos.js --apply",
     "exercises:backfill-localized-names": "node scripts/backfillExerciseLocalizedNames.js --apply",
     "exercises:backfill-weight-config": "node scripts/backfillExerciseWeightConfig.js --apply",
+    "weights:restore-bench-per-side": "node scripts/restoreBenchPressPerSideWeights.js",
     "exercises:normalize-catalog": "node scripts/normalizeExerciseCatalog.js",
     "plans:backfill": "node scripts/backfillTrainingPlans.js",
     "plans:migrate-structure": "node scripts/migratePlanningStructure.js --apply",
