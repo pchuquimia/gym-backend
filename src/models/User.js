@@ -273,50 +273,54 @@ UserSchema.methods.comparePassword = function comparePassword(candidate) {
 
 UserSchema.index({ role: 1, assignedTrainerId: 1, isActive: 1, name: 1 });
 
-UserSchema.methods.toSafeJSON = function toSafeJSON() {
-  const subscription = getEffectiveSubscription(this);
+export const toSafeUserJSON = (user) => {
+  const subscription = getEffectiveSubscription(user);
   return {
-    id: this._id.toString(),
-    name: this.name,
-    email: this.email,
-    username: this.username || null,
-    role: this.role,
+    id: String(user._id || user.id),
+    name: user.name,
+    email: user.email,
+    username: user.username || null,
+    role: user.role,
     trainingMode:
-      this.role === "Cliente" && this.assignedTrainerId
+      user.role === "Cliente" && user.assignedTrainerId
         ? "coach_managed"
-        : this.trainingMode || "independent",
+        : user.trainingMode || "independent",
     onboarding: {
-      accountType: this.onboarding?.accountType || null,
-      status: this.onboarding?.status || "complete",
-      completedAt: this.onboarding?.completedAt || null,
+      accountType: user.onboarding?.accountType || null,
+      status: user.onboarding?.status || "complete",
+      completedAt: user.onboarding?.completedAt || null,
     },
     coachIntake: {
-      coachId: this.coachIntake?.coachId || null,
-      settingsVersion: this.coachIntake?.settingsVersion || null,
-      status: this.coachIntake?.status || "pending",
-      requestedAt: this.coachIntake?.requestedAt || null,
-      submittedAt: this.coachIntake?.submittedAt || null,
-      answers: this.coachIntake?.answers || [],
+      coachId: user.coachIntake?.coachId || null,
+      settingsVersion: user.coachIntake?.settingsVersion || null,
+      status: user.coachIntake?.status || "pending",
+      requestedAt: user.coachIntake?.requestedAt || null,
+      submittedAt: user.coachIntake?.submittedAt || null,
+      answers: user.coachIntake?.answers || [],
     },
-    assignedTrainerId: this.assignedTrainerId || null,
-    coachCode: ["Admin", "Entrenador"].includes(this.role)
-      ? this.coachCode || null
+    assignedTrainerId: user.assignedTrainerId || null,
+    coachCode: ["Admin", "Entrenador"].includes(user.role)
+      ? user.coachCode || null
       : null,
-    isActive: this.isActive,
-    isDemo: Boolean(this.isDemo),
-    demoExpiresAt: this.isDemo ? this.demoExpiresAt || null : null,
-    lastLoginAt: this.lastLoginAt,
-    profile: this.profile,
-    security: this.security,
-    emailPreferences: this.emailPreferences,
-    passwordChangedAt: this.passwordChangedAt,
-    emailVerificationRequired: this.emailVerificationRequired,
-    emailVerifiedAt: this.emailVerifiedAt,
+    isActive: user.isActive,
+    isDemo: Boolean(user.isDemo),
+    demoExpiresAt: user.isDemo ? user.demoExpiresAt || null : null,
+    lastLoginAt: user.lastLoginAt,
+    profile: user.profile,
+    security: user.security,
+    emailPreferences: user.emailPreferences,
+    passwordChangedAt: user.passwordChangedAt,
+    emailVerificationRequired: user.emailVerificationRequired,
+    emailVerifiedAt: user.emailVerifiedAt,
     subscription,
-    entitlements: getEntitlements(this),
-    createdAt: this.createdAt,
-    updatedAt: this.updatedAt,
+    entitlements: getEntitlements(user),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
+};
+
+UserSchema.methods.toSafeJSON = function toSafeJSON() {
+  return toSafeUserJSON(this);
 };
 
 export default mongoose.model("User", UserSchema);

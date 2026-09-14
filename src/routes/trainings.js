@@ -49,9 +49,13 @@ const router = Router();
 
 router.use(protect);
 
-const synchronizeAthleteMetrics = async (ownerId, trainingDate) => {
-  await refreshAthleteDailyMetric(ownerId, trainingDate);
+const queueAthleteMetricsRefresh = async (ownerId, trainingDate) => {
   await enqueueAthleteMetricRefresh(ownerId, trainingDate);
+  void refreshAthleteDailyMetric(ownerId, trainingDate).catch((error) => {
+    console.warn(
+      `[metrics] No se pudo actualizar el resumen diario de ${ownerId}: ${error.message}`,
+    );
+  });
 };
 
 const canMutateTraining = async (req, training) => {
@@ -884,7 +888,7 @@ router.post("/", async (req, res, next) => {
         });
       }
     }
-    await synchronizeAthleteMetrics(training.ownerId, training.date);
+    await queueAthleteMetricsRefresh(training.ownerId, training.date);
     const responseBody = training.toObject();
     if (registrationWarnings.length) {
       responseBody.registrationWarnings = registrationWarnings;
@@ -923,7 +927,7 @@ router.patch(
         { durationSeconds, durationOverrideSeconds: durationSeconds },
         { new: true, runValidators: true },
       );
-      await synchronizeAthleteMetrics(current.ownerId, current.date);
+      await queueAthleteMetricsRefresh(current.ownerId, current.date);
       res.json(training);
     } catch (err) {
       next(err);
@@ -963,7 +967,7 @@ router.patch(
       training.totalVolume = loadMetrics.recordedKg;
       training.volumeBreakdown = loadMetrics;
       await training.save();
-      await synchronizeAthleteMetrics(training.ownerId, training.date);
+      await queueAthleteMetricsRefresh(training.ownerId, training.date);
 
       res.set("Cache-Control", "private, no-store");
       res.json({
@@ -1055,7 +1059,7 @@ router.put("/:id", async (req, res, next) => {
     if (!updated) return res.status(404).json({ error: "Not found" });
     await Promise.all(
       [...new Set([current.date, updated.date].filter(Boolean))].map((date) =>
-        synchronizeAthleteMetrics(updated.ownerId, date),
+        queueAthleteMetricsRefresh(updated.ownerId, date),
       ),
     );
     res.json(updated);
@@ -1088,7 +1092,7 @@ router.delete("/:id", async (req, res, next) => {
     } finally {
       await dbSession.endSession();
     }
-    await synchronizeAthleteMetrics(current.ownerId, current.date);
+    await queueAthleteMetricsRefresh(current.ownerId, current.date);
     res.json({ ok: true, deletedSessions });
   } catch (err) {
     next(err);

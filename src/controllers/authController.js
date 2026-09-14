@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import User from "../models/User.js";
+import User, { toSafeUserJSON } from "../models/User.js";
 import Photo from "../models/Photo.js";
 import Training from "../models/Training.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
@@ -36,6 +36,7 @@ import { deleteAccountData } from "../services/accountDeletionService.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
+const SESSION_LAST_SEEN_WRITE_INTERVAL_MS = 5 * 60 * 1000;
 
 const signToken = (user, sessionId) =>
   jwt.sign(
@@ -984,22 +985,46 @@ const logout = asyncHandler(async (req, res) => {
 });
 
 const me = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id);
+  const user = req.authenticatedUser;
   if (!user || !user.isActive) {
     const err = new Error("No autenticado");
     err.statusCode = 401;
     throw err;
   }
   if (req.user.sessionId) {
-    user.activeSessions = (user.activeSessions || []).map((session) =>
-      session.sessionId === req.user.sessionId
-        ? { ...(session.toObject?.() || session), lastSeenAt: new Date() }
-        : session,
+    const session = (user.activeSessions || []).find(
+      (entry) => entry.sessionId === req.user.sessionId,
     );
-    await user.save();
+    const previousLastSeenAt = new Date(session?.lastSeenAt || 0).getTime();
+    const now = Date.now();
+    if (
+      !Number.isFinite(previousLastSeenAt) ||
+      now - previousLastSeenAt >= SESSION_LAST_SEEN_WRITE_INTERVAL_MS
+    ) {
+      const staleBefore = new Date(now - SESSION_LAST_SEEN_WRITE_INTERVAL_MS);
+      void User.updateOne(
+        {
+          _id: req.user.id,
+          activeSessions: {
+            $elemMatch: {
+              sessionId: req.user.sessionId,
+              $or: [
+                { lastSeenAt: { $lt: staleBefore } },
+                { lastSeenAt: { $exists: false } },
+              ],
+            },
+          },
+        },
+        { $set: { "activeSessions.$.lastSeenAt": new Date(now) } },
+      ).catch((error) => {
+        console.warn(
+          `[auth] No se pudo actualizar la actividad de la sesion: ${error.message}`,
+        );
+      });
+    }
   }
   res.set("Cache-Control", "no-store");
-  res.json({ user: sanitizeUser(user) });
+  res.json({ user: toSafeUserJSON(user) });
 });
 
 const getProfile = asyncHandler(async (req, res) => {
@@ -1301,10 +1326,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
     err.statusCode = 403;
     throw err;
   }
-  if (
-    user.assignedTrainerId &&
-    req.user.coachIntake?.status !== "submitted"
-  ) {
+  if (user.assignedTrainerId && req.user.coachIntake?.status !== "submitted") {
     await CoachNotification.create({
       coachId: String(user.assignedTrainerId),
       athleteId: String(user._id),

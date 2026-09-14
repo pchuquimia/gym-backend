@@ -1,4 +1,4 @@
-import User from "../src/models/User.js";
+import User, { toSafeUserJSON } from "../src/models/User.js";
 
 describe("user onboarding", () => {
   test("expone el estado pendiente y evita medidas corporales ficticias", () => {
@@ -91,5 +91,25 @@ describe("user onboarding", () => {
     });
 
     expect(user.toSafeJSON().onboarding.status).toBe("complete");
+  });
+
+  test("serializa una lectura lean sin exponer sesiones activas", () => {
+    const safeUser = toSafeUserJSON({
+      _id: "507f1f77bcf86cd799439011",
+      name: "Atleta Lean",
+      email: "lean@example.com",
+      role: "Cliente",
+      isActive: true,
+      activeSessions: [{ sessionId: "sesion-interna" }],
+      profile: { language: "es" },
+      subscription: { plan: "free", status: "active" },
+    });
+
+    expect(safeUser).toMatchObject({
+      id: "507f1f77bcf86cd799439011",
+      name: "Atleta Lean",
+      onboarding: { status: "complete" },
+    });
+    expect(safeUser).not.toHaveProperty("activeSessions");
   });
 });

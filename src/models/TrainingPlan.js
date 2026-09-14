@@ -156,6 +156,12 @@ const TrainingPlanSchema = new mongoose.Schema(
 
 TrainingPlanSchema.index({ athleteId: 1, status: 1, updatedAt: -1 });
 TrainingPlanSchema.index({ coachId: 1, athleteId: 1, updatedAt: -1 });
+TrainingPlanSchema.index({
+  coachId: 1,
+  status: 1,
+  athleteId: 1,
+  updatedAt: -1,
+});
 TrainingPlanSchema.index(
   { athleteId: 1, status: 1 },
   {

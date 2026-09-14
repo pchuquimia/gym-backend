@@ -28,6 +28,7 @@ import dashboardRoutes from "./routes/dashboard.js";
 import measurementsRoutes from "./routes/measurements.js";
 import assessmentsRoutes from "./routes/assessments.js";
 import notificationsRoutes from "./routes/notifications.js";
+import operationsRoutes from "./routes/operations.js";
 import { errorHandler, notFound } from "./middleware/errorHandler.js";
 import { performanceTiming } from "./middleware/performanceTiming.js";
 import { getCacheStatus } from "./services/cacheService.js";
@@ -79,6 +80,7 @@ const corsOptions = {
     "Server-Timing",
     "X-Response-Time",
     "X-Data-Cache",
+    "X-Intelligence-Source",
     "ETag",
     "X-Catalog-Version",
   ],
@@ -169,6 +171,7 @@ app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/measurements", measurementsRoutes);
 app.use("/api/assessments", assessmentsRoutes);
 app.use("/api/notifications", notificationsRoutes);
+app.use("/api/operations", operationsRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

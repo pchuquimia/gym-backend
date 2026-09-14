@@ -2,7 +2,7 @@ import { Router } from "express";
 import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import HydrationEntry from "../models/HydrationEntry.js";
 import User from "../models/User.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
+import { bumpCacheVersion } from "../services/cacheService.js";
 
 const router = Router();
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,7 +76,10 @@ const buildHydrationResponse = async ({ ownerId, from, to, selectedDate }) => {
   const goalMl = getGoalMl(owner?.profile);
   const totals = new Map();
   entries.forEach((entry) => {
-    totals.set(entry.dateKey, (totals.get(entry.dateKey) || 0) + entry.amountMl);
+    totals.set(
+      entry.dateKey,
+      (totals.get(entry.dateKey) || 0) + entry.amountMl,
+    );
   });
   const days = buildDayRange(from, to).map((dateKey) => {
     const totalMl = totals.get(dateKey) || 0;
@@ -174,7 +177,7 @@ router.post("/", async (req, res, next) => {
       recordedBy: req.user.id,
       source: ownerId === req.user.id ? "self" : "coach",
     });
-    await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+    await bumpCacheVersion(`dashboard:${ownerId}`);
     res.status(201).json(entry);
   } catch (error) {
     next(error);
@@ -205,7 +208,7 @@ router.post("/complete", async (req, res, next) => {
         recordedBy: req.user.id,
         source: ownerId === req.user.id ? "self" : "coach",
       });
-      await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+      await bumpCacheVersion(`dashboard:${ownerId}`);
     }
 
     res.status(entry ? 201 : 200).json({
@@ -230,7 +233,7 @@ router.patch("/goal", async (req, res, next) => {
     await User.findByIdAndUpdate(ownerId, {
       $set: { "profile.hydrationGoalMl": Math.round(goalMl / 50) * 50 },
     });
-    await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+    await bumpCacheVersion(`dashboard:${ownerId}`);
     res.json({ goalMl: Math.round(goalMl / 50) * 50 });
   } catch (error) {
     next(error);
@@ -247,7 +250,7 @@ router.delete("/:id", async (req, res, next) => {
       return res.status(403).json({ error: "No autorizado" });
     }
     await HydrationEntry.findByIdAndDelete(req.params.id);
-    await deleteCacheByPrefix(`dashboard:${entry.ownerId}:`);
+    await bumpCacheVersion(`dashboard:${entry.ownerId}`);
     res.json({ ok: true });
   } catch (error) {
     next(error);

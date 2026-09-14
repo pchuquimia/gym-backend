@@ -35,13 +35,13 @@ API de RIRFIT. Gestiona autenticación, usuarios, coaches, atletas, ejercicios, 
 
 3. Configura como mínimo:
 
-   | Variable     | Descripción                                  |
-   | ------------ | -------------------------------------------- |
-   | `MONGO_URI`  | Cadena de conexión a MongoDB.                |
+   | Variable     | Descripción                                                             |
+   | ------------ | ----------------------------------------------------------------------- |
+   | `MONGO_URI`  | Cadena de conexión a MongoDB.                                           |
    | `JWT_SECRET` | Secreto aleatorio de al menos 32 bytes y 120 bits de entropía estimada. |
-   | `CLIENT_URL` | Origen permitido del frontend.               |
-   | `PORT`       | Puerto HTTP; por defecto `4000`.             |
-   | `NODE_ENV`   | `development` o `production`.                |
+   | `CLIENT_URL` | Origen permitido del frontend.                                          |
+   | `PORT`       | Puerto HTTP; por defecto `4000`.                                        |
+   | `NODE_ENV`   | `development` o `production`.                                           |
 
 4. Inicia la API:
 
@@ -167,6 +167,51 @@ En produccion ejecuta un segundo servicio con:
 ```powershell
 npm run worker:metrics
 ```
+
+### Rendimiento del API
+
+Una cuenta `Admin` puede consultar las metricas agregadas del proceso actual en
+`GET /api/operations/performance`. La respuesta incluye p50, p95 y p99 por
+endpoint, operaciones de base de datos, tamano de respuesta, errores y aciertos
+de cache. `DELETE /api/operations/performance` reinicia la ventana de muestras.
+
+Para una prueba de lectura local o sobre un entorno de pruebas:
+
+```powershell
+$env:LOAD_TEST_BASE_URL="http://localhost:4000"
+$env:LOAD_TEST_TOKEN="token-de-una-cuenta-de-prueba"
+npm run performance:load -- dashboard 100 10
+npm run performance:load -- portfolio 100 10
+```
+
+Los argumentos son objetivo, cantidad total y concurrencia. El script solo
+admite endpoints GET predefinidos y nunca recibe el token por argumentos.
+La cartera del coach conserva un snapshot de servidor durante 5 segundos y
+agrupa solicitudes simultaneas mientras se construye; `X-Data-Cache` permite
+distinguir `PORTFOLIO-HIT` de `PORTFOLIO-MISS` en las mediciones.
+
+Para medir una cartera realista sin tocar datos remotos, utiliza una base local
+cuyo nombre termine en `_performance_test`. El generador exige una confirmacion
+explicita, una contrasena temporal recibida por entorno y una cuenta Admin creada
+previamente por `POST /api/auth/dev-admin`:
+
+```powershell
+$env:MONGO_URI="mongodb://127.0.0.1:27017/gym_performance_test"
+$env:PERFORMANCE_SEED_CONFIRM="local-only"
+$env:PERFORMANCE_TEST_PASSWORD="contrasena-temporal-segura"
+npm run performance:seed -- 100
+```
+
+El ultimo argumento admite de 1 a 100 alumnos. Las cuentas usan el dominio
+reservado `example.invalid`; al repetir la prueba, solo se activan las cuentas
+sinteticas solicitadas. Por defecto, el script rechaza MongoDB Atlas, hosts
+remotos y bases que no terminen en `_performance_test`.
+
+En un servicio con `NODE_ENV=staging` tambien puede utilizarse Atlas, pero solo
+si `MONGO_DB_NAME` termina en `_performance_test` y se configuran
+`PERFORMANCE_SEED_CONFIRM=remote-staging` y
+`PERFORMANCE_SEED_ALLOW_REMOTE=true`. Esta excepcion crea o rota exclusivamente
+la cuenta `PERFORMANCE_ADMIN_EMAIL` y nunca habilita la base de produccion.
 
 Si `REDIS_URL` esta configurado, los snapshots se comparten entre instancias;
 sin Redis se utiliza un LRU local limitado. Configura `BACKEND_REGION` y

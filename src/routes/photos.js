@@ -28,7 +28,7 @@ import {
   queueAndProcessPhotoAssetCleanup,
   queuePhotoAssetCleanup,
 } from "../services/photoAssetCleanupService.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
+import { bumpCacheVersion } from "../services/cacheService.js";
 
 const router = Router();
 ensurePhotoStorageDirectories();
@@ -494,7 +494,7 @@ router.post("/upload", receivePhoto, async (req, res, next) => {
         .trim()
         .slice(0, 120),
     });
-    await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+    await bumpCacheVersion(`dashboard:${ownerId}`);
     return res.status(201).json(serializePhoto(photo));
   } catch (error) {
     await removeLocalFile(req.file?.path);

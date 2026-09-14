@@ -9,6 +9,12 @@ export const getMongoConnectionOptions = () => {
   const maxPoolSize = Number.isFinite(configuredPoolSize)
     ? Math.max(2, configuredPoolSize)
     : 10;
+  const configuredDatabase = String(process.env.MONGO_DB_NAME || "").trim();
+  if (configuredDatabase && !/^[A-Za-z0-9_-]+$/.test(configuredDatabase)) {
+    throw new Error(
+      "MONGO_DB_NAME solo puede contener letras, numeros, guiones y guiones bajos",
+    );
+  }
   return {
     serverSelectionTimeoutMS: 10_000,
     connectTimeoutMS: 10_000,
@@ -23,6 +29,7 @@ export const getMongoConnectionOptions = () => {
       : 2,
     retryReads: true,
     retryWrites: true,
+    ...(configuredDatabase ? { dbName: configuredDatabase } : {}),
   };
 };
 

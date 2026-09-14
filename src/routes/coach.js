@@ -19,7 +19,12 @@ import CoachNotification from "../models/CoachNotification.js";
 import WeightEntry from "../models/WeightEntry.js";
 import Photo from "../models/Photo.js";
 import UserNotification from "../models/UserNotification.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
+import {
+  bumpCacheVersion,
+  getCache,
+  setCache,
+} from "../services/cacheService.js";
+import { measureDatabase } from "../middleware/performanceTiming.js";
 import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
@@ -48,6 +53,8 @@ import {
 const router = Router();
 const PLAN_LEVELS = ["beginner", "intermediate", "advanced"];
 const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const PORTFOLIO_CACHE_TTL_SECONDS = 5;
+const portfolioBuilds = new Map();
 
 const invitationTokenHash = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
@@ -427,13 +434,19 @@ router.get(
   async (req, res, next) => {
     try {
       const coachCode = await ensureCoachCode(req.user.id);
-      const athleteCount = await User.countDocuments({
-        role: "Cliente",
-        assignedTrainerId: req.user.id,
-        isActive: true,
-      });
+      const includeAthleteCount = req.query.includeAthleteCount !== "false";
+      const athleteCount = includeAthleteCount
+        ? await User.countDocuments({
+            role: "Cliente",
+            assignedTrainerId: req.user.id,
+            isActive: true,
+          })
+        : undefined;
       res.set("Cache-Control", "private, no-store");
-      res.json({ coachCode, athleteCount });
+      res.json({
+        coachCode,
+        ...(includeAthleteCount ? { athleteCount } : {}),
+      });
     } catch (err) {
       next(err);
     }
@@ -658,20 +671,54 @@ router.get(
   "/portfolio",
   requireFeature(PREMIUM_FEATURES.COACH_PORTFOLIO),
   async (req, res, next) => {
+    let ownedBuild = null;
     try {
-      const athletes = await User.find(
-        {
-          role: "Cliente",
-          assignedTrainerId: req.user.id,
-          isActive: true,
-        },
-        "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
-      )
-        .sort({ name: 1 })
-        .lean();
+      const todayKey = requestToday(req.query.today);
+      const portfolioCacheKey = `coach-portfolio:${req.user.id}:${todayKey}`;
+      if (process.env.NODE_ENV !== "test") {
+        while (true) {
+          const cachedPortfolio = await getCache(portfolioCacheKey);
+          if (cachedPortfolio) {
+            res.set("Cache-Control", "private, no-store");
+            res.set("X-Data-Cache", "PORTFOLIO-HIT");
+            return res.json(cachedPortfolio);
+          }
+
+          const activeBuild = portfolioBuilds.get(portfolioCacheKey);
+          if (activeBuild) {
+            await activeBuild;
+            continue;
+          }
+
+          let releaseBuild;
+          const buildPromise = new Promise((resolve) => {
+            releaseBuild = resolve;
+          });
+          portfolioBuilds.set(portfolioCacheKey, buildPromise);
+          ownedBuild = {
+            key: portfolioCacheKey,
+            promise: buildPromise,
+            release: releaseBuild,
+          };
+          break;
+        }
+      }
+
+      const athletes = await measureDatabase(res, () =>
+        User.find(
+          {
+            role: "Cliente",
+            assignedTrainerId: req.user.id,
+            isActive: true,
+          },
+          "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+        )
+          .sort({ name: 1 })
+          .lean(),
+      );
       const athleteIds = athletes.map((athlete) => String(athlete._id));
       if (!athleteIds.length) {
-        return res.json({
+        const response = {
           generatedAt: new Date().toISOString(),
           summary: {
             athletes: 0,
@@ -682,10 +729,19 @@ router.get(
           },
           alerts: [],
           athletes: [],
-        });
+        };
+        if (process.env.NODE_ENV !== "test") {
+          await setCache(
+            portfolioCacheKey,
+            response,
+            PORTFOLIO_CACHE_TTL_SECONDS,
+          );
+        }
+        res.set("Cache-Control", "private, no-store");
+        res.set("X-Data-Cache", "PORTFOLIO-MISS");
+        return res.json(response);
       }
 
-      const todayKey = requestToday(req.query.today);
       const historyFrom = shiftDateKey(todayKey, -34);
       const [
         trainings,
@@ -694,53 +750,70 @@ router.get(
         checkIns,
         routineCounts,
         coachWorkflow,
-        finalAssessments,
-      ] = await Promise.all([
-        Training.find({
-          ownerId: { $in: athleteIds },
-          date: { $gte: historyFrom },
-        })
-          .select(
-            "ownerId date durationSeconds totalVolume volumeBreakdown exercises",
-          )
-          .lean(),
-        TrainingPlan.find({
-          athleteId: { $in: athleteIds },
-          coachId: req.user.id,
-          status: { $in: ["active", "scheduled", "draft"] },
-        })
-          .sort({ status: 1, updatedAt: -1 })
-          .lean(),
-        TrainingPlan.find({
-          athleteId: { $in: athleteIds },
-          coachId: req.user.id,
-          status: "completed",
-        })
-          .sort({ updatedAt: -1 })
-          .lean(),
-        AthleteCheckIn.find({ athleteId: { $in: athleteIds } })
-          .sort({ dateKey: -1, updatedAt: -1 })
-          .lean(),
-        Routine.aggregate([
-          {
-            $match: {
+      ] = await measureDatabase(
+        res,
+        () =>
+          Promise.all([
+            Training.find({
               ownerId: { $in: athleteIds },
-              isArchived: { $ne: true },
-            },
-          },
-          { $group: { _id: "$ownerId", count: { $sum: 1 } } },
-        ]),
-        CoachWorkflowSettings.findOne({
-          coachId: String(req.user.id),
-        }).lean(),
-        AthleteAssessment.find({
-          athleteId: { $in: athleteIds },
-          coachId: req.user.id,
-          type: "final",
-        })
-          .sort({ createdAt: -1 })
-          .lean(),
-      ]);
+              date: { $gte: historyFrom },
+            })
+              .select(
+                "ownerId date routineName durationSeconds totalVolume volumeBreakdown exercises",
+              )
+              .lean(),
+            TrainingPlan.find({
+              athleteId: { $in: athleteIds },
+              coachId: req.user.id,
+              status: { $in: ["active", "scheduled", "draft"] },
+            })
+              .sort({ status: 1, updatedAt: -1 })
+              .lean(),
+            TrainingPlan.aggregate([
+              {
+                $match: {
+                  athleteId: { $in: athleteIds },
+                  coachId: req.user.id,
+                  status: "completed",
+                },
+              },
+              { $sort: { athleteId: 1, updatedAt: -1 } },
+              { $group: { _id: "$athleteId", plan: { $first: "$$ROOT" } } },
+              { $replaceRoot: { newRoot: "$plan" } },
+            ]),
+            AthleteCheckIn.aggregate([
+              { $match: { athleteId: { $in: athleteIds } } },
+              { $sort: { athleteId: 1, dateKey: -1, updatedAt: -1 } },
+              { $group: { _id: "$athleteId", checkIn: { $first: "$$ROOT" } } },
+              { $replaceRoot: { newRoot: "$checkIn" } },
+            ]),
+            Routine.aggregate([
+              {
+                $match: {
+                  ownerId: { $in: athleteIds },
+                  isArchived: { $ne: true },
+                },
+              },
+              { $group: { _id: "$ownerId", count: { $sum: 1 } } },
+            ]),
+            CoachWorkflowSettings.findOne({
+              coachId: String(req.user.id),
+            }).lean(),
+          ]),
+        { operations: 6 },
+      );
+
+      const completedPlanIds = completedPlans.map((plan) => String(plan._id));
+      const finalAssessments = completedPlanIds.length
+        ? await measureDatabase(res, () =>
+            AthleteAssessment.find({
+              athleteId: { $in: athleteIds },
+              coachId: req.user.id,
+              planId: { $in: completedPlanIds },
+              type: "final",
+            }).lean(),
+          )
+        : [];
 
       const trainingsByAthlete = new Map();
       trainings.forEach((training) => {
@@ -892,12 +965,20 @@ router.get(
         const sortedTrainings = [...athleteTrainings].sort((a, b) =>
           b.date.localeCompare(a.date),
         );
+        const latestTraining = sortedTrainings[0];
         return {
           ...athlete,
           id,
           routineCount: routineCountByAthlete.get(id) || 0,
           trainingCount: athleteTrainings.length,
-          lastTraining: sortedTrainings[0] || null,
+          lastTraining: latestTraining
+            ? {
+                date: latestTraining.date,
+                routineName: latestTraining.routineName || "",
+                durationSeconds: latestTraining.durationSeconds || 0,
+                totalVolume: latestTraining.totalVolume || 0,
+              }
+            : null,
           weekly: report.current,
           adherence: report.adherence,
           priority: report.priority,
@@ -930,8 +1011,7 @@ router.get(
         (sum, athlete) => sum + athlete.adherence.completed,
         0,
       );
-      res.set("Cache-Control", "private, no-store");
-      res.json({
+      const response = {
         generatedAt: new Date().toISOString(),
         summary: {
           athletes: enriched.length,
@@ -946,9 +1026,27 @@ router.get(
         },
         alerts: allAlerts.slice(0, 20),
         athletes: enriched,
-      });
+      };
+      if (process.env.NODE_ENV !== "test") {
+        await setCache(
+          portfolioCacheKey,
+          response,
+          PORTFOLIO_CACHE_TTL_SECONDS,
+        );
+      }
+      res.set("Cache-Control", "private, no-store");
+      res.set("X-Data-Cache", "PORTFOLIO-MISS");
+      res.json(response);
     } catch (error) {
       next(error);
+    } finally {
+      if (
+        ownedBuild &&
+        portfolioBuilds.get(ownedBuild.key) === ownedBuild.promise
+      ) {
+        portfolioBuilds.delete(ownedBuild.key);
+        ownedBuild.release();
+      }
     }
   },
 );
@@ -1225,39 +1323,72 @@ router.get("/plans", async (req, res, next) => {
 
 router.get("/athletes", async (req, res, next) => {
   try {
-    const athletes = await User.find(
-      {
-        role: "Cliente",
-        assignedTrainerId: req.user.id,
-        isActive: true,
-      },
-      "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
-    )
-      .sort({ name: 1 })
-      .lean();
-
-    const enriched = await Promise.all(
-      athletes.map(async (athlete) => {
-        const athleteId = athlete._id.toString();
-        const [routineCount, trainingCount, lastTraining] = await Promise.all([
-          Routine.countDocuments({
-            ownerId: athleteId,
-            isArchived: { $ne: true },
-          }),
-          Training.countDocuments({ ownerId: athleteId }),
-          Training.findOne({ ownerId: athleteId }, "date routineName")
-            .sort({ date: -1, createdAt: -1 })
-            .lean(),
-        ]);
-        return {
-          ...athlete,
-          id: athleteId,
-          routineCount,
-          trainingCount,
-          lastTraining: lastTraining || null,
-        };
-      }),
+    const athletes = await measureDatabase(res, () =>
+      User.find(
+        {
+          role: "Cliente",
+          assignedTrainerId: req.user.id,
+          isActive: true,
+        },
+        "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+      )
+        .sort({ name: 1 })
+        .lean(),
     );
+
+    const athleteIds = athletes.map((athlete) => String(athlete._id));
+    const [routineCounts, trainingSummaries] = athleteIds.length
+      ? await measureDatabase(
+          res,
+          () =>
+            Promise.all([
+              Routine.aggregate([
+                {
+                  $match: {
+                    ownerId: { $in: athleteIds },
+                    isArchived: { $ne: true },
+                  },
+                },
+                { $group: { _id: "$ownerId", count: { $sum: 1 } } },
+              ]),
+              Training.aggregate([
+                { $match: { ownerId: { $in: athleteIds } } },
+                { $sort: { ownerId: 1, date: -1, createdAt: -1 } },
+                {
+                  $group: {
+                    _id: "$ownerId",
+                    trainingCount: { $sum: 1 },
+                    lastTraining: {
+                      $first: {
+                        _id: "$_id",
+                        date: "$date",
+                        routineName: "$routineName",
+                      },
+                    },
+                  },
+                },
+              ]),
+            ]),
+          { operations: 2 },
+        )
+      : [[], []];
+    const routineCountByAthlete = new Map(
+      routineCounts.map((item) => [String(item._id), item.count]),
+    );
+    const trainingByAthlete = new Map(
+      trainingSummaries.map((item) => [String(item._id), item]),
+    );
+    const enriched = athletes.map((athlete) => {
+      const athleteId = String(athlete._id);
+      const trainingSummary = trainingByAthlete.get(athleteId);
+      return {
+        ...athlete,
+        id: athleteId,
+        routineCount: routineCountByAthlete.get(athleteId) || 0,
+        trainingCount: trainingSummary?.trainingCount || 0,
+        lastTraining: trainingSummary?.lastTraining || null,
+      };
+    });
 
     res.set("Cache-Control", "private, no-store");
     res.json(enriched);
@@ -1322,53 +1453,49 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       checkIns,
       weights,
       photos,
-    ] =
-      await Promise.all([
-        Routine.find({
-          ownerId,
-          $or: [
-            { isArchived: { $ne: true } },
-            { trainingPlanId: { $in: editablePlanIds } },
-          ],
-        })
-          .sort({ updatedAt: -1 })
-          .select(
-            "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
-          )
-          .lean(),
-        Training.find({ ownerId })
-          .sort({ date: -1, createdAt: -1 })
-          .limit(12)
-          .select(
-            "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
-          )
-          .lean(),
-        AthleteMeasurement.find({ athleteId: ownerId })
-          .sort({ dateKey: -1 })
-          .limit(12)
-          .lean(),
-        AthleteAssessment.find({ athleteId: ownerId })
-          .sort({ dateKey: -1 })
-          .limit(12)
-          .lean(),
-        AthleteCheckIn.find({ athleteId: ownerId })
-          .sort({ dateKey: -1 })
-          .limit(14)
-          .lean(),
-        WeightEntry.find({ ownerId })
-          .sort({ dateKey: -1 })
-          .limit(12)
-          .lean(),
-        Photo.find({
-          ownerId,
-          type: { $ne: "profile" },
-          visibility: "coach",
-        })
-          .sort({ date: -1 })
-          .limit(18)
-          .select("date view label contentStatus")
-          .lean(),
-      ]);
+    ] = await Promise.all([
+      Routine.find({
+        ownerId,
+        $or: [
+          { isArchived: { $ne: true } },
+          { trainingPlanId: { $in: editablePlanIds } },
+        ],
+      })
+        .sort({ updatedAt: -1 })
+        .select(
+          "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
+        )
+        .lean(),
+      Training.find({ ownerId })
+        .sort({ date: -1, createdAt: -1 })
+        .limit(12)
+        .select(
+          "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
+        )
+        .lean(),
+      AthleteMeasurement.find({ athleteId: ownerId })
+        .sort({ dateKey: -1 })
+        .limit(12)
+        .lean(),
+      AthleteAssessment.find({ athleteId: ownerId })
+        .sort({ dateKey: -1 })
+        .limit(12)
+        .lean(),
+      AthleteCheckIn.find({ athleteId: ownerId })
+        .sort({ dateKey: -1 })
+        .limit(14)
+        .lean(),
+      WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(12).lean(),
+      Photo.find({
+        ownerId,
+        type: { $ne: "profile" },
+        visibility: "coach",
+      })
+        .sort({ date: -1 })
+        .limit(18)
+        .select("date view label contentStatus")
+        .lean(),
+    ]);
 
     const totalVolume = recentTrainings.reduce(
       (sum, training) => sum + (Number(training.totalVolume) || 0),
@@ -1592,7 +1719,7 @@ router.post("/athletes/:athleteId/plans", async (req, res, next) => {
           : null,
     }));
     await plan.save();
-    await deleteCacheByPrefix(`dashboard:${athlete._id}:`);
+    await bumpCacheVersion(`dashboard:${athlete._id}`);
 
     res.status(201).json(plan);
   } catch (err) {
@@ -1676,7 +1803,7 @@ router.patch(
         status,
         expectedUpdatedAt: plan.updatedAt,
       });
-      await deleteCacheByPrefix(`dashboard:${athlete._id}:`);
+      await bumpCacheVersion(`dashboard:${athlete._id}`);
       if (
         req.body.notifyAthlete !== false &&
         ["active", "scheduled"].includes(status)
@@ -1856,7 +1983,7 @@ router.put("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
           : null,
     }));
     await plan.save();
-    await deleteCacheByPrefix(`dashboard:${athlete._id}:`);
+    await bumpCacheVersion(`dashboard:${athlete._id}`);
 
     if (nextStatus === "active") {
       const otherPlans = await TrainingPlan.find(
@@ -1931,7 +2058,7 @@ router.delete("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
         trainingPlanId: String(plan._id),
       });
       await plan.deleteOne();
-      await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+      await bumpCacheVersion(`dashboard:${ownerId}`);
       return res.json({
         ok: true,
         disposition: "deleted",
@@ -1947,7 +2074,7 @@ router.delete("/athletes/:athleteId/plans/:planId", async (req, res, next) => {
         { $set: { isArchived: true, isAvailableForTraining: false } },
       ),
     ]);
-    await deleteCacheByPrefix(`dashboard:${ownerId}:`);
+    await bumpCacheVersion(`dashboard:${ownerId}`);
     res.json({ ok: true, disposition: "archived" });
   } catch (err) {
     next(err);

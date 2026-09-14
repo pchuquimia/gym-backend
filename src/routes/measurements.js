@@ -2,7 +2,7 @@ import { Router } from "express";
 import AthleteMeasurement from "../models/AthleteMeasurement.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
+import { bumpCacheVersion } from "../services/cacheService.js";
 
 const router = Router();
 const FIELDS = ["waist", "chest", "hips", "arm", "thigh", "calf"];
@@ -83,7 +83,7 @@ router.post("/", async (req, res, next) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
-    await deleteCacheByPrefix(`dashboard:${athleteId}:`);
+    await bumpCacheVersion(`dashboard:${athleteId}`);
     return res.status(201).json({ measurement });
   } catch (error) {
     return next(error);

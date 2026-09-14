@@ -9,7 +9,6 @@ import {
 import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
 import { enqueueAthleteMetricRefresh } from "../services/metricRefreshQueue.js";
 import { refreshAthleteDailyMetric } from "../services/athleteMetricsService.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
 import CoachNotification from "../models/CoachNotification.js";
 
 const router = Router();
@@ -155,9 +154,12 @@ router.post("/", async (req, res, next) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
-    await refreshAthleteDailyMetric(athleteId, submittedDate);
     await enqueueAthleteMetricRefresh(athleteId, submittedDate);
-    await deleteCacheByPrefix(`dashboard:${athleteId}:`);
+    void refreshAthleteDailyMetric(athleteId, submittedDate).catch((error) => {
+      console.warn(
+        `[metrics] No se pudo actualizar el resumen diario de ${athleteId}: ${error.message}`,
+      );
+    });
     if (
       req.user.assignedTrainerId &&
       ["adjust", "recover"].includes(readiness.state) &&

@@ -8,6 +8,8 @@
     "worker:metrics": "node src/workers/metricsWorker.js",
     "worker:metrics:once": "node src/workers/metricsWorker.js --once",
     "metrics:backfill": "node scripts/backfillAthleteDailyMetrics.js",
+    "performance:seed": "node scripts/seedPerformanceDataset.js",
+    "performance:load": "node scripts/loadTestReadEndpoints.js",
     "db:quality:audit": "node scripts/repairDatabaseQuality.js",
     "db:quality:apply": "node scripts/repairDatabaseQuality.js --apply",
     "start": "node src/server.js",

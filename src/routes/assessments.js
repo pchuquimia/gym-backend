@@ -2,7 +2,7 @@ import { Router } from "express";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
-import { deleteCacheByPrefix } from "../services/cacheService.js";
+import { bumpCacheVersion } from "../services/cacheService.js";
 import CoachNotification from "../models/CoachNotification.js";
 
 const router = Router();
@@ -85,7 +85,7 @@ router.post("/final", async (req, res, next) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
-    await deleteCacheByPrefix(`dashboard:${athleteId}:`);
+    await bumpCacheVersion(`dashboard:${athleteId}`);
     if (!existingAssessment) {
       await CoachNotification.create({
         coachId: String(plan.coachId),

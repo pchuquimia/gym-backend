@@ -5,6 +5,11 @@ const MEMORY_MAX_ENTRIES = Math.max(
   Number(process.env.CACHE_MEMORY_MAX_ENTRIES || 256),
 );
 const memoryCache = new Map();
+const memoryVersions = new Map();
+const VERSION_MEMORY_TTL_MS = Math.max(
+  1000,
+  Number(process.env.CACHE_VERSION_MEMORY_TTL_MS || 5000),
+);
 let redisClient = null;
 let redisConnection = null;
 let redisUnavailableUntil = 0;
@@ -29,6 +34,25 @@ const writeMemory = (key, value, ttlSeconds) => {
     memoryCache.delete(memoryCache.keys().next().value);
   }
 };
+
+const readMemoryVersion = (namespace) => {
+  const cached = memoryVersions.get(namespace);
+  if (!cached || cached.expiresAt <= Date.now()) return null;
+  return cached.value;
+};
+
+const writeMemoryVersion = (namespace, value) => {
+  memoryVersions.set(namespace, {
+    value,
+    expiresAt: Date.now() + VERSION_MEMORY_TTL_MS,
+  });
+  while (memoryVersions.size > MEMORY_MAX_ENTRIES) {
+    memoryVersions.delete(memoryVersions.keys().next().value);
+  }
+};
+
+const normalizeNamespace = (namespace) => String(namespace || "").trim();
+const versionKey = (namespace) => `cache-version:${namespace}`;
 
 const getRedis = async () => {
   const url = String(process.env.REDIS_URL || "").trim();
@@ -102,35 +126,51 @@ export const deleteCache = async (...keys) => {
   }
 };
 
-export const deleteCacheByPrefix = async (prefix) => {
-  const normalizedPrefix = String(prefix || "").trim();
-  if (!normalizedPrefix) return;
-
-  [...memoryCache.keys()]
-    .filter((key) => key.startsWith(normalizedPrefix))
-    .forEach((key) => memoryCache.delete(key));
+export const getCacheVersion = async (namespace) => {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  if (!normalizedNamespace) return 0;
+  const local = readMemoryVersion(normalizedNamespace);
+  if (local !== null) return local;
+  const fallback = memoryVersions.get(normalizedNamespace)?.value ?? 0;
 
   const redis = await getRedis();
-  if (!redis) return;
-
+  if (!redis) {
+    writeMemoryVersion(normalizedNamespace, fallback);
+    return fallback;
+  }
   try {
-    let pendingKeys = [];
-    for await (const entry of redis.scanIterator({
-      MATCH: `${normalizedPrefix}*`,
-      COUNT: 100,
-    })) {
-      const keys = Array.isArray(entry) ? entry : [entry];
-      pendingKeys.push(...keys.filter(Boolean));
-      if (pendingKeys.length >= 100) {
-        await redis.del(pendingKeys);
-        pendingKeys = [];
-      }
-    }
-    if (pendingKeys.length) await redis.del(pendingKeys);
+    const stored = Number(await redis.get(versionKey(normalizedNamespace)));
+    const value = Number.isSafeInteger(stored) && stored >= 0 ? stored : 0;
+    writeMemoryVersion(normalizedNamespace, value);
+    return value;
   } catch (error) {
     console.warn(
-      `[cache] No se pudo invalidar el prefijo ${normalizedPrefix}: ${error.message}`,
+      `[cache] No se pudo leer la version ${normalizedNamespace}: ${error.message}`,
     );
+    writeMemoryVersion(normalizedNamespace, fallback);
+    return fallback;
+  }
+};
+
+export const bumpCacheVersion = async (namespace) => {
+  const normalizedNamespace = normalizeNamespace(namespace);
+  if (!normalizedNamespace) return 0;
+  const current = memoryVersions.get(normalizedNamespace)?.value ?? 0;
+  const localValue = current + 1;
+  writeMemoryVersion(normalizedNamespace, localValue);
+
+  const redis = await getRedis();
+  if (!redis) return localValue;
+  try {
+    const value = Number(await redis.incr(versionKey(normalizedNamespace)));
+    const normalizedValue = Number.isSafeInteger(value) ? value : localValue;
+    writeMemoryVersion(normalizedNamespace, normalizedValue);
+    return normalizedValue;
+  } catch (error) {
+    console.warn(
+      `[cache] No se pudo incrementar la version ${normalizedNamespace}: ${error.message}`,
+    );
+    return localValue;
   }
 };
 
@@ -138,4 +178,5 @@ export const getCacheStatus = () => ({
   provider: String(process.env.REDIS_URL || "").trim() ? "redis" : "memory",
   connected: Boolean(redisClient?.isReady),
   memoryEntries: memoryCache.size,
+  memoryVersions: memoryVersions.size,
 });

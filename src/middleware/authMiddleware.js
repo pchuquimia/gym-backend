@@ -9,7 +9,7 @@ import {
 } from "../utils/subscription.js";
 import { requiresSessionBoundToken } from "../config/security.js";
 
-const AUTH_USER_FIELDS = [
+const AUTH_USER_FIELD_LIST = [
   "name",
   "email",
   "role",
@@ -22,14 +22,32 @@ const AUTH_USER_FIELDS = [
   "profile.language",
   "activeSessions",
   "subscription",
+];
+const AUTH_USER_FIELDS = AUTH_USER_FIELD_LIST.join(" ");
+const CURRENT_USER_FIELDS = [
+  ...AUTH_USER_FIELD_LIST.filter((field) => field !== "profile.language"),
+  "username",
+  "onboarding",
+  "coachIntake",
+  "coachCode",
+  "lastLoginAt",
+  "profile",
+  "security",
+  "emailPreferences",
+  "passwordChangedAt",
+  "emailVerificationRequired",
+  "emailVerifiedAt",
+  "createdAt",
+  "updatedAt",
 ].join(" ");
 const authenticationReadsInFlight = new Map();
 
-const loadAuthenticationUser = (userId) => {
-  const key = String(userId || "");
+const loadAuthenticationUser = (userId, fields = AUTH_USER_FIELDS) => {
+  const scope = fields === CURRENT_USER_FIELDS ? "current-user" : "auth";
+  const key = `${String(userId || "")}:${scope}`;
   const current = authenticationReadsInFlight.get(key);
   if (current) return current;
-  const operation = User.findById(key, AUTH_USER_FIELDS)
+  const operation = User.findById(userId, fields)
     .lean()
     .exec()
     .finally(() => {
@@ -70,8 +88,13 @@ export const protect = async (req, res, next) => {
     // Initial screens issue several protected requests in parallel. Sharing the
     // same in-flight user lookup removes duplicate Atlas round trips without
     // caching permissions after the request burst has finished.
+    const isCurrentUserRequest =
+      req.baseUrl === "/api/auth" && req.path === "/me";
     const user = await measureDatabase(res, () =>
-      loadAuthenticationUser(decoded.id),
+      loadAuthenticationUser(
+        decoded.id,
+        isCurrentUserRequest ? CURRENT_USER_FIELDS : AUTH_USER_FIELDS,
+      ),
     );
     if (!user || !user.isActive) {
       const err = new Error("No autenticado");
@@ -115,6 +138,7 @@ export const protect = async (req, res, next) => {
       subscription: getEffectiveSubscription(user),
       entitlements: getEntitlements(user),
     };
+    req.authenticatedUser = user;
 
     if (req.user.isDemo) {
       const restriction = getDemoRestriction(req);

@@ -46,6 +46,12 @@ describe("API shell", () => {
     expect(response.body.error).toMatch(/Ruta no encontrada/);
   });
 
+  test("las metricas operativas no son publicas", async () => {
+    const response = await request(app).get("/api/operations/performance");
+
+    expect(response.status).toBe(401);
+  });
+
   test("publica el estado de la demo sin exponer credenciales", async () => {
     const previous = process.env.DEMO_MODE;
     process.env.DEMO_MODE = "false";

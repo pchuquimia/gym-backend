@@ -19,8 +19,9 @@ import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import { getAthleteIntelligence } from "../services/athleteMetricsService.js";
 import {
-  deleteCacheByPrefix,
+  bumpCacheVersion,
   getCache,
+  getCacheVersion,
   setCache,
 } from "../services/cacheService.js";
 import {
@@ -64,16 +65,20 @@ router.get("/bootstrap", async (req, res, next) => {
     const advanced =
       hasPremiumFeature(req.user, PREMIUM_FEATURES.LOAD_RECOVERY) &&
       hasPremiumFeature(req.user, PREMIUM_FEATURES.EXERCISE_PROGRESSION);
-    const lifecycleChanged = await syncTrainingPlanLifecycle(ownerId);
-    if (lifecycleChanged) {
-      await deleteCacheByPrefix(`dashboard:${ownerId}:`);
-    }
-    const bootstrapCacheKey = `dashboard:${ownerId}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}`;
+    const cacheNamespace = `dashboard:${ownerId}`;
+    let cacheVersion = await getCacheVersion(cacheNamespace);
+    let bootstrapCacheKey = `${cacheNamespace}:v${cacheVersion}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}`;
     const cachedBootstrap = await getCache(bootstrapCacheKey);
     if (cachedBootstrap) {
       res.set("Cache-Control", "private, no-store");
       res.set("X-Data-Cache", "BOOTSTRAP-HIT");
       return res.json(cachedBootstrap);
+    }
+
+    const lifecycleChanged = await syncTrainingPlanLifecycle(ownerId);
+    if (lifecycleChanged) {
+      cacheVersion = await bumpCacheVersion(cacheNamespace);
+      bootstrapCacheKey = `${cacheNamespace}:v${cacheVersion}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}`;
     }
 
     const [
@@ -95,80 +100,86 @@ router.get("/bootstrap", async (req, res, next) => {
       todayMeasurement,
       coachWorkflow,
       finalAssessment,
-    ] = await measureDatabase(res, () =>
-      Promise.all([
-        Training.find(ownerFilter, SUMMARY_FIELDS)
-          .sort({ date: -1, _id: -1 })
-          .limit(120)
-          .lean(),
-        Training.find(ownerFilter, DETAIL_FIELDS)
-          .sort({ date: -1, _id: -1 })
-          .limit(45)
-          .lean(),
-        Routine.find({ ownerId, isArchived: { $ne: true } }).lean(),
-        Preference.findOne({ userId: req.user.id }).lean(),
-        TrainingPlan.findOne({ athleteId: ownerId, status: "active" })
-          .sort({ updatedAt: -1 })
-          .lean(),
-        TrainingPlan.findOne({ athleteId: ownerId, status: "scheduled" })
-          .sort({ startDate: 1, updatedAt: -1 })
-          .select("name status startDate endDate durationWeeks")
-          .lean(),
-        req.user.assignedTrainerId
-          ? TrainingPlan.findOne({
-              athleteId: ownerId,
-              coachId: String(req.user.assignedTrainerId),
-              status: "draft",
-            })
-              .sort({ updatedAt: -1 })
-              .select("name status updatedAt")
-              .lean()
-          : Promise.resolve(null),
-        TrainingPlan.findOne({
-          athleteId: ownerId,
-          status: "completed",
-          ...(req.user.assignedTrainerId
-            ? { coachId: String(req.user.assignedTrainerId) }
-            : { coachId: null }),
-        })
-          .sort({ updatedAt: -1 })
-          .lean(),
-        AthleteDailyMetric.find({ ownerId })
-          .sort({ dateKey: -1 })
-          .limit(120)
-          .lean(),
-        WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(2).lean(),
-        HydrationEntry.find({ ownerId, dateKey: today })
-          .sort({ createdAt: 1, _id: 1 })
-          .lean(),
-        User.findById(ownerId)
-          .select("profile security +googleSubject +facebookSubject")
-          .lean(),
-        advanced
-          ? getAthleteIntelligence({ ownerId, advanced, today })
-          : Promise.resolve({ data: null, source: "disabled" }),
-        AthleteCheckIn.findOne({ athleteId: ownerId, dateKey: today }).lean(),
-        Photo.find({
-          ownerId,
-          date: today,
-          type: { $ne: "profile" },
-          visibility: "coach",
-        })
-          .select("view date")
-          .lean(),
-        AthleteMeasurement.findOne({
-          athleteId: ownerId,
-          dateKey: today,
-        }).lean(),
-        req.user.assignedTrainerId
-          ? CoachWorkflowSettings.findOne({
-              coachId: String(req.user.assignedTrainerId),
-            }).lean()
-          : Promise.resolve(null),
-        AthleteAssessment.findOne({ athleteId: ownerId, type: "final" })
-          .sort({ dateKey: -1 })
-          .lean(),
-      ]),
+    ] = await measureDatabase(
+      res,
+      () =>
+        Promise.all([
+          Training.find(ownerFilter, SUMMARY_FIELDS)
+            .sort({ date: -1, _id: -1 })
+            .limit(120)
+            .lean(),
+          Training.find(ownerFilter, DETAIL_FIELDS)
+            .sort({ date: -1, _id: -1 })
+            .limit(45)
+            .lean(),
+          Routine.find({ ownerId, isArchived: { $ne: true } }).lean(),
+          Preference.findOne({ userId: req.user.id }).lean(),
+          TrainingPlan.findOne({ athleteId: ownerId, status: "active" })
+            .sort({ updatedAt: -1 })
+            .lean(),
+          TrainingPlan.findOne({ athleteId: ownerId, status: "scheduled" })
+            .sort({ startDate: 1, updatedAt: -1 })
+            .select("name status startDate endDate durationWeeks")
+            .lean(),
+          req.user.assignedTrainerId
+            ? TrainingPlan.findOne({
+                athleteId: ownerId,
+                coachId: String(req.user.assignedTrainerId),
+                status: "draft",
+              })
+                .sort({ updatedAt: -1 })
+                .select("name status updatedAt")
+                .lean()
+            : Promise.resolve(null),
+          TrainingPlan.findOne({
+            athleteId: ownerId,
+            status: "completed",
+            ...(req.user.assignedTrainerId
+              ? { coachId: String(req.user.assignedTrainerId) }
+              : { coachId: null }),
+          })
+            .sort({ updatedAt: -1 })
+            .lean(),
+          AthleteDailyMetric.find({ ownerId })
+            .sort({ dateKey: -1 })
+            .limit(120)
+            .lean(),
+          WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(2).lean(),
+          HydrationEntry.find({ ownerId, dateKey: today })
+            .sort({ createdAt: 1, _id: 1 })
+            .lean(),
+          User.findById(ownerId)
+            .select("profile security +googleSubject +facebookSubject")
+            .lean(),
+          advanced
+            ? getAthleteIntelligence({ ownerId, advanced, today })
+            : Promise.resolve({ data: null, source: "disabled" }),
+          AthleteCheckIn.findOne({ athleteId: ownerId, dateKey: today }).lean(),
+          Photo.find({
+            ownerId,
+            date: today,
+            type: { $ne: "profile" },
+            visibility: "coach",
+          })
+            .select("view date")
+            .lean(),
+          AthleteMeasurement.findOne({
+            athleteId: ownerId,
+            dateKey: today,
+          }).lean(),
+          req.user.assignedTrainerId
+            ? CoachWorkflowSettings.findOne({
+                coachId: String(req.user.assignedTrainerId),
+              }).lean()
+            : Promise.resolve(null),
+          AthleteAssessment.findOne({ athleteId: ownerId, type: "final" })
+            .sort({ dateKey: -1 })
+            .lean(),
+        ]),
+      {
+        operations:
+          15 + (req.user.assignedTrainerId ? 2 : 0) + (advanced ? 1 : 0),
+      },
     );
 
     const combined = [...details, ...routines];
@@ -269,9 +280,14 @@ router.get("/bootstrap", async (req, res, next) => {
       },
       intelligence: intelligenceResult.data,
     };
-    await setCache(bootstrapCacheKey, response, 20);
+    void setCache(bootstrapCacheKey, response, 60).catch((error) => {
+      console.warn(
+        `[dashboard] No se pudo persistir el bootstrap en cache: ${error.message}`,
+      );
+    });
     res.set("Cache-Control", "private, no-store");
-    res.set("X-Data-Cache", intelligenceResult.source.toUpperCase());
+    res.set("X-Data-Cache", "BOOTSTRAP-MISS");
+    res.set("X-Intelligence-Source", intelligenceResult.source.toUpperCase());
     res.json(response);
   } catch (error) {
     next(error);

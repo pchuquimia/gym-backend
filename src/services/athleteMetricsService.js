@@ -7,8 +7,8 @@ import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
 import { buildTrainingIntelligence } from "../utils/trainingIntelligence.js";
 import {
+  bumpCacheVersion,
   deleteCache,
-  deleteCacheByPrefix,
   getCache,
   setCache,
 } from "./cacheService.js";
@@ -179,7 +179,7 @@ export const markAthleteIntelligenceDirty = async (ownerId, today) => {
       intelligenceCacheKey(ownerId, false, today),
       intelligenceCacheKey(ownerId, true, today),
     ),
-    deleteCacheByPrefix(`dashboard:${ownerId}:`),
+    bumpCacheVersion(`dashboard:${ownerId}`),
   ]);
 };
 
