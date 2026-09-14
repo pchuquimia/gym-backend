@@ -104,4 +104,41 @@ describe("training submission", () => {
     expect(result.ok).toBe(true);
     expect(result.loadMetrics.recordedSets).toBe(1);
   });
+
+  test("acepta cero como carga adicional cuando se usa peso corporal", () => {
+    const result = validateTrainingSubmission({
+      date: "2026-09-14",
+      exercises: [
+        {
+          exerciseName: "Fondos para pecho",
+          loadType: "bodyweight",
+          weightBasis: "additional",
+          sets: [{ entries: [{ done: true, weightKg: 0, reps: 12 }] }],
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.loadMetrics.bodyweightSets).toBe(1);
+  });
+
+  test("rechaza una serie corporal completada sin peso explicito", () => {
+    const result = validateTrainingSubmission({
+      date: "2026-09-14",
+      exercises: [
+        {
+          exerciseName: "Dominadas",
+          loadType: "bodyweight",
+          weightBasis: "additional",
+          sets: [{ entries: [{ done: true, weightKg: null, reps: 8 }] }],
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      status: 422,
+      code: "BODYWEIGHT_SET_INCOMPLETE",
+    });
+  });
 });

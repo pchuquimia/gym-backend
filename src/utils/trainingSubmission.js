@@ -1,4 +1,7 @@
-import { getTrainingLoadMetrics } from "./trainingLoad.js";
+import {
+  classifyExerciseLoad,
+  getTrainingLoadMetrics,
+} from "./trainingLoad.js";
 
 const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -77,6 +80,50 @@ export const validateTrainingSubmission = ({
       status: 400,
       code: "INVALID_TRAINING_DATE",
       error: "La fecha del entrenamiento no es valida",
+    };
+  }
+
+  const invalidBodyweightEntry = (Array.isArray(exercises) ? exercises : [])
+    .filter((exercise) => {
+      const loadType = classifyExerciseLoad(exercise);
+      return (
+        loadType === "bodyweight" ||
+        loadType === "assisted" ||
+        exercise?.weightBasis === "additional" ||
+        exercise?.weightBasis === "assistance"
+      );
+    })
+    .flatMap((exercise) => exercise?.sets || [])
+    .flatMap((set) =>
+      Array.isArray(set?.entries) && set.entries.length ? set.entries : [set],
+    )
+    .find((entry) => {
+      if (entry?.done !== true) return false;
+      const rawWeight = entry?.weightKg ?? entry?.weight ?? entry?.kg;
+      const rawReps = entry?.reps ?? entry?.repetitions;
+      const weight = Number(rawWeight);
+      const reps = Number(rawReps);
+      return (
+        rawWeight === null ||
+        rawWeight === undefined ||
+        rawWeight === "" ||
+        !Number.isFinite(weight) ||
+        weight < 0 ||
+        rawReps === null ||
+        rawReps === undefined ||
+        rawReps === "" ||
+        !Number.isFinite(reps) ||
+        reps <= 0
+      );
+    });
+
+  if (invalidBodyweightEntry) {
+    return {
+      ok: false,
+      status: 422,
+      code: "BODYWEIGHT_SET_INCOMPLETE",
+      error:
+        "En fondos y dominadas, registra 0 si usaste solo tu peso corporal y completa las repeticiones",
     };
   }
 
