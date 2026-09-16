@@ -122,15 +122,28 @@ export const getPerformanceSnapshot = () => ({
 
 export const measureDatabase = async (res, operation, options = {}) => {
   const startedAt = performance.now();
+  const activeOperations = Number(res.locals.databaseActiveOperations || 0);
+  if (activeOperations === 0) {
+    res.locals.databaseWindowStartedAt = startedAt;
+  }
+  res.locals.databaseActiveOperations = activeOperations + 1;
+  res.locals.databaseOperations =
+    Number(res.locals.databaseOperations || 0) +
+    Math.max(1, Number(options.operations || 1));
   try {
     return await operation();
   } finally {
-    res.locals.databaseDurationMs =
-      Number(res.locals.databaseDurationMs || 0) +
-      (performance.now() - startedAt);
-    res.locals.databaseOperations =
-      Number(res.locals.databaseOperations || 0) +
-      Math.max(1, Number(options.operations || 1));
+    res.locals.databaseActiveOperations = Math.max(
+      0,
+      Number(res.locals.databaseActiveOperations || 1) - 1,
+    );
+    if (res.locals.databaseActiveOperations === 0) {
+      res.locals.databaseDurationMs =
+        Number(res.locals.databaseDurationMs || 0) +
+        (performance.now() -
+          Number(res.locals.databaseWindowStartedAt || startedAt));
+      delete res.locals.databaseWindowStartedAt;
+    }
   }
 };
 

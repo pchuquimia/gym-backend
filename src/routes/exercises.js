@@ -52,6 +52,7 @@ import {
 import { inferWeightConfig } from "../utils/weightConfig.js";
 import { loadInConcurrentPages } from "../utils/concurrentPagination.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
+import { getCache, setCache } from "../services/cacheService.js";
 import {
   buildExerciseDiscoveryScoreExpression,
   decorateExerciseDiscovery,
@@ -64,10 +65,12 @@ const EXERCISE_FACET_CACHE_TTL_MS = 5 * 60 * 1000;
 const EXERCISE_FACET_CACHE_MAX_ENTRIES = 8;
 const EXERCISE_LIST_CACHE_TTL_MS = 2 * 60 * 1000;
 const EXERCISE_LIST_CACHE_MAX_ENTRIES = 64;
+const SYSTEM_CATALOG_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const EXERCISE_FACET_FIELDS =
   "category categories bodyRegion primaryMuscleGroup primaryMuscle muscle equipment movementPattern movementPatterns difficulty exerciseType position goals image imagePublicId media.image type ownerId";
 const exerciseFacetCache = new Map();
 const exerciseListCache = new Map();
+const systemCatalogBuilds = new Map();
 let systemCatalogVersionCache = null;
 const SYSTEM_CATALOG_FILTER = {
   isActive: true,
@@ -75,6 +78,8 @@ const SYSTEM_CATALOG_FILTER = {
 };
 const VERSIONED_CATALOG_FIELDS =
   "name localizedNames nameSpanish nameEnglish slug aliases discovery category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
+const APP_VERSIONED_CATALOG_FIELDS =
+  "name localizedNames nameSpanish nameEnglish slug aliases category categories bodyRegion navigationRegion primaryMuscleGroup muscle primaryMuscle primaryMuscles secondaryMuscles stabilizerMuscles movementPattern movementPatterns equipment loadType weightConfig exerciseType laterality difficulty goals tags branches type ownerId image imagePublicId media.image media.thumbnail thumb supportsUnilateral movementMode isActive updatedAt";
 
 export const clearExerciseFacetCache = () => {
   exerciseFacetCache.clear();
@@ -149,18 +154,11 @@ const loadExerciseFacetDocuments = async (filter) => {
 };
 
 const loadVersionedSystemCatalog = (fields) =>
-  loadInConcurrentPages({
-    pageSize: 300,
-    concurrency: 6,
-    fetchPage: ({ skip, limit }) =>
-      Exercise.find(SYSTEM_CATALOG_FILTER, fields)
-        .sort({ _id: 1 })
-        .skip(skip)
-        .limit(limit)
-        .batchSize(limit)
-        .maxTimeMS(10000)
-        .lean(),
-  });
+  Exercise.find(SYSTEM_CATALOG_FILTER, fields)
+    .sort({ _id: 1 })
+    .batchSize(300)
+    .maxTimeMS(10000)
+    .lean();
 
 const loadCachedExerciseFacetDocuments = async (cacheKey, filter) => {
   const cached = exerciseFacetCache.get(cacheKey);
@@ -681,19 +679,79 @@ router.get("/catalog/system", async (req, res, next) => {
     if (normalizeEtag(req.headers["if-none-match"]) === normalizeEtag(etag)) {
       return res.status(304).end();
     }
-    const exercises = await measureDatabase(res, () =>
-      loadVersionedSystemCatalog(fields),
+    const fieldSignature = crypto
+      .createHash("sha1")
+      .update(fields)
+      .digest("hex")
+      .slice(0, 12);
+    const cacheKey = `exercise-catalog:${catalog.version}:${language}:${fieldSignature}`;
+    const cacheableFields =
+      fields === VERSIONED_CATALOG_FIELDS ||
+      fields === APP_VERSIONED_CATALOG_FIELDS;
+    const cachedResponse = cacheableFields ? await getCache(cacheKey) : null;
+    const cacheHeaders = () => {
+      res.set(
+        "Cache-Control",
+        "public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800, immutable",
+      );
+      res.set(
+        "CDN-Cache-Control",
+        "public, max-age=86400, stale-while-revalidate=604800",
+      );
+      res.set("ETag", etag);
+      res.set("X-Catalog-Version", catalog.version);
+    };
+    if (cachedResponse?.items) {
+      cacheHeaders();
+      res.set("X-Data-Cache", "CATALOG-HIT");
+      return res.json(cachedResponse);
+    }
+    let build = cacheableFields ? systemCatalogBuilds.get(cacheKey) : null;
+    const ownsBuild = !build;
+    if (!build) {
+      build = measureDatabase(res, async () => {
+        const exercises = await loadVersionedSystemCatalog(fields);
+        return {
+          version: catalog.version,
+          count: exercises.length,
+          items: exercises.map((exercise) =>
+            localizeExerciseDocument(exercise, language),
+          ),
+        };
+      });
+      if (cacheableFields) systemCatalogBuilds.set(cacheKey, build);
+    }
+    let response;
+    try {
+      response = await build;
+    } finally {
+      if (
+        cacheableFields &&
+        ownsBuild &&
+        systemCatalogBuilds.get(cacheKey) === build
+      ) {
+        systemCatalogBuilds.delete(cacheKey);
+      }
+    }
+    if (cacheableFields && ownsBuild) {
+      void setCache(cacheKey, response, SYSTEM_CATALOG_CACHE_TTL_SECONDS).catch(
+        (error) => {
+          console.warn(
+            `[catalog] No se pudo guardar la version ${catalog.version}: ${error.message}`,
+          );
+        },
+      );
+    }
+    cacheHeaders();
+    res.set(
+      "X-Data-Cache",
+      !cacheableFields
+        ? "CATALOG-BYPASS"
+        : ownsBuild
+          ? "CATALOG-MISS"
+          : "CATALOG-COALESCED",
     );
-    res.set("Cache-Control", "public, max-age=86400, immutable");
-    res.set("ETag", etag);
-    res.set("X-Catalog-Version", catalog.version);
-    res.json({
-      version: catalog.version,
-      count: exercises.length,
-      items: exercises.map((exercise) =>
-        localizeExerciseDocument(exercise, language),
-      ),
-    });
+    return res.json(response);
   } catch (error) {
     next(error);
   }

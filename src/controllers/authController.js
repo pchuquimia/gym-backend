@@ -33,6 +33,7 @@ import {
   normalizeIntakeQuestions,
 } from "../utils/coachWorkflow.js";
 import { deleteAccountData } from "../services/accountDeletionService.js";
+import { invalidateAuthenticationUser } from "../services/authenticationUserCache.js";
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_TIME_MS = 15 * 60 * 1000;
@@ -980,6 +981,7 @@ const logout = asyncHandler(async (req, res) => {
       // La cookie igualmente se limpia aunque el token ya no sea valido.
     }
   }
+  if (req.user?.id) invalidateAuthenticationUser(req.user.id);
   clearAuthCookie(res);
   res.json({ ok: true });
 });
@@ -1087,6 +1089,7 @@ const deleteAccount = asyncHandler(async (req, res) => {
   }
 
   const result = await deleteAccountData(user._id);
+  invalidateAuthenticationUser(user._id);
   clearAuthCookie(res);
   res.set("Cache-Control", "no-store");
   res.json({ ok: true, ...result });
@@ -1170,6 +1173,7 @@ const updateAccount = asyncHandler(async (req, res) => {
       throw err;
     }
   }
+  invalidateAuthenticationUser(req.user.id);
   res.json({
     user: sanitizeUser(user),
     profile: user.profile,
@@ -1206,6 +1210,7 @@ const updateProfile = asyncHandler(async (req, res) => {
     new: true,
     runValidators: true,
   }).select("profile security");
+  invalidateAuthenticationUser(req.user.id);
   res.json({ profile: user.profile, security: user.security });
 });
 
@@ -1335,6 +1340,7 @@ const completeOnboarding = asyncHandler(async (req, res) => {
       message: `${user.name || "Tu alumno"} completó su evaluación y ya puedes preparar su planificación.`,
     }).catch(() => {});
   }
+  invalidateAuthenticationUser(req.user.id);
   res.set("Cache-Control", "no-store");
   res.json({ user: sanitizeUser(user) });
 });
@@ -1361,6 +1367,7 @@ const selectOnboardingAccountType = asyncHandler(async (req, res) => {
   user.trainingMode = "independent";
   user.onboarding.accountType = accountType;
   await user.save();
+  invalidateAuthenticationUser(req.user.id);
 
   res.set("Cache-Control", "no-store");
   res.json({ user: sanitizeUser(user) });
@@ -1400,6 +1407,7 @@ const completeCoachOnboarding = asyncHandler(async (req, res) => {
   user.onboarding.status = "complete";
   user.onboarding.completedAt = new Date();
   await user.save();
+  invalidateAuthenticationUser(req.user.id);
 
   res.set("Cache-Control", "no-store");
   res.json({ user: sanitizeUser(user) });
@@ -1416,6 +1424,7 @@ const updateSecurity = asyncHandler(async (req, res) => {
     new: true,
     runValidators: true,
   }).select("profile security");
+  invalidateAuthenticationUser(req.user.id);
   res.json({ profile: user.profile, security: user.security });
 });
 
@@ -1437,6 +1446,7 @@ const changePassword = asyncHandler(async (req, res) => {
     );
   }
   await user.save();
+  invalidateAuthenticationUser(req.user.id);
   res.json({ ok: true, passwordChangedAt: user.passwordChangedAt });
 });
 
@@ -1475,6 +1485,7 @@ const logoutAll = asyncHandler(async (req, res) => {
       : [];
     await user.save();
   }
+  invalidateAuthenticationUser(req.user.id);
   res.json({ ok: true });
 });
 

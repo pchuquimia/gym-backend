@@ -3,6 +3,7 @@ import path from "node:path";
 import mongoose from "mongoose";
 import { loadBackendEnvironment } from "../src/config/loadEnv.js";
 import { getMongoConnectionOptions } from "../src/config/db.js";
+import { findOrphanStringReferences } from "../src/utils/databaseReferences.js";
 
 loadBackendEnvironment();
 
@@ -23,22 +24,11 @@ await mongoose.connect(process.env.MONGO_URI, {
 
 const db = mongoose.connection.db;
 const orphanStringRefs = (collection, field, target) =>
-  db
-    .collection(collection)
-    .aggregate([
-      { $match: { [field]: { $type: "string", $ne: "" } } },
-      {
-        $lookup: {
-          from: target,
-          localField: field,
-          foreignField: "_id",
-          as: "target",
-        },
-      },
-      { $match: { "target.0": { $exists: false } } },
-      { $project: { _id: 1, value: `$${field}` } },
-    ])
-    .toArray();
+  findOrphanStringReferences(db, {
+    collection,
+    field,
+    targetCollection: target,
+  });
 
 const ensureDatabaseValidators = async () => {
   const datePattern = "^\\d{4}-(0[1-9]|1[0-2])-([0-2]\\d|3[01])$";
@@ -47,7 +37,10 @@ const ensureDatabaseValidators = async () => {
       required: ["name", "email", "password", "role"],
       properties: {
         name: { bsonType: "string", minLength: 2, maxLength: 80 },
-        email: { bsonType: "string", pattern: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$" },
+        email: {
+          bsonType: "string",
+          pattern: "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+        },
         password: { bsonType: "string", pattern: "^\\$2[aby]\\$" },
         role: { enum: ["Admin", "Entrenador", "Cliente"] },
       },
@@ -57,8 +50,14 @@ const ensureDatabaseValidators = async () => {
       properties: {
         date: { bsonType: "string", pattern: datePattern },
         ownerId: { bsonType: "string", minLength: 1 },
-        durationSeconds: { bsonType: ["int", "long", "double", "decimal"], minimum: 0 },
-        totalVolume: { bsonType: ["int", "long", "double", "decimal"], minimum: 0 },
+        durationSeconds: {
+          bsonType: ["int", "long", "double", "decimal"],
+          minimum: 0,
+        },
+        totalVolume: {
+          bsonType: ["int", "long", "double", "decimal"],
+          minimum: 0,
+        },
       },
     },
     sessions: {
@@ -82,7 +81,11 @@ const ensureDatabaseValidators = async () => {
       properties: {
         dateKey: { bsonType: "string", pattern: datePattern },
         ownerId: { bsonType: "string", minLength: 1 },
-        weightKg: { bsonType: ["int", "long", "double", "decimal"], minimum: 25, maximum: 400 },
+        weightKg: {
+          bsonType: ["int", "long", "double", "decimal"],
+          minimum: 25,
+          maximum: 400,
+        },
       },
     },
     athletedailymetrics: {
@@ -103,7 +106,16 @@ const ensureDatabaseValidators = async () => {
       required: ["athleteId", "createdById", "startDate", "endDate", "status"],
       properties: {
         athleteId: { bsonType: "string", minLength: 1 },
-        status: { enum: ["draft", "scheduled", "active", "paused", "completed", "cancelled"] },
+        status: {
+          enum: [
+            "draft",
+            "scheduled",
+            "active",
+            "paused",
+            "completed",
+            "cancelled",
+          ],
+        },
       },
     },
   };
@@ -177,7 +189,9 @@ const rollback = async (filePath) => {
         })),
       );
     });
-    console.log(JSON.stringify({ ok: true, rollback: path.resolve(filePath) }, null, 2));
+    console.log(
+      JSON.stringify({ ok: true, rollback: path.resolve(filePath) }, null, 2),
+    );
   } finally {
     await session.endSession();
   }
@@ -198,10 +212,22 @@ try {
       createdAt: new Date().toISOString(),
       database: db.databaseName,
       orphans: {
-        sessionTraining: sessionTraining.map((item) => ({ id: String(item._id), value: item.value })),
-        trainingRoutine: trainingRoutine.map((item) => ({ id: String(item._id), value: item.value })),
-        trainingPlan: trainingPlan.map((item) => ({ id: String(item._id), value: item.value })),
-        routinePlan: routinePlan.map((item) => ({ id: String(item._id), value: item.value })),
+        sessionTraining: sessionTraining.map((item) => ({
+          id: String(item._id),
+          value: item.value,
+        })),
+        trainingRoutine: trainingRoutine.map((item) => ({
+          id: String(item._id),
+          value: item.value,
+        })),
+        trainingPlan: trainingPlan.map((item) => ({
+          id: String(item._id),
+          value: item.value,
+        })),
+        routinePlan: routinePlan.map((item) => ({
+          id: String(item._id),
+          value: item.value,
+        })),
       },
     };
     const summary = Object.fromEntries(
@@ -211,7 +237,10 @@ try {
     if (!apply) {
       console.log(JSON.stringify({ mode: "dry-run", summary }, null, 2));
     } else {
-      const backupRoot = path.resolve(process.cwd(), "../artifacts/database-backups");
+      const backupRoot = path.resolve(
+        process.cwd(),
+        "../artifacts/database-backups",
+      );
       await fs.mkdir(backupRoot, { recursive: true });
       const backupPath = path.join(
         backupRoot,
@@ -291,25 +320,36 @@ try {
             );
           }
 
-          for (const collection of ["trainings", "sessions", "routines", "trainingplans"]) {
-            await db.collection(collection).updateMany(
-              { __v: { $exists: false } },
-              { $set: { __v: 0 } },
+          for (const collection of [
+            "trainings",
+            "sessions",
+            "routines",
+            "trainingplans",
+          ]) {
+            await db
+              .collection(collection)
+              .updateMany(
+                { __v: { $exists: false } },
+                { $set: { __v: 0 } },
+                { session },
+              );
+          }
+          await db
+            .collection("exercises")
+            .updateMany(
+              { isActive: { $exists: false } },
+              { $set: { isActive: true } },
               { session },
             );
-          }
-          await db.collection("exercises").updateMany(
-            { isActive: { $exists: false } },
-            { $set: { isActive: true } },
-            { session },
-          );
         });
       } finally {
         await session.endSession();
       }
 
       await ensureDatabaseValidators();
-      const modelFiles = await fs.readdir(path.resolve(process.cwd(), "src/models"));
+      const modelFiles = await fs.readdir(
+        path.resolve(process.cwd(), "src/models"),
+      );
       for (const file of modelFiles) {
         if (file.endsWith(".js") && file !== "schemaValidation.js") {
           await import(`../src/models/${file}`);
@@ -318,7 +358,9 @@ try {
       for (const model of Object.values(mongoose.models)) {
         await model.createIndexes();
       }
-      console.log(JSON.stringify({ mode: "applied", summary, backupPath }, null, 2));
+      console.log(
+        JSON.stringify({ mode: "applied", summary, backupPath }, null, 2),
+      );
     }
   }
 } finally {

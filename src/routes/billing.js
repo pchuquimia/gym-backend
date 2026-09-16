@@ -8,6 +8,7 @@ import {
   getPlanForRole,
   PLAN_CATALOG,
 } from "../utils/subscription.js";
+import { invalidateAuthenticationUser } from "../services/authenticationUserCache.js";
 
 const router = Router();
 const TRIAL_DAYS = 14;
@@ -102,6 +103,8 @@ router.post("/trial", async (req, res, next) => {
       });
     }
 
+    invalidateAuthenticationUser(req.user.id);
+
     res.set("Cache-Control", "private, no-store");
     res
       .status(201)
@@ -130,6 +133,7 @@ router.post("/cancel", async (req, res, next) => {
     current.subscription.status = "canceled";
     current.subscription.canceledAt = new Date();
     await current.save();
+    invalidateAuthenticationUser(req.user.id);
 
     res.set("Cache-Control", "private, no-store");
     res.json({ user: current.toSafeJSON(), billing: billingSummary(current) });

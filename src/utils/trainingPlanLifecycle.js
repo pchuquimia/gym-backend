@@ -20,14 +20,49 @@ const setPlanRoutineAvailability = (planIds, isAvailable) => {
   );
 };
 
+export const classifyTrainingPlanLifecycleCandidates = (plans, today) => {
+  const boundary = new Date(today).getTime();
+  const candidates = Array.isArray(plans) ? plans : [];
+  const expired = candidates.filter(
+    (plan) =>
+      plan.status === "active" &&
+      plan.endDate &&
+      new Date(plan.endDate).getTime() < boundary,
+  );
+  const duePlans = candidates
+    .filter(
+      (plan) =>
+        plan.status === "scheduled" &&
+        plan.startDate &&
+        plan.endDate &&
+        new Date(plan.startDate).getTime() <= boundary &&
+        new Date(plan.endDate).getTime() >= boundary,
+    )
+    .sort((left, right) => {
+      const startDifference =
+        new Date(right.startDate).getTime() -
+        new Date(left.startDate).getTime();
+      if (startDifference) return startDifference;
+      return (
+        new Date(right.updatedAt || 0).getTime() -
+        new Date(left.updatedAt || 0).getTime()
+      );
+    });
+  return { expired, duePlans };
+};
+
 export async function syncTrainingPlanLifecycle(athleteId) {
   if (!athleteId) return false;
   const today = startOfTodayUtc();
 
-  const expired = await TrainingPlan.find(
-    { athleteId, status: "active", endDate: { $lt: today } },
-    "_id",
+  const candidates = await TrainingPlan.find(
+    { athleteId, status: { $in: ["active", "scheduled"] } },
+    "_id status startDate endDate updatedAt",
   ).lean();
+  const { expired, duePlans } = classifyTrainingPlanLifecycleCandidates(
+    candidates,
+    today,
+  );
   const expiredIds = expired.map((plan) => String(plan._id));
   if (expiredIds.length) {
     await Promise.all([
@@ -39,14 +74,6 @@ export async function syncTrainingPlanLifecycle(athleteId) {
     ]);
   }
 
-  const duePlans = await TrainingPlan.find({
-    athleteId,
-    status: "scheduled",
-    startDate: { $lte: today },
-    endDate: { $gte: today },
-  })
-    .sort({ startDate: -1, updatedAt: -1 })
-    .lean();
   const nextPlan = duePlans[0];
   if (!nextPlan) return expiredIds.length > 0;
 

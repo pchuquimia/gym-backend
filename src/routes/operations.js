@@ -5,17 +5,25 @@ import {
   resetPerformanceMetrics,
 } from "../middleware/performanceTiming.js";
 import { getCacheStatus } from "../services/cacheService.js";
+import { getAuthenticationUserCacheStatus } from "../services/authenticationUserCache.js";
+import { getDeploymentHealth } from "../utils/deploymentTopology.js";
 
 const router = Router();
 
 router.use(protect, authorizeRoles("Admin"));
 
-router.get("/performance", (_req, res) => {
-  res.set("Cache-Control", "no-store");
-  res.json({
-    performance: getPerformanceSnapshot(),
-    cache: getCacheStatus(),
-  });
+router.get("/performance", async (_req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store");
+    res.json({
+      performance: getPerformanceSnapshot(),
+      cache: getCacheStatus(),
+      authenticationCache: getAuthenticationUserCacheStatus(),
+      topology: await getDeploymentHealth(),
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.delete("/performance", (_req, res) => {

@@ -3,6 +3,7 @@ import Session from "../src/models/Session.js";
 import Training from "../src/models/Training.js";
 import TrainingPlan from "../src/models/TrainingPlan.js";
 import { getMongoConnectionOptions } from "../src/config/db.js";
+import { getReferenceIdCandidates } from "../src/utils/databaseReferences.js";
 
 describe("Database quality guards", () => {
   test("declara unicidad para nuevos registros de entrenamiento", () => {
@@ -75,5 +76,15 @@ describe("Database quality guards", () => {
       waitQueueTimeoutMS: 5_000,
       appName: "rirfit-api",
     });
+  });
+
+  test("compara referencias string con identificadores ObjectId sin falsos huérfanos", () => {
+    const objectId = new mongoose.Types.ObjectId();
+    const candidates = getReferenceIdCandidates(String(objectId));
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]).toBe(String(objectId));
+    expect(String(candidates[1])).toBe(String(objectId));
+    expect(getReferenceIdCandidates("routine-slug")).toEqual(["routine-slug"]);
   });
 });

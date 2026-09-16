@@ -38,4 +38,20 @@ describe("performance timing", () => {
     expect(route.durationMs.p95).toBeGreaterThanOrEqual(0);
     expect(route.responseBytes.p50).toBeGreaterThan(0);
   });
+
+  test("no suma dos esperas de base de datos que ocurren en paralelo", async () => {
+    const res = { locals: {} };
+    const wait = () => new Promise((resolve) => setTimeout(resolve, 25));
+    const startedAt = performance.now();
+
+    await Promise.all([
+      measureDatabase(res, wait, { operations: 2 }),
+      measureDatabase(res, wait, { operations: 3 }),
+    ]);
+    const elapsed = performance.now() - startedAt;
+
+    expect(res.locals.databaseOperations).toBe(5);
+    expect(res.locals.databaseDurationMs).toBeLessThanOrEqual(elapsed + 5);
+    expect(res.locals.databaseActiveOperations).toBe(0);
+  });
 });

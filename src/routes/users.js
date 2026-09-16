@@ -12,6 +12,7 @@ import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import { transitionAthleteCoach } from "../utils/coachAssignment.js";
 import { deleteAccountData } from "../services/accountDeletionService.js";
+import { invalidateAuthenticationUser } from "../services/authenticationUserCache.js";
 
 const router = Router();
 const ADMIN_USER_FIELDS =
@@ -233,8 +234,10 @@ router.patch(
               },
             },
           );
+          assignedClientIds.forEach(invalidateAuthenticationUser);
         }
       }
+      invalidateAuthenticationUser(req.params.id);
       res.json(user);
     } catch (err) {
       next(err);
@@ -337,6 +340,7 @@ router.patch(
         };
       }
       await user.save();
+      invalidateAuthenticationUser(req.params.id);
       res.set("Cache-Control", "no-store");
       res.json({
         ...user.toObject(),
@@ -362,6 +366,7 @@ router.delete("/:id", authorizeRoles("Admin"), async (req, res, next) => {
     }
 
     const result = await deleteAccountData(req.params.id);
+    invalidateAuthenticationUser(req.params.id);
     res.json({ ok: true, ...result });
   } catch (err) {
     next(err);

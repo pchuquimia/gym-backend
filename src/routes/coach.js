@@ -24,6 +24,7 @@ import {
   getCache,
   setCache,
 } from "../services/cacheService.js";
+import { invalidateAuthenticationUser } from "../services/authenticationUserCache.js";
 import { measureDatabase } from "../middleware/performanceTiming.js";
 import {
   isFuturePlan,
@@ -274,6 +275,7 @@ router.post(
       athlete.onboarding.accountType = "athlete";
       startCoachIntake(athlete, nextCoachId);
       await athlete.save();
+      invalidateAuthenticationUser(athlete._id);
       if (previousCoachId !== nextCoachId) {
         await notifyCoachAthleteJoined(nextCoachId, athlete).catch(() => {});
       }
@@ -304,6 +306,7 @@ router.delete(
       athlete.trainingMode = "independent";
       clearCoachIntake(athlete);
       await athlete.save();
+      invalidateAuthenticationUser(athlete._id);
       res.json({ connected: false, coach: null, trainingMode: "independent" });
     } catch (err) {
       next(err);
@@ -406,6 +409,7 @@ router.post(
       athlete.onboarding.accountType = "athlete";
       startCoachIntake(athlete, nextCoachId);
       await athlete.save();
+      invalidateAuthenticationUser(athlete._id);
       await notifyCoachAthleteJoined(nextCoachId, athlete).catch(() => {});
 
       res.set("Cache-Control", "no-store");
@@ -460,6 +464,7 @@ router.post(
     try {
       const coachCode = await createCoachCode();
       await User.findByIdAndUpdate(req.user.id, { $set: { coachCode } });
+      invalidateAuthenticationUser(req.user.id);
       res.json({ coachCode });
     } catch (err) {
       next(err);
@@ -1415,6 +1420,7 @@ router.delete("/athletes/:athleteId/relationship", async (req, res, next) => {
     athlete.trainingMode = "independent";
     clearCoachIntake(athlete);
     await athlete.save();
+    invalidateAuthenticationUser(athlete._id);
     res.json({ ok: true, athleteId: String(athlete._id) });
   } catch (err) {
     next(err);
@@ -1423,23 +1429,32 @@ router.delete("/athletes/:athleteId/relationship", async (req, res, next) => {
 
 router.get("/athletes/:athleteId/overview", async (req, res, next) => {
   try {
-    const athlete = await getAthlete(req.user.id, req.params.athleteId);
+    const athlete = await measureDatabase(res, () =>
+      getAthlete(req.user.id, req.params.athleteId),
+    );
     if (!athlete) {
       return res.status(404).json({ error: "Atleta no encontrado" });
     }
     const ownerId = athlete._id.toString();
-    await syncTrainingPlanLifecycle(ownerId);
-    const plans = await TrainingPlan.find({
-      athleteId: ownerId,
-      coachId: req.user.id,
-      status: { $ne: "cancelled" },
-    })
-      .sort({ updatedAt: -1 })
-      .limit(12)
-      .lean();
-    const coachWorkflow = await CoachWorkflowSettings.findOne({
-      coachId: String(req.user.id),
-    }).lean();
+    await measureDatabase(res, () => syncTrainingPlanLifecycle(ownerId));
+    const [plans, coachWorkflow] = await measureDatabase(
+      res,
+      () =>
+        Promise.all([
+          TrainingPlan.find({
+            athleteId: ownerId,
+            coachId: req.user.id,
+            status: { $ne: "cancelled" },
+          })
+            .sort({ updatedAt: -1 })
+            .limit(12)
+            .lean(),
+          CoachWorkflowSettings.findOne({
+            coachId: String(req.user.id),
+          }).lean(),
+        ]),
+      { operations: 2 },
+    );
     const editablePlanIds = plans
       .filter((plan) =>
         ["draft", "scheduled", "active", "paused"].includes(plan.status),
@@ -1453,49 +1468,54 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       checkIns,
       weights,
       photos,
-    ] = await Promise.all([
-      Routine.find({
-        ownerId,
-        $or: [
-          { isArchived: { $ne: true } },
-          { trainingPlanId: { $in: editablePlanIds } },
-        ],
-      })
-        .sort({ updatedAt: -1 })
-        .select(
-          "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
-        )
-        .lean(),
-      Training.find({ ownerId })
-        .sort({ date: -1, createdAt: -1 })
-        .limit(12)
-        .select(
-          "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
-        )
-        .lean(),
-      AthleteMeasurement.find({ athleteId: ownerId })
-        .sort({ dateKey: -1 })
-        .limit(12)
-        .lean(),
-      AthleteAssessment.find({ athleteId: ownerId })
-        .sort({ dateKey: -1 })
-        .limit(12)
-        .lean(),
-      AthleteCheckIn.find({ athleteId: ownerId })
-        .sort({ dateKey: -1 })
-        .limit(14)
-        .lean(),
-      WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(12).lean(),
-      Photo.find({
-        ownerId,
-        type: { $ne: "profile" },
-        visibility: "coach",
-      })
-        .sort({ date: -1 })
-        .limit(18)
-        .select("date view label contentStatus")
-        .lean(),
-    ]);
+    ] = await measureDatabase(
+      res,
+      () =>
+        Promise.all([
+          Routine.find({
+            ownerId,
+            $or: [
+              { isArchived: { $ne: true } },
+              { trainingPlanId: { $in: editablePlanIds } },
+            ],
+          })
+            .sort({ updatedAt: -1 })
+            .select(
+              "name branch exercises assignedByCoachId assignedAt trainingPlanId assignmentType isArchived isAvailableForTraining updatedAt",
+            )
+            .lean(),
+          Training.find({ ownerId })
+            .sort({ date: -1, createdAt: -1 })
+            .limit(12)
+            .select(
+              "date routineId routineName durationSeconds totalVolume sessionType supervisedBy exercises",
+            )
+            .lean(),
+          AthleteMeasurement.find({ athleteId: ownerId })
+            .sort({ dateKey: -1 })
+            .limit(12)
+            .lean(),
+          AthleteAssessment.find({ athleteId: ownerId })
+            .sort({ dateKey: -1 })
+            .limit(12)
+            .lean(),
+          AthleteCheckIn.find({ athleteId: ownerId })
+            .sort({ dateKey: -1 })
+            .limit(14)
+            .lean(),
+          WeightEntry.find({ ownerId }).sort({ dateKey: -1 }).limit(12).lean(),
+          Photo.find({
+            ownerId,
+            type: { $ne: "profile" },
+            visibility: "coach",
+          })
+            .sort({ date: -1 })
+            .limit(18)
+            .select("date view label contentStatus")
+            .lean(),
+        ]),
+      { operations: 7 },
+    );
 
     const totalVolume = recentTrainings.reduce(
       (sum, training) => sum + (Number(training.totalVolume) || 0),
