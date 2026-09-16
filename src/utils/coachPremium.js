@@ -1,3 +1,5 @@
+import { getTrainingLoadMetrics } from "./trainingLoad.js";
+
 const DAY_MS = 86_400_000;
 
 const finite = (value) => {
@@ -47,16 +49,151 @@ const completedSets = (training = {}) => {
   );
 };
 
-const summarizeTrainings = (trainings = []) => ({
-  sessions: trainings.length,
-  volume: round(
-    trainings.reduce((sum, item) => sum + finite(item.totalVolume), 0),
-  ),
-  sets: trainings.reduce((sum, item) => sum + completedSets(item), 0),
-  durationMinutes: round(
-    trainings.reduce((sum, item) => sum + finite(item.durationSeconds) / 60, 0),
-  ),
-});
+const trainingLoadBreakdown = (training = {}) => {
+  const calculated = training.exercises?.length
+    ? getTrainingLoadMetrics(training.exercises)
+    : training.volumeBreakdown || {};
+  const sets = completedSets(training);
+  const breakdown = {
+    externalKg: finite(calculated.externalKg),
+    machineKg: finite(calculated.machineKg),
+    unknownKg: finite(calculated.unknownKg),
+    bodyweightSets: finite(calculated.bodyweightSets),
+    assistedSets: finite(calculated.assistedSets),
+    machineSets: finite(calculated.machineSets),
+    cardioSets: finite(calculated.cardioSets),
+    unknownSets: finite(calculated.unknownSets),
+  };
+  const hasClassifiedLoad =
+    breakdown.externalKg > 0 ||
+    breakdown.machineKg > 0 ||
+    breakdown.unknownKg > 0 ||
+    breakdown.bodyweightSets > 0 ||
+    breakdown.assistedSets > 0 ||
+    breakdown.machineSets > 0 ||
+    breakdown.cardioSets > 0 ||
+    breakdown.unknownSets > 0;
+  if (!hasClassifiedLoad && finite(training.totalVolume) > 0) {
+    breakdown.unknownKg = finite(training.totalVolume);
+    breakdown.unknownSets = sets;
+  }
+  return { ...breakdown, completedSets: sets };
+};
+
+const summarizeTrainings = (trainings = []) => {
+  const loadBreakdown = trainings.reduce(
+    (total, training) => {
+      const load = trainingLoadBreakdown(training);
+      Object.keys(total).forEach((key) => {
+        total[key] += finite(load[key]);
+      });
+      return total;
+    },
+    {
+      completedSets: 0,
+      externalKg: 0,
+      machineKg: 0,
+      unknownKg: 0,
+      bodyweightSets: 0,
+      assistedSets: 0,
+      machineSets: 0,
+      cardioSets: 0,
+      unknownSets: 0,
+    },
+  );
+  return {
+    sessions: trainings.length,
+    volume: round(
+      loadBreakdown.externalKg +
+        loadBreakdown.machineKg +
+        loadBreakdown.unknownKg,
+    ),
+    sets: loadBreakdown.completedSets,
+    durationMinutes: round(
+      trainings.reduce(
+        (sum, item) => sum + finite(item.durationSeconds) / 60,
+        0,
+      ),
+    ),
+    loadBreakdown,
+  };
+};
+
+const resolveWorkloadBasis = (...summaries) => {
+  const totals = summaries.reduce(
+    (result, summary) => {
+      Object.keys(result).forEach((key) => {
+        result[key] += finite(summary?.loadBreakdown?.[key]);
+      });
+      return result;
+    },
+    {
+      externalKg: 0,
+      machineKg: 0,
+      unknownKg: 0,
+      bodyweightSets: 0,
+      assistedSets: 0,
+      machineSets: 0,
+      cardioSets: 0,
+      unknownSets: 0,
+    },
+  );
+  const nonComparable =
+    totals.machineKg > 0 ||
+    totals.unknownKg > 0 ||
+    totals.bodyweightSets > 0 ||
+    totals.assistedSets > 0 ||
+    totals.machineSets > 0 ||
+    totals.cardioSets > 0 ||
+    totals.unknownSets > 0;
+  return totals.externalKg > 0 && !nonComparable
+    ? {
+        metric: "external_volume",
+        label: "Carga externa",
+        unit: "kg",
+        valueKey: "externalKg",
+      }
+    : {
+        metric: "completed_sets",
+        label: "Trabajo",
+        unit: "series",
+        valueKey: "completedSets",
+      };
+};
+
+const plannedSessionsInRange = (activePlan, from, to) => {
+  if (!activePlan) return null;
+  const planFrom = dateKey(activePlan.startDate || from);
+  const planTo = dateKey(activePlan.endDate || to);
+  const effectiveFrom = planFrom && planFrom > from ? planFrom : from;
+  const effectiveTo = planTo && planTo < to ? planTo : to;
+  if (effectiveFrom > effectiveTo) return null;
+  const schedule = Array.isArray(activePlan.weeklySchedule)
+    ? activePlan.weeklySchedule
+    : [];
+  if (activePlan.scheduleMode === "fixed" && schedule.length) {
+    const plannedDays = new Set(
+      schedule
+        .filter((day) => day.type === "training")
+        .map((day) => Number(day.dayIndex)),
+    );
+    let count = 0;
+    for (
+      let current = effectiveFrom;
+      current <= effectiveTo;
+      current = shiftDateKey(current, 1)
+    ) {
+      const day = new Date(`${current}T12:00:00.000Z`).getUTCDay();
+      const mondayIndex = day === 0 ? 7 : day;
+      if (plannedDays.has(mondayIndex)) count += 1;
+    }
+    return count;
+  }
+  const frequency = finite(activePlan.frequencyTarget);
+  if (!frequency) return null;
+  const activeDays = daysBetween(effectiveFrom, effectiveTo) + 1;
+  return Math.max(1, Math.ceil((frequency * activeDays) / 7));
+};
 
 const percentChange = (current, previous) => {
   if (!previous) return current ? 100 : 0;
@@ -109,16 +246,39 @@ export const buildWeeklyReport = ({
   );
   const current = summarizeTrainings(currentTrainings);
   const previous = summarizeTrainings(previousTrainings);
-  const target = Math.max(
-    1,
-    Number(activePlan?.frequencyTarget) ||
-      (activePlan?.weeklySchedule || []).filter(
-        (day) => day.type === "training",
-      ).length ||
-      current.sessions ||
-      1,
+  const workloadBasis = resolveWorkloadBasis(current, previous);
+  const currentWorkload = finite(
+    current.loadBreakdown[workloadBasis.valueKey],
   );
-  const adherence = round(Math.min(100, (current.sessions / target) * 100));
+  const previousWorkload = finite(
+    previous.loadBreakdown[workloadBasis.valueKey],
+  );
+  const workloadChange = percentChange(currentWorkload, previousWorkload);
+  const plannedTarget = plannedSessionsInRange(
+    activePlan,
+    currentFrom,
+    todayKey,
+  );
+  const target =
+    plannedTarget === null
+      ? Math.max(1, current.sessions || 1)
+      : Math.max(0, plannedTarget);
+  const planStart = dateKey(activePlan?.startDate || currentFrom);
+  const planEnd = dateKey(activePlan?.endDate || todayKey);
+  const adherenceCompleted = activePlan
+    ? new Set(
+        currentTrainings
+          .filter(
+            (training) =>
+              (!planStart || training.date >= planStart) &&
+              (!planEnd || training.date <= planEnd),
+          )
+          .map((training) => training.date),
+      ).size
+    : current.sessions;
+  const adherence = target
+    ? round(Math.min(100, (adherenceCompleted / target) * 100))
+    : null;
   const sorted = [...trainings].sort((a, b) => b.date.localeCompare(a.date));
   const lastTrainingDate = sorted[0]?.date || null;
   const inactiveDays = lastTrainingDate
@@ -139,12 +299,12 @@ export const buildWeeklyReport = ({
       detail: "Conviene contactar al atleta y revisar barreras de adherencia.",
     });
   }
-  if (activePlan && adherence < 60) {
+  if (activePlan && adherence !== null && adherence < 60) {
     alerts.push({
       code: "low_adherence",
       severity: "high",
       title: `Adherencia semanal de ${adherence}%`,
-      detail: `${current.sessions} de ${target} sesiones planificadas.`,
+      detail: `${adherenceCompleted} de ${target} sesiones planificadas.`,
     });
   }
   if (!activePlan) {
@@ -176,14 +336,13 @@ export const buildWeeklyReport = ({
     });
   }
 
-  const volumeChange = percentChange(current.volume, previous.volume);
   const sessionChange = current.sessions - previous.sessions;
   const recommendation = alerts.some((item) => item.code === "recovery")
     ? "Ajustar la proxima sesion y confirmar el estado de las molestias."
-    : adherence < 60
+    : adherence !== null && adherence < 60
       ? "Reducir friccion: reprogramar las sesiones pendientes y confirmar disponibilidad."
-      : volumeChange > 20
-        ? "La carga subio con rapidez; mantener o progresar de forma conservadora."
+      : workloadChange > 20
+        ? `El trabajo medido por ${workloadBasis.label.toLowerCase()} subió con rapidez; mantener o progresar de forma conservadora.`
         : "Mantener la estructura actual y progresar solo con ejecucion estable.";
 
   return {
@@ -195,12 +354,25 @@ export const buildWeeklyReport = ({
     },
     current,
     previous,
+    workload: {
+      basis: workloadBasis,
+      current: round(currentWorkload),
+      previous: round(previousWorkload),
+      changePercent: workloadChange,
+    },
     comparison: {
-      volumePercent: volumeChange,
+      workloadPercent: workloadChange,
+      volumePercent:
+        workloadBasis.metric === "external_volume" ? workloadChange : null,
       sessions: sessionChange,
       setsPercent: percentChange(current.sets, previous.sets),
     },
-    adherence: { completed: current.sessions, target, percentage: adherence },
+    adherence: {
+      completed: adherenceCompleted,
+      target,
+      percentage: adherence,
+      available: target > 0,
+    },
     lastTrainingDate,
     inactiveDays,
     readiness: latestCheckIn

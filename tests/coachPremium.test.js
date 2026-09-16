@@ -41,13 +41,13 @@ describe("coachPremium", () => {
           date: "2026-08-12",
           totalVolume: 1000,
           durationSeconds: 3600,
-          volumeBreakdown: { completedSets: 10 },
+          volumeBreakdown: { completedSets: 10, externalKg: 1000 },
         },
         {
           date: "2026-08-08",
           totalVolume: 800,
           durationSeconds: 3000,
-          volumeBreakdown: { completedSets: 8 },
+          volumeBreakdown: { completedSets: 8, externalKg: 800 },
         },
       ],
     });
@@ -55,12 +55,97 @@ describe("coachPremium", () => {
       completed: 1,
       target: 4,
       percentage: 25,
+      available: true,
     });
     expect(report.comparison.volumePercent).toBe(25);
+    expect(report.workload).toMatchObject({
+      basis: { metric: "external_volume", unit: "kg" },
+      current: 1000,
+      previous: 800,
+      changePercent: 25,
+    });
     expect(report.alerts.some((alert) => alert.code === "low_adherence")).toBe(
       true,
     );
     expect(report.priority).toBe("high");
+  });
+
+  test("usa series en informes mixtos y no suma asistencia como carga", () => {
+    const assisted = (date, assistanceKg) => ({
+      date,
+      durationSeconds: 2400,
+      exercises: [
+        {
+          exerciseId: "assisted-pull-up",
+          exerciseName: "Dominada asistida",
+          loadType: "assisted",
+          sets: [{ weightKg: assistanceKg, reps: 8, done: true }],
+        },
+      ],
+    });
+    const report = buildWeeklyReport({
+      athlete: { _id: "a1", name: "Ana" },
+      today: new Date("2026-08-15T12:00:00.000Z"),
+      trainings: [assisted("2026-08-12", 20), assisted("2026-08-08", 40)],
+    });
+
+    expect(report.workload).toMatchObject({
+      basis: { metric: "completed_sets", unit: "series" },
+      current: 1,
+      previous: 1,
+      changePercent: 0,
+    });
+    expect(report.comparison.volumePercent).toBeNull();
+    expect(report.recommendation).not.toMatch(/subi[oó] con rapidez/i);
+  });
+
+  test("cuenta solo sesiones programadas desde el inicio del plan", () => {
+    const report = buildWeeklyReport({
+      athlete: { _id: "a1", name: "Ana" },
+      today: new Date("2026-08-15T12:00:00.000Z"),
+      activePlan: {
+        startDate: "2026-08-13",
+        endDate: "2026-09-30",
+        scheduleMode: "fixed",
+        weeklySchedule: [
+          { dayIndex: 1, type: "training" },
+          { dayIndex: 3, type: "training" },
+          { dayIndex: 5, type: "training" },
+        ],
+      },
+      trainings: [{ date: "2026-08-14", volumeBreakdown: { completedSets: 5 } }],
+    });
+
+    expect(report.adherence).toEqual({
+      completed: 1,
+      target: 1,
+      percentage: 100,
+      available: true,
+    });
+  });
+
+  test("no calcula baja adherencia antes de la primera sesion programada", () => {
+    const report = buildWeeklyReport({
+      athlete: { _id: "a1", name: "Ana" },
+      today: new Date("2026-08-13T12:00:00.000Z"),
+      activePlan: {
+        startDate: "2026-08-13",
+        endDate: "2026-09-30",
+        scheduleMode: "fixed",
+        weeklySchedule: [{ dayIndex: 5, type: "training" }],
+      },
+      trainings: [{ date: "2026-08-12", volumeBreakdown: { completedSets: 5 } }],
+    });
+
+    expect(report.adherence).toEqual({
+      completed: 0,
+      target: 0,
+      percentage: null,
+      available: false,
+    });
+    expect(report.alerts.some((alert) => alert.code === "low_adherence")).toBe(
+      false,
+    );
   });
 
   test("genera un borrador editable usando rutinas existentes", () => {

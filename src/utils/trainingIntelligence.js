@@ -1,4 +1,5 @@
 import { getEffectiveWeightKg } from "./weightConfig.js";
+import { classifyExerciseLoad } from "./trainingLoad.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -84,9 +85,12 @@ const entriesFromSet = (set = {}, weightConfig = {}) => {
         weightConfig,
       ),
       reps: finite(entry.reps ?? entry.repetitions),
-      done: entry.done,
+      done: entry.done ?? set.done,
     }))
-    .filter((entry) => entry.weight > 0 && entry.reps > 0);
+    .filter(
+      (entry) =>
+        entry.done !== false && entry.weight >= 0 && entry.reps > 0,
+    );
 };
 
 const estimateOneRM = (weight, reps) => {
@@ -97,16 +101,30 @@ const estimateOneRM = (weight, reps) => {
 
 const sessionMetric = (training = {}) => {
   let calculatedVolume = 0;
+  let externalVolume = 0;
+  let externalSets = 0;
+  let nonComparableSets = 0;
   let sets = 0;
   let reps = 0;
   let bestOneRM = 0;
   let observations = 0;
 
   (training.exercises || []).forEach((exercise) => {
+    const loadType = classifyExerciseLoad(exercise);
     (exercise.sets || []).forEach((set) => {
       const entries = entriesFromSet(set, exercise);
       if (!entries.length) return;
       sets += 1;
+      const setVolume = entries.reduce(
+        (sum, entry) => sum + entry.weight * entry.reps,
+        0,
+      );
+      if (loadType === "external") {
+        externalVolume += setVolume;
+        externalSets += 1;
+      } else {
+        nonComparableSets += 1;
+      }
       entries.forEach((entry) => {
         calculatedVolume += entry.weight * entry.reps;
         reps += entry.reps;
@@ -140,6 +158,11 @@ const sessionMetric = (training = {}) => {
     durationMinutes: round(durationMinutes),
     bestOneRM: round(bestOneRM),
     observations,
+    loadBreakdown: {
+      externalKg: round(externalVolume, 0),
+      externalSets,
+      nonComparableSets,
+    },
     completeness:
       completenessChecks.filter(Boolean).length / completenessChecks.length,
   };
@@ -362,8 +385,36 @@ const daysBetweenKeys = (from, to) => {
   return Math.max(0, Math.floor((end - start) / DAY_MS));
 };
 
-const sumVolume = (sessions = []) =>
-  sessions.reduce((sum, session) => sum + finite(session.volume), 0);
+const sumSessionMetric = (sessions = [], metric) =>
+  sessions.reduce((sum, session) => {
+    if (metric === "externalKg") {
+      return sum + finite(session.loadBreakdown?.externalKg);
+    }
+    return sum + finite(session.sets);
+  }, 0);
+
+const resolveLoadBasis = (sessions = []) => {
+  const useExternalVolume =
+    sessions.some(
+      (session) => finite(session.loadBreakdown?.externalKg) > 0,
+    ) &&
+    sessions.every(
+      (session) => finite(session.loadBreakdown?.nonComparableSets) === 0,
+    );
+  return useExternalVolume
+    ? {
+        metricKey: "externalKg",
+        metric: "external_volume",
+        label: "tonelaje con peso externo",
+        unit: "kg",
+      }
+    : {
+        metricKey: "sets",
+        metric: "completed_sets",
+        label: "series completadas",
+        unit: "series",
+      };
+};
 
 const buildDecisionSupport = (
   sessions = [],
@@ -379,10 +430,13 @@ const buildDecisionSupport = (
   const chronicSessions = sessions.filter(
     (session) => session.date >= chronicFrom && session.date <= chronicTo,
   );
-  const acuteVolume = sumVolume(acuteSessions);
-  const chronicWeeklyVolume = sumVolume(chronicSessions) / 4;
-  const loadRatio = chronicWeeklyVolume
-    ? round(acuteVolume / chronicWeeklyVolume, 2)
+  const loadBasis = resolveLoadBasis([...acuteSessions, ...chronicSessions]);
+  const useExternalVolume = loadBasis.metric === "external_volume";
+  const loadMetric = loadBasis.metricKey;
+  const acuteLoad = sumSessionMetric(acuteSessions, loadMetric);
+  const chronicWeeklyLoad = sumSessionMetric(chronicSessions, loadMetric) / 4;
+  const loadRatio = chronicWeeklyLoad
+    ? round(acuteLoad / chronicWeeklyLoad, 2)
     : null;
 
   const uniqueDates = [...new Set(sessions.map((session) => session.date))]
@@ -438,33 +492,31 @@ const buildDecisionSupport = (
       score -= 20;
       factors.push({
         code: "load_spike",
-        label: "Aumento brusco de carga",
+        label: "Aumento brusco de trabajo",
         tone: "negative",
-        detail: `La carga de 7 días equivale al ${round(loadRatio * 100, 0)}% del promedio semanal previo.`,
+        detail: `El trabajo de 7 días, medido por ${loadBasis.label}, equivale al ${round(loadRatio * 100, 0)}% del promedio semanal previo.`,
       });
     } else if (loadRatio > 1.3) {
       score -= 12;
       factors.push({
         code: "load_high",
-        label: "Carga por encima del patrón",
+        label: "Trabajo por encima del patrón",
         tone: "warning",
-        detail: `La carga reciente esta ${round((loadRatio - 1) * 100, 0)}% sobre el promedio previo.`,
+        detail: `El trabajo reciente, medido por ${loadBasis.label}, está ${round((loadRatio - 1) * 100, 0)}% sobre el promedio previo.`,
       });
     } else if (loadRatio >= 0.75 && loadRatio <= 1.2) {
       factors.push({
         code: "load_stable",
-        label: "Carga estable",
+        label: "Trabajo estable",
         tone: "positive",
-        detail:
-          "La carga reciente se mantiene cerca del patrón de cuatro semanas.",
+        detail: `El trabajo por ${loadBasis.label} se mantiene cerca del patrón de cuatro semanas.`,
       });
     } else if (loadRatio < 0.6) {
       factors.push({
         code: "load_drop",
         label: "Menor actividad reciente",
         tone: "neutral",
-        detail:
-          "Entrenaste menos que en una semana habitual; esto no indica fatiga por sí solo.",
+        detail: `Registraste menos ${loadBasis.label} que en una semana habitual; esto no indica fatiga por sí solo.`,
       });
     }
   }
@@ -561,8 +613,13 @@ const buildDecisionSupport = (
     adjustment,
     factors,
     load: {
-      acuteVolume: round(acuteVolume, 0),
-      chronicWeeklyVolume: round(chronicWeeklyVolume, 0),
+      basis: loadBasis,
+      acuteValue: round(acuteLoad, 0),
+      chronicWeeklyValue: round(chronicWeeklyLoad, 0),
+      acuteVolume: useExternalVolume ? round(acuteLoad, 0) : null,
+      chronicWeeklyVolume: useExternalVolume
+        ? round(chronicWeeklyLoad, 0)
+        : null,
       ratio: loadRatio,
       sessionsLast7Days: acuteSessions.length,
       consecutiveDays,
@@ -596,7 +653,11 @@ const exerciseKey = (exercise = {}) =>
 
 const roundToHalf = (value) => Math.round(finite(value) * 2) / 2;
 
-const buildExerciseProgression = (trainings = [], readiness = null) => {
+const buildExerciseProgression = (
+  trainings = [],
+  readiness = null,
+  today = new Date().toISOString().slice(0, 10),
+) => {
   const exerciseMap = new Map();
   [...trainings]
     .sort((left, right) => String(left.date).localeCompare(String(right.date)))
@@ -608,16 +669,51 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
           .flatMap((set) => entriesFromSet(set, exercise))
           .filter((entry) => entry.done !== false);
         if (!entries.length) return;
-        const best = entries.reduce((current, entry) => {
-          const oneRM = estimateOneRM(entry.weight, entry.reps);
-          return !current || oneRM > current.oneRM
-            ? { ...entry, oneRM }
-            : current;
-        }, null);
+        const loadType = classifyExerciseLoad(exercise);
+        if (loadType === "cardio") return;
+
+        let best;
+        let metricType;
+        let metric;
+        if (loadType === "bodyweight") {
+          best = entries.reduce(
+            (current, entry) =>
+              !current || entry.reps > current.reps ? entry : current,
+            null,
+          );
+          metricType = "repetitions";
+          metric = best.reps;
+        } else if (loadType === "assisted") {
+          const assistance = Math.min(...entries.map((entry) => entry.weight));
+          best = entries
+            .filter((entry) => entry.weight === assistance)
+            .reduce(
+              (current, entry) =>
+                !current || entry.reps > current.reps ? entry : current,
+              null,
+            );
+          metricType = "assistedRepetitions";
+          metric = best.reps;
+        } else {
+          best = entries.reduce((current, entry) => {
+            const oneRM = estimateOneRM(entry.weight, entry.reps);
+            return !current || oneRM > current.oneRM
+              ? { ...entry, oneRM }
+              : current;
+          }, null);
+          metricType = "strength";
+          metric = best.oneRM;
+        }
+
         const observation = {
           date: String(training.date || "").slice(0, 10),
-          oneRM: round(best.oneRM),
+          metric: round(metric),
+          metricType,
+          loadType,
+          oneRM: metricType === "strength" ? round(best.oneRM) : 0,
           weight: round(best.weight),
+          assistanceKg:
+            loadType === "assisted" ? round(best.weight) : null,
           reps: best.reps,
           volume: round(
             entries.reduce((sum, entry) => sum + entry.weight * entry.reps, 0),
@@ -646,18 +742,27 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
   const items = [...exerciseMap.values()]
     .map((exercise) => {
       const completeHistory = exercise.history;
-      const history = completeHistory.slice(-12);
       const latest = completeHistory[completeHistory.length - 1];
-      const latestWindow = completeHistory.slice(-3);
-      const previousWindow = completeHistory.slice(-6, -3);
-      const latestAverage = mean(latestWindow.map((item) => item.oneRM));
-      const baseline = mean(previousWindow.map((item) => item.oneRM));
+      const comparableHistory =
+        latest.loadType === "assisted"
+          ? completeHistory.filter(
+              (item) => item.assistanceKg === latest.assistanceKg,
+            )
+          : completeHistory;
+      const history = comparableHistory.slice(-12);
+      const latestWindow = comparableHistory.slice(-3);
+      const previousWindow = comparableHistory.slice(-6, -3);
+      const latestAverage = mean(latestWindow.map((item) => item.metric));
+      const baseline = mean(previousWindow.map((item) => item.metric));
       const hasStableComparison =
         latestWindow.length === 3 && previousWindow.length === 3;
-      const changePercent = hasStableComparison && baseline
-        ? round(((latestAverage - baseline) / baseline) * 100, 1)
-        : null;
-      const recentFour = completeHistory.slice(-4).map((item) => item.oneRM);
+      const changePercent =
+        hasStableComparison && baseline
+          ? round(((latestAverage - baseline) / baseline) * 100, 1)
+          : null;
+      const recentFour = comparableHistory
+        .slice(-4)
+        .map((item) => item.metric);
       const recentAverage = mean(recentFour);
       const recentRange = recentFour.length
         ? Math.max(...recentFour) - Math.min(...recentFour)
@@ -667,56 +772,87 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
         recentAverage > 0 &&
         recentRange / recentAverage <= 0.025;
       const status =
-        completeHistory.length < 4
+        comparableHistory.length < 4
           ? "limited"
           : plateau
             ? "plateau"
             : !hasStableComparison
               ? "limited"
               : changePercent <= -5
-            ? "declining"
-            : changePercent >= 2.5
-                ? "progressing"
-                : "stable";
+                ? "declining"
+                : changePercent >= 2.5
+                  ? "progressing"
+                  : "stable";
       let suggestion =
-        "Mantener la carga y buscar una repeticion adicional con tecnica estable.";
+        "Mantener la carga y buscar una repetición adicional con técnica estable.";
       let suggestedWeightKg = latest.weight;
       if (status === "progressing") {
         suggestion =
-          "La tendencia es positiva. Consolida una sesión antes de volver a aumentar la carga.";
+          latest.metricType === "strength"
+            ? "La tendencia es positiva. Consolida una sesión antes de volver a aumentar la carga."
+            : "La tendencia de repeticiones es positiva. Confirma una sesión más con la misma técnica.";
       } else if (status === "plateau") {
         const canIncrease = readiness?.state === "optimal";
-        suggestedWeightKg = canIncrease
-          ? roundToHalf(latest.weight * 1.025)
-          : latest.weight;
-        suggestion = canIncrease
-          ? `Prueba ${suggestedWeightKg} kg manteniendo el rango actual de repeticiones.`
-          : "Mantén la carga y suma una repetición antes de progresar peso.";
+        if (latest.metricType === "strength") {
+          suggestedWeightKg = canIncrease
+            ? roundToHalf(latest.weight * 1.025)
+            : latest.weight;
+          suggestion = canIncrease
+            ? `Prueba ${suggestedWeightKg} kg manteniendo el rango actual de repeticiones.`
+            : "Mantén la carga y suma una repetición antes de progresar peso.";
+        } else if (latest.metricType === "assistedRepetitions") {
+          suggestion = `Mantén ${latest.assistanceKg} kg de asistencia y busca una repetición adicional antes de reducirla.`;
+        } else {
+          suggestion =
+            "Mantén la variante y busca una repetición adicional con técnica estable.";
+        }
       } else if (status === "declining") {
-        suggestion = `Mantén ${latest.weight} kg y confirma la tendencia en la próxima sesión; si vuelve a bajar, reduce cerca de 5%.`;
+        suggestion =
+          latest.metricType === "strength"
+            ? `Mantén ${latest.weight} kg y confirma la tendencia en la próxima sesión; si vuelve a bajar, reduce cerca de 5%.`
+            : "Repite las mismas condiciones y confirma la tendencia antes de modificar la progresión.";
       } else if (status === "limited") {
         suggestion =
-          "Registra al menos tres sesiones para habilitar una recomendación de progresión.";
+          comparableHistory.length < 4
+            ? "Registra al menos cuatro sesiones comparables para detectar un posible estancamiento."
+            : "Se requieren seis sesiones comparables para contrastar 3 recientes contra 3 anteriores.";
       }
+
+      const daysSinceLast = daysBetweenKeys(latest.date, today);
+      let confidence =
+        comparableHistory.length >= 8
+          ? "alta"
+          : comparableHistory.length >= 6
+            ? "media"
+            : "baja";
+      if (daysSinceLast >= 28) confidence = "baja";
+      else if (daysSinceLast >= 14 && confidence === "alta") {
+        confidence = "media";
+      }
+
       return {
         ...exercise,
         history,
         sessionCount: completeHistory.length,
+        comparableSessionCount: comparableHistory.length,
         lastDate: latest.date,
+        daysSinceLast,
+        isStale: daysSinceLast >= 21,
+        loadType: latest.loadType,
+        metricType: latest.metricType,
         current: {
           oneRM: latest.oneRM,
           weight: latest.weight,
           reps: latest.reps,
+          assistanceKg: latest.assistanceKg,
         },
-        bestOneRM: round(Math.max(...history.map((item) => item.oneRM))),
+        bestOneRM:
+          latest.metricType === "strength"
+            ? round(Math.max(...history.map((item) => item.oneRM)))
+            : null,
         changePercent,
         status,
-        confidence:
-          completeHistory.length >= 8
-            ? "alta"
-            : completeHistory.length >= 5
-              ? "media"
-              : "baja",
+        confidence,
         suggestedWeightKg,
         suggestion,
       };
@@ -724,13 +860,14 @@ const buildExerciseProgression = (trainings = [], readiness = null) => {
     .sort(
       (left, right) =>
         priority[left.status] - priority[right.status] ||
+        Number(left.isStale) - Number(right.isStale) ||
         right.lastDate.localeCompare(left.lastDate) ||
         right.sessionCount - left.sessionCount,
     )
     .slice(0, 12);
 
   return {
-    available: items.some((item) => item.sessionCount >= 3),
+    available: items.some((item) => item.comparableSessionCount >= 3),
     exercisesAnalyzed: items.length,
     actionable: items.filter((item) =>
       ["declining", "plateau", "progressing"].includes(item.status),
@@ -781,12 +918,38 @@ const periodExerciseBests = (trainings = [], from, to) => {
       (training.exercises || []).forEach((exercise) => {
         const key = exerciseKey(exercise);
         if (!key) return;
+        const loadType = classifyExerciseLoad(exercise);
+        if (loadType === "cardio") return;
         (exercise.sets || [])
           .flatMap((set) => entriesFromSet(set, exercise))
           .filter((entry) => entry.done !== false)
           .forEach((entry) => {
-            const oneRM = estimateOneRM(entry.weight, entry.reps);
-            if (oneRM > finite(bests.get(key))) bests.set(key, oneRM);
+            const metricType =
+              loadType === "bodyweight"
+                ? "repetitions"
+                : loadType === "assisted"
+                  ? "assistedRepetitions"
+                  : "strength";
+            const metric =
+              metricType === "strength"
+                ? estimateOneRM(entry.weight, entry.reps)
+                : entry.reps;
+            const comparisonKey =
+              metricType === "assistedRepetitions"
+                ? `${key}:assistance:${round(entry.weight, 2)}`
+                : `${key}:${metricType}`;
+            const previous = bests.get(comparisonKey);
+            if (!previous || metric > previous.metric) {
+              bests.set(comparisonKey, {
+                exerciseKey: key,
+                metric: round(metric),
+                metricType,
+                assistanceKg:
+                  metricType === "assistedRepetitions"
+                    ? round(entry.weight, 2)
+                    : null,
+              });
+            }
           });
       });
     });
@@ -840,8 +1003,20 @@ const buildPeriodComparison = (
   const previousSessions = sessions.filter((session) =>
     within(session.date, previousFrom, previousTo),
   );
-  const currentVolume = sumVolume(currentSessions);
-  const previousVolume = sumVolume(previousSessions);
+  const workloadBasis = resolveLoadBasis([
+    ...currentSessions,
+    ...previousSessions,
+  ]);
+  const currentWorkload = sumSessionMetric(
+    currentSessions,
+    workloadBasis.metricKey,
+  );
+  const previousWorkload = sumSessionMetric(
+    previousSessions,
+    workloadBasis.metricKey,
+  );
+  const workload = comparisonMetric(currentWorkload, previousWorkload);
+  workload.basis = workloadBasis;
 
   const currentBests = periodExerciseBests(
     trainings,
@@ -854,24 +1029,43 @@ const buildPeriodComparison = (
     previousTo,
   );
   const comparableExerciseKeys = [...currentBests.keys()].filter(
-    (key) => previousBests.has(key) && finite(previousBests.get(key)) > 0,
+    (key) =>
+      previousBests.has(key) && finite(previousBests.get(key)?.metric) > 0,
   );
   const strengthRatios = comparableExerciseKeys.map(
-    (key) => currentBests.get(key) / previousBests.get(key),
+    (key) => currentBests.get(key).metric / previousBests.get(key).metric,
   );
   const strengthChange = strengthRatios.length
     ? round((quantile(strengthRatios, 0.5) - 1) * 100, 1)
     : null;
+  const metricTypes = new Set(
+    comparableExerciseKeys.map((key) => currentBests.get(key).metricType),
+  );
+  const strengthOnly = metricTypes.size === 1 && metricTypes.has("strength");
   const strength = {
     available: comparableExerciseKeys.length > 0,
     hasReference: comparableExerciseKeys.length > 0,
     current: comparableExerciseKeys.length
-      ? round(mean(comparableExerciseKeys.map((key) => currentBests.get(key))))
+      ? strengthOnly
+        ? round(
+            mean(
+              comparableExerciseKeys.map(
+                (key) => currentBests.get(key).metric,
+              ),
+            ),
+          )
+        : round(100 + strengthChange, 1)
       : null,
     previous: comparableExerciseKeys.length
-      ? round(
-          mean(comparableExerciseKeys.map((key) => previousBests.get(key))),
-        )
+      ? strengthOnly
+        ? round(
+            mean(
+              comparableExerciseKeys.map(
+                (key) => previousBests.get(key).metric,
+              ),
+            ),
+          )
+        : 100
       : null,
     delta: strengthChange,
     changePercent: strengthChange,
@@ -884,6 +1078,8 @@ const buildPeriodComparison = (
             ? "down"
             : "stable",
     comparableExercises: comparableExerciseKeys.length,
+    displayMode: strengthOnly ? "kg" : "index",
+    metricTypes: [...metricTypes],
   };
 
   const currentTarget = elapsedPlanTarget(activePlan, currentFrom, todayKey);
@@ -943,7 +1139,8 @@ const buildPeriodComparison = (
         currentSessions.length,
         previousSessions.length,
       ),
-      volume: comparisonMetric(currentVolume, previousVolume),
+      workload,
+      volume: workload,
       strength,
       adherence,
       recovery,
@@ -979,7 +1176,11 @@ export const buildTrainingIntelligence = (trainings = [], options = {}) => {
     ? buildDecisionSupport(sessions, options.context)
     : null;
   const exerciseProgression = advancedEnabled
-    ? buildExerciseProgression(trainings, decisionSupport)
+    ? buildExerciseProgression(
+        trainings,
+        decisionSupport,
+        String(options.context?.today || new Date().toISOString()).slice(0, 10),
+      )
     : null;
   const periodComparison = advancedEnabled
     ? buildPeriodComparison(trainings, sessions, options.context)

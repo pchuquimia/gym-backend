@@ -15,7 +15,7 @@ import {
 
 const RECORD_LIMIT = 2000;
 const INTELLIGENCE_CACHE_TTL_SECONDS = 60;
-const INTELLIGENCE_ALGORITHM_VERSION = 4;
+const INTELLIGENCE_ALGORITHM_VERSION = 6;
 const TRAINING_INTELLIGENCE_FIELDS =
   "date routineName durationSeconds totalVolume exercises.exerciseId exercises.exerciseName exercises.muscleGroup exercises.primaryMuscleGroup exercises.weightBasis exercises.barWeightKg exercises.implementCount exercises.sets.weightKg exercises.sets.weight exercises.sets.kg exercises.sets.reps exercises.sets.repetitions exercises.sets.done exercises.sets.entries.weightKg exercises.sets.entries.weight exercises.sets.entries.kg exercises.sets.entries.reps exercises.sets.entries.repetitions exercises.sets.entries.done";
 
