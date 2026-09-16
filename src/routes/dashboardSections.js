@@ -31,12 +31,14 @@ import {
 import { hasPremiumFeature, PREMIUM_FEATURES } from "../utils/subscription.js";
 import { isEmailConfigured } from "../config/email.js";
 import { syncTrainingPlanLifecycle } from "../utils/trainingPlanLifecycle.js";
+import { createSingleFlight } from "../utils/singleFlight.js";
 import {
   buildTrackingMissions,
   resolvePlanFollowUp,
 } from "../utils/coachWorkflow.js";
 
 const router = Router();
+const dashboardSectionBuilds = createSingleFlight();
 const SUMMARY_FIELDS =
   "date createdAt routineId routineName trainingPlanId trainingPlanSlotId progressScopeId orderSignature branch durationSeconds durationOverrideSeconds workSeconds restSeconds preparationSeconds pauseSeconds totalVolume volumeBreakdown";
 const DETAIL_FIELDS =
@@ -309,10 +311,11 @@ const serveDashboardSection = async (req, res, next, section) => {
     const advanced =
       hasPremiumFeature(req.user, PREMIUM_FEATURES.LOAD_RECOVERY) &&
       hasPremiumFeature(req.user, PREMIUM_FEATURES.EXERCISE_PROGRESSION);
+    const language = getExerciseLanguage(req);
     const cacheNamespace = `dashboard:${ownerId}`;
     let cacheVersion = await getCacheVersion(cacheNamespace);
     const buildCacheKey = () =>
-      `${cacheNamespace}:v${cacheVersion}:${req.user.id}:${advanced ? "advanced" : "basic"}:${today}:${section}`;
+      `${cacheNamespace}:v${cacheVersion}:${req.user.id}:${advanced ? "advanced" : "basic"}:${language}:${today}:${section}`;
     let cacheKey = buildCacheKey();
     const cached = await getCache(cacheKey);
     if (cached) {
@@ -328,76 +331,86 @@ const serveDashboardSection = async (req, res, next, section) => {
       return res.json(cached.payload || cached);
     }
 
-    if (section === "core" || section === "all") {
-      const lifecycleChanged = await syncTrainingPlanLifecycle(ownerId);
-      if (lifecycleChanged) {
-        cacheVersion = await bumpCacheVersion(cacheNamespace);
-        cacheKey = buildCacheKey();
-      }
-    }
+    const flightKey = cacheKey;
+    const { value: result, shared } = await dashboardSectionBuilds.run(
+      flightKey,
+      async () => {
+        if (section === "core" || section === "all") {
+          const lifecycleChanged = await syncTrainingPlanLifecycle(ownerId);
+          if (lifecycleChanged) {
+            cacheVersion = await bumpCacheVersion(cacheNamespace);
+            cacheKey = buildCacheKey();
+          }
+        }
 
-    let result;
-    if (section === "core") {
-      result = {
-        payload: await loadDashboardCore({ req, res, ownerId, today }),
-        intelligenceSource: null,
-      };
-    } else if (section === "activity") {
-      result = await loadDashboardActivity({
-        req,
-        res,
-        ownerFilter,
-        ownerId,
-      });
-    } else if (section === "analytics") {
-      result = await loadDashboardAnalytics({
-        res,
-        ownerId,
-        today,
-        advanced,
-      });
-    } else if (section === "history") {
-      result = await loadDashboardHistory({
-        req,
-        res,
-        ownerFilter,
-        ownerId,
-      });
-    } else {
-      const [core, activity, history, analytics] = await Promise.all([
-        loadDashboardCore({ req, res, ownerId, today }),
-        loadDashboardActivity({
-          req,
-          res,
-          ownerFilter,
-          ownerId,
-        }),
-        loadDashboardHistory({ req, res, ownerFilter, ownerId }),
-        loadDashboardAnalytics({ res, ownerId, today, advanced }),
-      ]);
-      result = {
-        payload: {
-          ...activity.payload,
-          ...analytics.payload,
-          ...core,
-          trainings: {
-            ...(activity.payload.trainings || {}),
-            ...(history.payload.trainings || {}),
-          },
-        },
-        intelligenceSource: analytics.intelligenceSource,
-      };
-    }
+        let builtResult;
+        if (section === "core") {
+          builtResult = {
+            payload: await loadDashboardCore({ req, res, ownerId, today }),
+            intelligenceSource: null,
+          };
+        } else if (section === "activity") {
+          builtResult = await loadDashboardActivity({
+            req,
+            res,
+            ownerFilter,
+            ownerId,
+          });
+        } else if (section === "analytics") {
+          builtResult = await loadDashboardAnalytics({
+            res,
+            ownerId,
+            today,
+            advanced,
+          });
+        } else if (section === "history") {
+          builtResult = await loadDashboardHistory({
+            req,
+            res,
+            ownerFilter,
+            ownerId,
+          });
+        } else {
+          const [core, activity, history, analytics] = await Promise.all([
+            loadDashboardCore({ req, res, ownerId, today }),
+            loadDashboardActivity({
+              req,
+              res,
+              ownerFilter,
+              ownerId,
+            }),
+            loadDashboardHistory({ req, res, ownerFilter, ownerId }),
+            loadDashboardAnalytics({ res, ownerId, today, advanced }),
+          ]);
+          builtResult = {
+            payload: {
+              ...activity.payload,
+              ...analytics.payload,
+              ...core,
+              trainings: {
+                ...(activity.payload.trainings || {}),
+                ...(history.payload.trainings || {}),
+              },
+            },
+            intelligenceSource: analytics.intelligenceSource,
+          };
+        }
 
-    void setCache(cacheKey, result, section === "core" ? 30 : 60).catch(
-      (error) => {
-        console.warn(
-          `[dashboard] No se pudo persistir ${section} en cache: ${error.message}`,
-        );
+        try {
+          await setCache(cacheKey, builtResult, section === "core" ? 30 : 60);
+        } catch (error) {
+          console.warn(
+            `[dashboard] No se pudo persistir ${section} en cache: ${error.message}`,
+          );
+        }
+        return builtResult;
       },
     );
     res.set("Cache-Control", "private, no-store");
-    res.set("X-Data-Cache", `BOOTSTRAP-${section.toUpperCase()}-MISS`);
+    res.set(
+      "X-Data-Cache",
+      `BOOTSTRAP-${section.toUpperCase()}-${shared ? "COALESCED" : "MISS"}`,
+    );
     res.set("X-Dashboard-Section", section);
     if (result.intelligenceSource) {
       res.set(

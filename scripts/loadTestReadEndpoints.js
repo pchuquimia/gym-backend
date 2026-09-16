@@ -3,10 +3,23 @@ import { performance } from "node:perf_hooks";
 const TARGETS = Object.freeze({
   health: "/api/health",
   dashboard: "/api/dashboard/bootstrap",
+  dashboardcore: "/api/dashboard/bootstrap/core",
+  dashboardactivity: "/api/dashboard/bootstrap/activity",
+  dashboardhistory: "/api/dashboard/bootstrap/history",
+  dashboardanalytics: "/api/dashboard/bootstrap/analytics",
+  catalog: "/api/exercises/catalog/system?language=es",
   portfolio: "/api/coach/portfolio",
   athletes: "/api/coach/athletes",
 });
-const AUTHENTICATED_TARGETS = new Set(["dashboard", "portfolio", "athletes"]);
+const AUTHENTICATED_TARGETS = new Set([
+  "dashboard",
+  "dashboardcore",
+  "dashboardactivity",
+  "dashboardhistory",
+  "dashboardanalytics",
+  "portfolio",
+  "athletes",
+]);
 
 const clampInteger = (value, fallback, min, max) => {
   const parsed = Number(value);
@@ -51,9 +64,12 @@ if (AUTHENTICATED_TARGETS.has(targetName) && !token) {
 }
 
 const today = new Date().toISOString().slice(0, 10);
-const query = ["dashboard", "portfolio"].includes(targetName)
-  ? `?today=${today}`
-  : "";
+const query =
+  targetPath.includes("?")
+    ? ""
+    : targetName.startsWith("dashboard") || targetName === "portfolio"
+      ? `?today=${today}`
+      : "";
 const url = `${baseUrl}${targetPath}${query}`;
 const results = [];
 let cursor = 0;
@@ -109,6 +125,11 @@ const statuses = results.reduce((summary, result) => {
 const cacheHits = results.filter((result) =>
   result.cache.includes("HIT"),
 ).length;
+const cacheStatuses = results.reduce((summary, result) => {
+  const status = result.cache || "NONE";
+  summary[status] = (summary[status] || 0) + 1;
+  return summary;
+}, {});
 
 console.log(
   JSON.stringify(
@@ -139,6 +160,7 @@ console.log(
       cacheHitRate: results.length
         ? Math.round((cacheHits / results.length) * 1000) / 10
         : 0,
+      cacheStatuses,
       statuses,
       failures: results
         .filter((result) => result.error)
