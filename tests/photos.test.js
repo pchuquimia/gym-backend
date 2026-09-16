@@ -3,10 +3,13 @@ import { jest } from "@jest/globals";
 import request from "supertest";
 import app from "../src/app.js";
 import Photo from "../src/models/Photo.js";
+import Session from "../src/models/Session.js";
+import Training from "../src/models/Training.js";
 import { describePhotoAsset } from "../src/services/photoAssetCleanupService.js";
 import {
   normalizePhotoDate,
   resolveUploadedPhotoVisibility,
+  validateSessionLink,
 } from "../src/routes/photos.js";
 import {
   filenameFromStoredUrl,
@@ -50,6 +53,23 @@ describe("progress photo safeguards", () => {
 
   test("keeps non-profile photos private when visibility is omitted", () => {
     expect(resolveUploadedPhotoVisibility({ type: "gym" })).toBe("private");
+  });
+
+  test("links custom training ids without casting them as legacy ObjectIds", async () => {
+    const trainingId = "training_96f7bf9e-e4cf-4a61-96a7-1230f88e0a71";
+    const trainingSpy = jest
+      .spyOn(Training, "exists")
+      .mockResolvedValue({ _id: trainingId });
+    const sessionSpy = jest.spyOn(Session, "exists");
+
+    await expect(validateSessionLink("owner-1", trainingId)).resolves.toBe(
+      trainingId,
+    );
+    expect(trainingSpy).toHaveBeenCalledWith({
+      _id: trainingId,
+      ownerId: "owner-1",
+    });
+    expect(sessionSpy).not.toHaveBeenCalled();
   });
 
   test("queues known managed assets but leaves external URLs untouched", () => {

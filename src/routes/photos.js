@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import fs from "fs/promises";
+import mongoose from "mongoose";
 import Photo from "../models/Photo.js";
 import Session from "../models/Session.js";
 import Training from "../models/Training.js";
@@ -237,13 +238,14 @@ export const resolveUploadedPhotoVisibility = ({
     "Visibilidad",
   );
 
-const validateSessionLink = async (ownerId, value) => {
+export const validateSessionLink = async (ownerId, value) => {
   const sessionId = String(value || "").trim();
   if (!sessionId) return null;
-  const [training, legacySession] = await Promise.all([
-    Training.exists({ _id: sessionId, ownerId }),
-    Session.exists({ _id: sessionId, ownerId }),
-  ]);
+  const training = await Training.exists({ _id: sessionId, ownerId });
+  const legacySession =
+    !training && mongoose.isObjectIdOrHexString(sessionId)
+      ? await Session.exists({ _id: sessionId, ownerId })
+      : null;
   if (!training && !legacySession) {
     const error = new Error(
       "La sesión seleccionada no pertenece a esta cuenta",
