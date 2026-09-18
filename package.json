@@ -11,6 +11,7 @@
     "dev": "node src/server.js",
     "worker:metrics": "node src/workers/metricsWorker.js",
     "worker:metrics:once": "node src/workers/metricsWorker.js --once",
+    "worker:metrics:batch": "node src/workers/metricsWorker.js --batch",
     "metrics:backfill": "node scripts/backfillAthleteDailyMetrics.js",
     "performance:seed": "node scripts/seedPerformanceDataset.js",
     "performance:load": "node scripts/loadTestReadEndpoints.js",

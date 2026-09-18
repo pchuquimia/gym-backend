@@ -1,4 +1,9 @@
 import { loadBackendEnvironment } from "../config/loadEnv.js";
+import mongoose from "mongoose";
+import {
+  drainMetricJobs,
+  getMetricsBatchOptions,
+} from "./metricsWorkerBatch.js";
 
 loadBackendEnvironment();
 
@@ -19,7 +24,8 @@ const MAX_ATTEMPTS = Math.max(
 );
 const DAY_MS = 24 * 60 * 60 * 1000;
 let stopping = false;
-const runOnce = process.argv.includes("--once");
+const runBatch =
+  process.argv.includes("--once") || process.argv.includes("--batch");
 
 const wait = (milliseconds) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -61,6 +67,7 @@ const processJob = async (job) => {
         expiresAt: new Date(Date.now() + 7 * DAY_MS),
       },
     });
+    return { ok: true };
   } catch (error) {
     const exhausted = job.attempts >= MAX_ATTEMPTS;
     await MetricRefreshJob.findByIdAndUpdate(job._id, {
@@ -72,6 +79,10 @@ const processJob = async (job) => {
         expiresAt: exhausted ? new Date(Date.now() + 7 * DAY_MS) : null,
       },
     });
+    console.error(
+      `[metrics] Fallo ${job._id} (intento ${job.attempts}/${MAX_ATTEMPTS}): ${error.message}`,
+    );
+    return { ok: false };
   }
 };
 
@@ -83,10 +94,23 @@ process.on("SIGTERM", shutdown);
 
 await connectDB(process.env.MONGO_URI || "mongodb://localhost:27017/gym");
 console.log("Worker de metricas iniciado");
-while (!stopping) {
-  const job = await claimJob();
-  if (job) await processJob(job);
-  if (runOnce) break;
-  if (!job) await wait(POLL_INTERVAL_MS);
+try {
+  if (runBatch) {
+    const options = getMetricsBatchOptions();
+    const summary = await drainMetricJobs({
+      claimJob,
+      processJob,
+      ...options,
+    });
+    console.log(`[metrics] Lote finalizado: ${JSON.stringify(summary)}`);
+    if (summary.failed > 0) process.exitCode = 1;
+  } else {
+    while (!stopping) {
+      const job = await claimJob();
+      if (job) await processJob(job);
+      if (!job) await wait(POLL_INTERVAL_MS);
+    }
+  }
+} finally {
+  await mongoose.disconnect();
 }
-process.exit(0);
