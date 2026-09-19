@@ -1,3 +1,5 @@
+import fs from "fs";
+import os from "os";
 import path from "path";
 import {
   backendEnvPath,
@@ -6,18 +8,29 @@ import {
 
 describe("backend environment", () => {
   test("resuelve el archivo .env desde la raiz del backend", () => {
-    expect(path.basename(backendEnvPath)).toBe(".env");
-    expect(path.basename(path.dirname(backendEnvPath))).toBe("backend");
+    expect(backendEnvPath).toBe(path.resolve(process.cwd(), ".env"));
   });
 
-  test("carga JWT_SECRET aunque el proceso se inicie desde otro directorio", () => {
-    const previousSecret = process.env.JWT_SECRET;
-    delete process.env.JWT_SECRET;
+  test("carga variables de un archivo sin sobrescribir el entorno existente", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "rirfit-env-test-"));
+    const envPath = path.join(tempDir, ".env");
+    const variable = "RIRFIT_TEST_ENV_LOADER";
+    const previousValue = process.env[variable];
 
-    const result = loadBackendEnvironment();
+    try {
+      fs.writeFileSync(envPath, `${variable}=desde_archivo\n`);
+      delete process.env[variable];
 
-    expect(result.error).toBeUndefined();
-    expect(process.env.JWT_SECRET).toBeTruthy();
-    if (previousSecret) process.env.JWT_SECRET = previousSecret;
+      expect(loadBackendEnvironment(envPath).error).toBeUndefined();
+      expect(process.env[variable]).toBe("desde_archivo");
+
+      process.env[variable] = "valor_existente";
+      expect(loadBackendEnvironment(envPath).error).toBeUndefined();
+      expect(process.env[variable]).toBe("valor_existente");
+    } finally {
+      if (previousValue === undefined) delete process.env[variable];
+      else process.env[variable] = previousValue;
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
