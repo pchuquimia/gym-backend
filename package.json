@@ -40,6 +40,8 @@
     "sync:cloudinary-exercises": "node scripts/syncCloudinaryExercises.js",
     "import:exercises-excel": "node scripts/importExercisesFromExcel.js",
     "import:exercises-dataset": "node scripts/importExercisesDataset.js",
+    "cleanup:unused-imported-exercises": "node scripts/removeUnusedImportedExercises.js",
+    "cleanup:unused-imported-exercises:apply": "node scripts/removeUnusedImportedExercises.js --apply",
     "upload:exercises-dataset-media": "node scripts/uploadDatasetMediaToCloudinary.js",
     "build:cloudinary-map": "node scripts/buildCloudinaryMap.js",
     "clear:exercise-images": "node scripts/clearExerciseImages.js",
