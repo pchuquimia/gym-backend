@@ -23,6 +23,7 @@
     "test:postman": "node scripts/runApiContractTests.js",
     "email:check": "node scripts/checkEmailConfiguration.js",
     "demo:verify": "node scripts/verifyDemoWorkspace.js",
+    "demo:sales-seed": "node scripts/seedSalesDemoWorkspace.js",
     "admin:init": "node scripts/createAdminAndAssignData.js",
     "admin:rotate": "node scripts/createAdminAndAssignData.js --rotate-password",
     "catalog:migrate-system": "node scripts/migrateExercisesToSystemCatalog.js",

@@ -23,8 +23,9 @@ describe("exerciseCodexImageService", () => {
 
     expect(prompt).toContain("Press de banca con banda elástica");
     expect(prompt).toContain("Musculos principales registrados: Pectoral");
-    expect(prompt).toContain("rojo carmesi oscuro, sutil y semitransparente");
-    expect(prompt).toContain("No uses fondos blancos, grises claros");
+    expect(prompt).toContain("musculos secundarios con un rojo mucho mas tenue");
+    expect(prompt).toContain("Nunca dibujes, proyectes ni dejes sangrar resaltado rojo sobre camisetas");
+    expect(prompt).toContain("No uses fondo blanco, gris claro, transparente");
     expect(prompt).toContain("Mantener visible el agarre");
   });
 

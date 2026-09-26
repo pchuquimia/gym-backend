@@ -6,6 +6,7 @@ import Training from "../src/models/Training.js";
 import TrainingPlan from "../src/models/TrainingPlan.js";
 import User from "../src/models/User.js";
 import WeightEntry from "../src/models/WeightEntry.js";
+import AthleteCheckIn from "../src/models/AthleteCheckIn.js";
 import {
   createDemoWorkspace,
   deleteDemoWorkspace,
@@ -19,25 +20,33 @@ try {
   await mongoose.connect(process.env.MONGO_URI, {
     serverSelectionTimeoutMS: 10_000,
   });
-  const result = await createDemoWorkspace("athlete");
+  const result = await createDemoWorkspace("coach");
   workspaceId = result.workspaceId;
-  const ownerId = result.user._id.toString();
+  const athleteIds = result.members
+    .filter((member) => member.role === "Cliente")
+    .map((member) => member._id.toString());
   const counts = {
     users: await User.countDocuments({ demoWorkspaceId: workspaceId }),
-    plans: await TrainingPlan.countDocuments({ athleteId: ownerId }),
-    routines: await Routine.countDocuments({ ownerId }),
-    trainings: await Training.countDocuments({ ownerId }),
-    sessions: await Session.countDocuments({ ownerId }),
-    weighIns: await WeightEntry.countDocuments({ ownerId }),
+    athletes: athleteIds.length,
+    plans: await TrainingPlan.countDocuments({ athleteId: { $in: athleteIds } }),
+    routines: await Routine.countDocuments({ ownerId: { $in: athleteIds } }),
+    trainings: await Training.countDocuments({ ownerId: { $in: athleteIds } }),
+    sessions: await Session.countDocuments({ ownerId: { $in: athleteIds } }),
+    weighIns: await WeightEntry.countDocuments({ ownerId: { $in: athleteIds } }),
+    checkIns: await AthleteCheckIn.countDocuments({
+      athleteId: { $in: athleteIds },
+    }),
   };
 
   if (
-    !counts.users ||
-    counts.plans < 4 ||
-    counts.routines < 3 ||
-    counts.trainings < 40 ||
+    counts.users < 6 ||
+    counts.athletes < 5 ||
+    counts.plans < 15 ||
+    counts.routines < 12 ||
+    counts.trainings < 150 ||
     !counts.sessions ||
-    !counts.weighIns
+    !counts.weighIns ||
+    counts.checkIns < 5
   ) {
     throw new Error(`Workspace demo incompleto: ${JSON.stringify(counts)}`);
   }

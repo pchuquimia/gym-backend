@@ -10,6 +10,10 @@ import TrainingPlan from "../models/TrainingPlan.js";
 import User from "../models/User.js";
 import WeightEntry from "../models/WeightEntry.js";
 import HydrationEntry from "../models/HydrationEntry.js";
+import AthleteAssessment from "../models/AthleteAssessment.js";
+import AthleteCheckIn from "../models/AthleteCheckIn.js";
+import CoachNotification from "../models/CoachNotification.js";
+import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import {
   processPhotoAssetCleanupJobs,
   queuePhotoAssetCleanup,
@@ -126,12 +130,16 @@ const createDemoUser = async ({
   expiresAt,
   roleKey,
   suffix,
+  displayName,
+  profile = {},
   assignedTrainerId = null,
 }) => {
   const role = DEMO_ROLES[roleKey];
   const compactWorkspace = workspaceId.replaceAll("-", "").slice(0, 16);
   return User.create({
-    name: suffix ? `${ROLE_LABELS[roleKey]} - ${suffix}` : ROLE_LABELS[roleKey],
+    name:
+      displayName ||
+      (suffix ? `${ROLE_LABELS[roleKey]} - ${suffix}` : ROLE_LABELS[roleKey]),
     email: `demo-${roleKey}-${suffix || "principal"}-${compactWorkspace}@demo.rirfit.local`,
     password: `Demo#${crypto.randomUUID()}!`,
     role,
@@ -157,11 +165,178 @@ const createDemoUser = async ({
       weight: roleKey === "athlete" ? 74.8 : 80.5,
       height: roleKey === "athlete" ? 172 : 178,
       goal: "mantenimiento",
+      experienceLevel: "intermediate",
+      weeklyFrequency: 4,
       calories: 2400,
       units: "metric",
       language: "es",
+      ...profile,
     },
   });
+};
+
+const DEMO_COACH_ATHLETES = [
+  {
+    suffix: "Lucia",
+    displayName: "Lucía Mendoza",
+    scenario: "on_track",
+    profile: { weight: 62.4, height: 164, goal: "volumen", weeklyFrequency: 4 },
+  },
+  {
+    suffix: "Diego",
+    displayName: "Diego Rojas",
+    scenario: "inactive",
+    profile: {
+      weight: 84.2,
+      height: 180,
+      goal: "definicion",
+      weeklyFrequency: 4,
+    },
+  },
+  {
+    suffix: "Valeria",
+    displayName: "Valeria Ortiz",
+    scenario: "recovery",
+    profile: {
+      weight: 68.1,
+      height: 169,
+      goal: "mantenimiento",
+      weeklyFrequency: 3,
+      healthNotes: "Molestia ocasional en la rodilla derecha.",
+    },
+  },
+  {
+    suffix: "Mateo",
+    displayName: "Mateo Vargas",
+    scenario: "intake_pending",
+    profile: { weight: 77.6, height: 176, goal: "volumen", weeklyFrequency: 3 },
+  },
+  {
+    suffix: "Sofia",
+    displayName: "Sofía Salazar",
+    scenario: "no_plan",
+    profile: {
+      weight: 59.8,
+      height: 161,
+      goal: "definicion",
+      weeklyFrequency: 4,
+    },
+  },
+];
+
+const demoIntakeAnswers = (profile = {}) => [
+  {
+    key: "primary_goal",
+    label: "¿Cuál es tu objetivo principal?",
+    value:
+      profile.goal === "volumen"
+        ? "Ganar masa muscular y fuerza"
+        : profile.goal === "definicion"
+          ? "Reducir grasa conservando fuerza"
+          : "Mejorar rendimiento y mantenerme activa",
+  },
+  {
+    key: "availability",
+    label: "¿Cuántos días puedes entrenar?",
+    value: `${profile.weeklyFrequency || 3} días por semana`,
+  },
+  {
+    key: "experience",
+    label: "Experiencia entrenando",
+    value: "Entre uno y tres años",
+  },
+  {
+    key: "limitations",
+    label: "Lesiones, molestias o limitaciones",
+    value: profile.healthNotes || "Sin limitaciones actuales",
+  },
+];
+
+const seedCoachAthleteScenario = async ({ athlete, coachId, scenario, seeded }) => {
+  const athleteId = athlete._id.toString();
+  const today = new Date();
+  const todayKey = dateKey(today);
+  const ready = scenario !== "recovery";
+
+  await User.updateOne(
+    { _id: athlete._id },
+    { $set: { "coachIntake.answers": demoIntakeAnswers(athlete.profile) } },
+  );
+
+  if (scenario === "intake_pending") {
+    await User.updateOne(
+      { _id: athlete._id },
+      {
+        $set: {
+          coachIntake: {
+            coachId,
+            settingsVersion: null,
+            status: "pending",
+            requestedAt: today,
+            submittedAt: null,
+            answers: [],
+          },
+        },
+      },
+    );
+  }
+
+  await AthleteCheckIn.create({
+    athleteId,
+    dateKey: todayKey,
+    sleep: ready ? 4 : 2,
+    energy: ready ? 4 : 2,
+    stress: ready ? 2 : 5,
+    soreness: ready ? 2 : 4,
+    motivation: ready ? 4 : 3,
+    jointPain: ready ? 1 : 4,
+    painAreas: ready ? [] : ["Rodilla derecha"],
+    notes: ready
+      ? "Buena energía para la sesión de hoy."
+      : "Dormí poco y la rodilla está sensible al bajar escaleras.",
+    readinessScore: ready ? 82 : 34,
+    readinessState: ready ? "ready" : "recover",
+    submittedBy: athleteId,
+  });
+
+  const completedPlan = [...seeded.plans]
+    .reverse()
+    .find((plan) => plan.status === "completed");
+  if (completedPlan) {
+    await AthleteAssessment.create({
+      athleteId,
+      coachId,
+      planId: String(completedPlan._id),
+      type: "final",
+      dateKey: dateKey(addDays(today, -45)),
+      answers: {
+        progress: 4,
+        goalReached: "partly",
+        pain: "",
+        feedback: "El bloque fue sostenible y pude progresar en los ejercicios principales.",
+        availabilityChanged: false,
+      },
+      submittedBy: athleteId,
+    });
+  }
+
+  if (scenario === "inactive") {
+    const cutoff = dateKey(addDays(today, -12));
+    await Promise.all([
+      Training.deleteMany({ ownerId: athleteId, date: { $gte: cutoff } }),
+      Session.deleteMany({ ownerId: athleteId, date: { $gte: cutoff } }),
+    ]);
+  }
+
+  if (scenario === "no_plan") {
+    await Promise.all([
+      TrainingPlan.deleteMany({
+        athleteId,
+        status: { $in: ["active", "scheduled", "draft"] },
+      }),
+      Routine.deleteMany({ ownerId: athleteId }),
+    ]);
+  }
 };
 
 const seedOwnerWorkspace = async ({
@@ -489,6 +664,27 @@ export const deleteDemoWorkspace = async (workspaceId) => {
         { ownerId: { $in: ownerIds } },
         { session: dbSession },
       );
+      await AthleteCheckIn.deleteMany(
+        { athleteId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await AthleteAssessment.deleteMany(
+        { athleteId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      await CoachNotification.deleteMany(
+        {
+          $or: [
+            { coachId: { $in: ownerIds } },
+            { athleteId: { $in: ownerIds } },
+          ],
+        },
+        { session: dbSession },
+      );
+      await CoachWorkflowSettings.deleteMany(
+        { coachId: { $in: ownerIds } },
+        { session: dbSession },
+      );
       await Exercise.deleteMany(
         { ownerId: { $in: ownerIds }, type: "custom" },
         { session: dbSession },
@@ -537,17 +733,22 @@ export const createDemoWorkspace = async (roleKey) => {
   );
   const primary = await createDemoUser({ workspaceId, expiresAt, roleKey });
   const members = [primary];
+  const coachAthleteScenarios = new Map();
 
   if (roleKey === "coach") {
-    members.push(
-      await createDemoUser({
+    for (const spec of DEMO_COACH_ATHLETES) {
+      const athlete = await createDemoUser({
         workspaceId,
         expiresAt,
         roleKey: "athlete",
-        suffix: "Lucia",
+        suffix: spec.suffix,
+        displayName: spec.displayName,
+        profile: spec.profile,
         assignedTrainerId: primary._id.toString(),
-      }),
-    );
+      });
+      members.push(athlete);
+      coachAthleteScenarios.set(athlete._id.toString(), spec.scenario);
+    }
   }
   if (roleKey === "admin") {
     const coach = await createDemoUser({
@@ -570,12 +771,20 @@ export const createDemoWorkspace = async (roleKey) => {
   for (const member of members
     .slice(1)
     .filter((user) => user.role === "Cliente")) {
-    await seedOwnerWorkspace({
+    const seeded = await seedOwnerWorkspace({
       owner: member,
       workspaceId,
       exercises,
       compact: true,
     });
+    if (roleKey === "coach") {
+      await seedCoachAthleteScenario({
+        athlete: member,
+        coachId: primary._id.toString(),
+        scenario: coachAthleteScenarios.get(member._id.toString()),
+        seeded,
+      });
+    }
   }
 
   return { user: primary, workspaceId, expiresAt, members };

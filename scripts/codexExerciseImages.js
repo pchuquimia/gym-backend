@@ -22,6 +22,7 @@ const [
 
 const usage = () => {
   console.log(`Uso:
+  npm run codex:images -- count
   npm run codex:images -- list
   npm run codex:images -- claim [requestId]
   npm run codex:images -- claim-current
@@ -58,6 +59,23 @@ const list = async () => {
     .limit(100)
     .lean();
   console.log(JSON.stringify({ requests: requests.map(serialize) }, null, 2));
+};
+
+const count = async () => {
+  const counts = await CodexImageRequest.aggregate([
+    { $group: { _id: "$status", count: { $sum: 1 } } },
+    { $sort: { _id: 1 } },
+  ]);
+  const byStatus = Object.fromEntries(
+    counts.map(({ _id, count: total }) => [_id, total]),
+  );
+  console.log(
+    JSON.stringify({
+      counts: byStatus,
+      total: counts.reduce((sum, row) => sum + row.count, 0),
+      queue: (byStatus.pending || 0) + (byStatus.processing || 0),
+    }),
+  );
 };
 
 const claim = async (requestId) => {
@@ -201,7 +219,7 @@ const fail = async (requestId, message) => {
 const run = async () => {
   const [command = "list", first, ...rest] = process.argv.slice(2);
   if (
-    !["list", "claim", "claim-current", "complete", "fail"].includes(
+    !["count", "list", "claim", "claim-current", "complete", "fail"].includes(
       command,
     )
   ) {
@@ -210,6 +228,7 @@ const run = async () => {
     return;
   }
   await connect();
+  if (command === "count") await count();
   if (command === "list") await list();
   if (command === "claim") await claim(first);
   if (command === "claim-current") await claimCurrent();
