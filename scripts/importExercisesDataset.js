@@ -3,6 +3,11 @@ import mongoose from "mongoose";
 import Exercise from "../src/models/Exercise.js";
 import CatalogSwitchState from "../src/models/CatalogSwitchState.js";
 import { inferWeightConfig } from "../src/utils/weightConfig.js";
+import { EXERCISE_NAME_CORRECTIONS, getCuratedExerciseNamePatch } from "../src/utils/exerciseNameCuration.js";
+import { naturalizeExerciseNameFully } from "../src/utils/naturalizeExerciseName.js";
+import { CHEST_EXERCISE_METADATA, CHEST_DESCRIPTION_FIXES, buildChestMetadataPatch } from "../src/utils/chestCatalogCuration.js";
+import { BACK_EXERCISE_METADATA, buildBackMetadataPatch } from "../src/utils/backCatalogCuration.js";
+import { SHOULDER_EXERCISE_METADATA, buildShoulderMetadataPatch } from "../src/utils/shoulderCatalogCuration.js";
 import {
   DATASET_COMMIT,
   DATASET_PROVIDER,
@@ -135,8 +140,49 @@ const importDataset = async () => {
   }
 
   await connect();
+  const existingExercises = await Exercise.find(
+    { "source.provider": DATASET_PROVIDER },
+    "source.externalId aliases classificationStatus",
+  ).lean();
+  const existingByExternalId = new Map(
+    existingExercises.map((exercise) => [exercise.source?.externalId, exercise]),
+  );
   const operations = exercises.map((exercise) => {
     const { _id, createdBy, isActive, ...set } = exercise;
+    const previous = existingByExternalId.get(exercise.source.externalId);
+    set.aliases = [...new Set([...(previous?.aliases || []), ...(set.aliases || [])])];
+    if (EXERCISE_NAME_CORRECTIONS[_id]) {
+      const curated = getCuratedExerciseNamePatch({ _id, localizedNames: set.localizedNames, aliases: set.aliases });
+      if (curated?.status === "conflict") throw new Error(`Cambió el nombre de origen: ${_id}`);
+      if (curated?.values) {
+        set.localizedNames = {
+          ...set.localizedNames,
+          es: curated.values["localizedNames.es"],
+          ...(curated.values["localizedNames.en"] ? { en: curated.values["localizedNames.en"] } : {}),
+        };
+        set.aliases = curated.values.aliases;
+      }
+    } else if (set.localizedNames?.es) {
+      const originalSpanishName = set.localizedNames.es;
+      const naturalSpanishName = naturalizeExerciseNameFully(originalSpanishName, {
+        group: set.primaryMuscleGroup,
+        id: _id,
+      });
+      if (naturalSpanishName !== originalSpanishName) {
+        set.localizedNames = { ...set.localizedNames, es: naturalSpanishName };
+        set.aliases = [...new Set([...set.aliases, originalSpanishName])];
+      }
+    }
+    if (CHEST_EXERCISE_METADATA[_id]) Object.assign(set, buildChestMetadataPatch(CHEST_EXERCISE_METADATA[_id]));
+    if (BACK_EXERCISE_METADATA[_id]) Object.assign(set, buildBackMetadataPatch(BACK_EXERCISE_METADATA[_id]));
+    if (SHOULDER_EXERCISE_METADATA[_id]) Object.assign(set, buildShoulderMetadataPatch(SHOULDER_EXERCISE_METADATA[_id]));
+    if (CHEST_DESCRIPTION_FIXES[_id]) {
+      set.instructions = CHEST_DESCRIPTION_FIXES[_id];
+      set.description = set.instructions.join(" ");
+    }
+    if (previous?.classificationStatus === "review" || previous?.classificationStatus === "reviewed") {
+      set.classificationStatus = previous.classificationStatus;
+    }
     set.weightConfig = inferWeightConfig(exercise);
     return {
       updateOne: {

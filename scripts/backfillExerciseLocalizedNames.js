@@ -18,30 +18,31 @@ const run = async () => {
   ).lean();
   const operations = exercises.map((exercise) => {
     const importedInEnglish = exercise.source?.provider === "hasaneyldrm";
+    const currentEnglish = exercise.localizedNames?.en?.trim();
+    const currentSpanish = exercise.localizedNames?.es?.trim();
     const englishName =
-      (importedInEnglish
-        ? exercise.localizedNames?.en || exercise.name
+      (currentEnglish || (importedInEnglish
+        ? exercise.name
         : translateExerciseNameToEnglish(
-            exercise.localizedNames?.es || exercise.name,
-          )) || "Exercise";
-    const spanishName = importedInEnglish
+            currentSpanish || exercise.name,
+          ))) || "Exercise";
+    const spanishName = currentSpanish || (importedInEnglish
       ? translateExerciseNameToSpanish(englishName)
-      : exercise.localizedNames?.es || exercise.name;
+      : exercise.name || translateExerciseNameToSpanish(englishName));
+    const fields = {};
+    if (!currentEnglish) fields["localizedNames.en"] = englishName;
+    if (!currentSpanish) fields["localizedNames.es"] = spanishName;
+    if (!Object.keys(fields).length) return null;
     return {
       updateOne: {
         filter: { _id: exercise._id },
-        update: {
-          $set: {
-            "localizedNames.en": englishName,
-            "localizedNames.es": spanishName,
-          },
-        },
+        update: { $set: fields },
       },
     };
-  });
+  }).filter(Boolean);
 
-  const preview = operations.slice(0, 12).map((operation, index) => ({
-    id: exercises[index]._id,
+  const preview = operations.slice(0, 12).map((operation) => ({
+    id: operation.updateOne.filter._id,
     en: operation.updateOne.update.$set["localizedNames.en"],
     es: operation.updateOne.update.$set["localizedNames.es"],
   }));

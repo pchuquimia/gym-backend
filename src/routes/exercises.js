@@ -56,7 +56,9 @@ import { getCache, setCache } from "../services/cacheService.js";
 import {
   buildExerciseDiscoveryScoreExpression,
   decorateExerciseDiscovery,
+  getExerciseDiscovery,
 } from "../utils/exerciseDiscovery.js";
+import { scoreExerciseSearch } from "../utils/exerciseSearch.js";
 
 const router = Router();
 const EXERCISE_FACET_PAGE_SIZE = 200;
@@ -237,68 +239,6 @@ const slugify = (text = "") =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)+/g, "");
-
-const escapeRegex = (value = "") =>
-  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-const SEARCH_CHARACTER_PATTERNS = {
-  a: "[aáàäâã]",
-  e: "[eéèëê]",
-  i: "[iíìïî]",
-  n: "[nñ]",
-  o: "[oóòöôõ]",
-  u: "[uúùüû]",
-};
-
-const buildAccentInsensitivePattern = (value = "") => {
-  const normalized = String(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase();
-  return Array.from(normalized)
-    .map((character) => {
-      if (/\s/.test(character)) return "\\s+";
-      return SEARCH_CHARACTER_PATTERNS[character] || escapeRegex(character);
-    })
-    .join("");
-};
-
-const SEARCH_SYNONYMS = new Map([
-  ["press banca", "bench press"],
-  ["press de banca", "bench press"],
-  ["jalon", "pulldown"],
-  ["dominada", "pull-up"],
-  ["dominadas", "pull-up"],
-  ["remo", "row"],
-  ["sentadilla", "squat"],
-  ["peso muerto", "deadlift"],
-  ["zancada", "lunge"],
-  ["flexiones", "push-up"],
-  ["flexion", "push-up"],
-  ["elevacion lateral", "lateral raise"],
-  ["curl de biceps", "biceps curl"],
-]);
-
-const expandSearchTerms = (value = "") => {
-  const terms = String(value)
-    .split("|")
-    .map((term) => term.trim())
-    .filter(Boolean);
-  if (!terms.length) return [];
-  return Array.from(
-    new Set(
-      terms.flatMap((term) => {
-        const normalized = term
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase();
-        return [term, normalized, SEARCH_SYNONYMS.get(normalized)].filter(
-          Boolean,
-        );
-      }),
-    ),
-  );
-};
 
 const buildInclusiveProjection = (fields = "") => {
   const projection = { _id: 1 };
@@ -1692,46 +1632,6 @@ router.get("/", async (req, res, next) => {
     if (req.query.branch && req.query.branch !== "todos") {
       filter.branches = { $in: [req.query.branch, "general"] };
     }
-    if (req.query.q) {
-      const terms = Array.from(
-        new Set(
-          expandSearchTerms(req.query.q).map(buildAccentInsensitivePattern),
-        ),
-      );
-      const searchableFields = [
-        "name",
-        "slug",
-        "localizedNames.es",
-        "localizedNames.en",
-        "nameSpanish",
-        "nameEnglish",
-        "aliases",
-        "discovery.familyName",
-        "discovery.keywords",
-        "categories",
-        "bodyRegion",
-        "navigationRegion",
-        "primaryMuscleGroup",
-        "primaryMuscles",
-        "secondaryMuscles",
-        "stabilizerMuscles",
-        "movementPatterns",
-        "equipment",
-        "goals",
-        "tags",
-        "description",
-        "instructions",
-        "muscle",
-        "primaryMuscle",
-      ];
-      andFilters.push({
-        $or: terms.flatMap((term) =>
-          searchableFields.map((field) => ({
-            [field]: { $regex: term, $options: "i" },
-          })),
-        ),
-      });
-    }
     if (andFilters.length) filter.$and = andFilters;
 
     const includeMeta = req.query.meta === "true";
@@ -1742,6 +1642,7 @@ router.get("/", async (req, res, next) => {
       limit,
       fields,
       filter,
+      q: req.query.q || "",
       includeMeta,
       language,
       sortMode,
@@ -1753,25 +1654,47 @@ router.get("/", async (req, res, next) => {
       return res.json(cached);
     }
 
+    if (String(req.query.q || "").trim()) {
+      const candidates = await measureDatabase(res, () => Exercise.find(
+        filter,
+        "name localizedNames nameSpanish nameEnglish aliases discovery primaryMuscleGroup muscle primaryMuscle primaryMuscles equipment categories category difficulty",
+      ).lean().maxTimeMS(10000));
+      const ranked = candidates
+        .map((exercise) => ({
+          id: exercise._id,
+          score: scoreExerciseSearch(exercise, req.query.q),
+          discoveryScore: getExerciseDiscovery(exercise, req.query.q).score,
+        }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) =>
+          Math.floor(b.score / 1000) - Math.floor(a.score / 1000) ||
+          b.discoveryScore - a.discoveryScore ||
+          b.score - a.score ||
+          String(a.id).localeCompare(String(b.id)),
+        );
+      const pageIds = ranked.slice((page - 1) * limit, page * limit).map(({ id }) => id);
+      const pageExercises = pageIds.length
+        ? await Exercise.find({ _id: { $in: pageIds } }, fields).lean().maxTimeMS(10000)
+        : [];
+      const byId = new Map(pageExercises.map((exercise) => [String(exercise._id), exercise]));
+      const localizedExercises = pageIds
+        .map((id) => byId.get(String(id)))
+        .filter(Boolean)
+        .map((exercise) => decorateExerciseDiscovery(localizeExerciseDocument(exercise, language), req.query.q));
+      const response = includeMeta
+        ? { page, limit, count: localizedExercises.length, total: ranked.length, items: localizedExercises }
+        : localizedExercises;
+      writeExerciseListCache(cacheKey, response);
+      res.set("Cache-Control", "private, max-age=60");
+      res.set("X-Data-Cache", "MISS");
+      return res.json(response);
+    }
+
     let exercisesQuery;
     if (sortMode === "discovery") {
-      const searchPatterns = req.query.q
-        ? Array.from(
-            new Set(
-              expandSearchTerms(req.query.q).map(buildAccentInsensitivePattern),
-            ),
-          )
-        : [];
-      const groupedSearchPattern = searchPatterns.length
-        ? `(?:${searchPatterns.join("|")})`
-        : "";
       const scoreExpression = buildExerciseDiscoveryScoreExpression({
-        exactSearchPattern: groupedSearchPattern
-          ? `^\\s*${groupedSearchPattern}\\s*$`
-          : "",
-        prefixSearchPattern: groupedSearchPattern
-          ? `^\\s*${groupedSearchPattern}`
-          : "",
+        exactSearchPattern: "",
+        prefixSearchPattern: "",
       });
       exercisesQuery = Exercise.aggregate([
         { $match: filter },
