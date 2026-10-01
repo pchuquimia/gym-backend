@@ -59,6 +59,11 @@ import {
   getExerciseDiscovery,
 } from "../utils/exerciseDiscovery.js";
 import { scoreExerciseSearch } from "../utils/exerciseSearch.js";
+import {
+  listInactiveExercisesForReview,
+  permanentlyDeleteInactiveExercise,
+  restoreInactiveExercise,
+} from "../services/inactiveExerciseReviewService.js";
 
 const router = Router();
 const EXERCISE_FACET_PAGE_SIZE = 200;
@@ -734,6 +739,53 @@ router.get("/catalog/custom", async (req, res, next) => {
     next(error);
   }
 });
+
+router.get(
+  "/admin/inactive",
+  authorizeRoles("Admin"),
+  async (_req, res, next) => {
+    try {
+      res.set("Cache-Control", "private, no-store");
+      res.json({ items: await listInactiveExercisesForReview() });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.post(
+  "/admin/inactive/:id/restore",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const result = await restoreInactiveExercise({
+        exerciseId: String(req.params.id || "").trim(),
+        performedBy: String(req.user.id),
+      });
+      clearExerciseFacetCache();
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
+router.delete(
+  "/admin/inactive/:id",
+  authorizeRoles("Admin"),
+  async (req, res, next) => {
+    try {
+      const result = await permanentlyDeleteInactiveExercise({
+        exerciseId: String(req.params.id || "").trim(),
+        performedBy: String(req.user.id),
+      });
+      clearExerciseFacetCache();
+      res.json(result);
+    } catch (error) {
+      next(error);
+    }
+  },
+);
 
 router.get(
   "/admin/migrations",

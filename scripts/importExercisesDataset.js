@@ -2,6 +2,7 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import Exercise from "../src/models/Exercise.js";
 import CatalogSwitchState from "../src/models/CatalogSwitchState.js";
+import ExerciseMigration from "../src/models/ExerciseMigration.js";
 import { inferWeightConfig } from "../src/utils/weightConfig.js";
 import { EXERCISE_NAME_CORRECTIONS, getCuratedExerciseNamePatch } from "../src/utils/exerciseNameCuration.js";
 import { naturalizeExerciseNameFully } from "../src/utils/naturalizeExerciseName.js";
@@ -75,11 +76,7 @@ const activateDatasetCatalog = async () => {
     status: "active",
   });
   if (activeState) {
-    await Exercise.updateMany(
-      { type: "system", "source.provider": DATASET_PROVIDER },
-      { $set: { isActive: true } },
-    );
-    console.log(`Catalog switch ${activeState.key} is already active`);
+    console.log(`Catalog switch ${activeState.key} is already active; keeping review decisions`);
     return;
   }
 
@@ -147,7 +144,18 @@ const importDataset = async () => {
   const existingByExternalId = new Map(
     existingExercises.map((exercise) => [exercise.source?.externalId, exercise]),
   );
-  const operations = exercises.map((exercise) => {
+  const deletedRecords = await ExerciseMigration.find(
+    {
+      operation: "delete",
+      sourceDeleted: true,
+      "sourceExercise.id": { $in: exercises.map((exercise) => exercise._id) },
+    },
+    "sourceExercise.id",
+  ).lean();
+  const permanentlyDeletedIds = new Set(
+    deletedRecords.map((record) => record.sourceExercise?.id).filter(Boolean),
+  );
+  const operations = exercises.filter((exercise) => !permanentlyDeletedIds.has(exercise._id)).map((exercise) => {
     const { _id, createdBy, isActive, ...set } = exercise;
     const previous = existingByExternalId.get(exercise.source.externalId);
     set.aliases = [...new Set([...(previous?.aliases || []), ...(set.aliases || [])])];
@@ -209,6 +217,7 @@ const importDataset = async () => {
         matched: result.matchedCount,
         modified: result.modifiedCount,
         inserted: result.upsertedCount,
+        skippedPermanentlyDeleted: permanentlyDeletedIds.size,
         ...summary,
       },
       null,
