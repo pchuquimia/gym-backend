@@ -1,4 +1,3 @@
-import crypto from "crypto";
 import { Router } from "express";
 import { ensureCanAccessOwner, protect } from "../middleware/authMiddleware.js";
 import Routine from "../models/Routine.js";
@@ -9,6 +8,7 @@ import {
   isFuturePlan,
   syncTrainingPlanLifecycle,
 } from "../utils/trainingPlanLifecycle.js";
+import { extendTrainingPlanInPlace } from "../services/trainingPlanExtensionService.js";
 import { persistPlanStatus } from "../services/trainingPlanTransactionService.js";
 
 const router = Router();
@@ -80,7 +80,7 @@ const readPlanPayload = (body, currentPlan = null) => {
   if (
     !Number.isInteger(durationWeeks) ||
     durationWeeks < 1 ||
-    durationWeeks > 52
+    durationWeeks > Math.max(52, Number(currentPlan?.durationWeeks || 0))
   ) {
     return { error: "La duracion debe ser de 1 a 52 semanas" };
   }
@@ -227,8 +227,6 @@ router.post("/", async (req, res, next) => {
 });
 
 router.post("/:id/extend", async (req, res, next) => {
-  const createdRoutineIds = [];
-  let createdPlanId = null;
   try {
     if (
       req.user.role === "Cliente" &&
@@ -236,174 +234,18 @@ router.post("/:id/extend", async (req, res, next) => {
     ) {
       return res
         .status(403)
-        .json({ error: "Tu coach administra tu planificacion" });
+        .json({ error: "Tu coach administra tu planificación" });
     }
-
     await syncTrainingPlanLifecycle(req.user.id);
-    const sourcePlan = await TrainingPlan.findOne({
-      _id: req.params.id,
+    const plan = await extendTrainingPlanInPlace({
+      planId: req.params.id,
       athleteId: req.user.id,
-      coachId: null,
-      status: "completed",
-    }).lean();
-    if (!sourcePlan) {
-      return res.status(404).json({
-        error: "La planificación completada no está disponible",
-      });
-    }
-
-    const durationWeeks = Number(req.body.durationWeeks);
-    if (
-      !Number.isInteger(durationWeeks) ||
-      durationWeeks < 1 ||
-      durationWeeks > 52
-    ) {
-      return res
-        .status(400)
-        .json({ error: "La duración debe ser de 1 a 52 semanas" });
-    }
-    const startDate = req.body.startDate ? new Date(req.body.startDate) : null;
-    if (!startDate || Number.isNaN(startDate.getTime())) {
-      return res.status(400).json({ error: "Selecciona una fecha de inicio" });
-    }
-    startDate.setUTCHours(0, 0, 0, 0);
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    if (startDate < today) {
-      return res.status(400).json({
-        error: "La continuación debe iniciar hoy o en una fecha futura",
-      });
-    }
-
-    const existingContinuation = await TrainingPlan.findOne({
-      athleteId: req.user.id,
-      coachId: null,
-      sourcePlanId: String(sourcePlan._id),
-      status: { $in: ["draft", "scheduled", "active", "paused"] },
-    })
-      .select("_id status")
-      .lean();
-    if (existingContinuation) {
-      return res.status(409).json({
-        error: "Este plan ya tiene una continuación",
-        planId: existingContinuation._id,
-        status: existingContinuation.status,
-      });
-    }
-
-    const requestedName = String(req.body.name || "").trim();
-    const fallbackName = `${sourcePlan.name} - Continuación`;
-    const name = (requestedName || fallbackName).slice(0, 100);
-    const sourceRoutineIds = [
-      ...new Set(
-        (sourcePlan.weeklySchedule || [])
-          .filter((day) => day.type === "training" && day.routineId)
-          .map((day) => String(day.routineId)),
-      ),
-    ];
-    const sourceRoutines = sourceRoutineIds.length
-      ? await Routine.find({
-          _id: { $in: sourceRoutineIds },
-          ownerId: req.user.id,
-        }).lean()
-      : [];
-    if (sourceRoutines.length !== sourceRoutineIds.length) {
-      return res.status(409).json({
-        error: "No se encontraron todas las rutinas del plan original",
-      });
-    }
-
-    const plan = new TrainingPlan({
-      name,
-      coachId: null,
-      createdById: req.user.id,
-      athleteId: req.user.id,
-      planTemplateId: sourcePlan.planTemplateId || null,
-      planTemplateVersion: sourcePlan.planTemplateVersion || null,
-      planTemplateSnapshot: sourcePlan.planTemplateSnapshot,
-      sourcePlanId: String(sourcePlan._id),
-      sourcePlanSnapshot: {
-        name: sourcePlan.name,
-        updatedAt: sourcePlan.updatedAt,
-      },
-      level: sourcePlan.level,
-      goal: sourcePlan.goal,
-      durationWeeks,
-      startDate,
-      scheduleMode: sourcePlan.scheduleMode,
-      status: "draft",
-      notes: sourcePlan.notes,
-      weeklySchedule: [],
+      additionalWeeks: req.body.additionalWeeks ?? req.body.durationWeeks,
+      expectedUpdatedAt: req.body.expectedUpdatedAt,
+      expectedEndDate: req.body.expectedEndDate,
     });
-    createdPlanId = plan._id;
-
-    const routineIdBySource = new Map();
-    const routineCopies = sourceRoutines.map((sourceRoutine) => {
-      const routineId = `routine_${crypto.randomUUID()}`;
-      createdRoutineIds.push(routineId);
-      routineIdBySource.set(String(sourceRoutine._id), routineId);
-      return {
-        _id: routineId,
-        name: sourceRoutine.name,
-        description: sourceRoutine.description || "",
-        templateGroup: sourceRoutine.templateGroup || "",
-        goal: sourceRoutine.goal || "",
-        level: sourceRoutine.level || "",
-        tags: sourceRoutine.tags || [],
-        branch: sourceRoutine.branch || "general",
-        exerciseOrderMode: sourceRoutine.exerciseOrderMode || "free",
-        exercises: sourceRoutine.exercises || [],
-        ownerId: req.user.id,
-        progressMode: "inherit",
-        progressScopeId:
-          sourceRoutine.progressScopeId || `scope_${crypto.randomUUID()}`,
-        sourceRoutineId: sourceRoutine.sourceRoutineId || sourceRoutine._id,
-        sourceRoutineVersion: Number(sourceRoutine.version || 1),
-        kind: "assigned",
-        visibility: "private",
-        version: 1,
-        assignedByCoachId: null,
-        assignedAt: new Date(),
-        trainingPlanId: String(plan._id),
-        trainingPlanSlotId: null,
-        historicalTrainingPlanId: null,
-        assignmentType: "plan",
-        isArchived: false,
-        isAvailableForTraining: false,
-        archivedAt: null,
-        archivedBy: null,
-        archiveReason: null,
-      };
-    });
-
-    plan.weeklySchedule = (sourcePlan.weeklySchedule || []).map((day) => ({
-      slotId: day.slotId,
-      order: day.order,
-      dayIndex: day.dayIndex,
-      type: day.type,
-      focus: day.focus,
-      sourceRoutineId:
-        day.type === "training"
-          ? day.sourceRoutineId || day.routineId || null
-          : null,
-      routineId:
-        day.type === "training" && day.routineId
-          ? routineIdBySource.get(String(day.routineId)) || null
-          : null,
-    }));
-    await plan.save();
-    if (routineCopies.length) await Routine.insertMany(routineCopies);
-
-    res.status(201).json(plan);
+    res.json(plan);
   } catch (err) {
-    if (createdPlanId) {
-      await TrainingPlan.findByIdAndDelete(createdPlanId).catch(() => {});
-    }
-    if (createdRoutineIds.length) {
-      await Routine.deleteMany({ _id: { $in: createdRoutineIds } }).catch(
-        () => {},
-      );
-    }
     next(err);
   }
 });

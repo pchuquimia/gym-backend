@@ -38,6 +38,7 @@ const TrainingPlanSchema = new mongoose.Schema(
       version: { type: Number, default: null },
     },
     sourcePlanId: { type: String, default: null, index: true },
+    mergedPlanIds: { type: [String], default: [] },
     sourcePlanSnapshot: {
       name: { type: String, default: "" },
       updatedAt: { type: Date, default: null },
@@ -48,7 +49,12 @@ const TrainingPlanSchema = new mongoose.Schema(
       default: "beginner",
     },
     goal: { type: String, trim: true, maxlength: 80, default: "General" },
-    durationWeeks: { type: Number, min: 1, max: 52, default: 8 },
+    durationWeeks: {
+      type: Number,
+      min: 1,
+      default: 8,
+      validate: Number.isInteger,
+    },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true },
     scheduleMode: {
@@ -177,8 +183,23 @@ TrainingPlanSchema.pre("validate", function normalizePlanDatesAndSlots(next) {
   start.setUTCHours(0, 0, 0, 0);
   this.startDate = start;
 
-  const end = new Date(start);
-  end.setUTCDate(end.getUTCDate() + Number(this.durationWeeks || 1) * 7 - 1);
+  const keepExplicitEnd = this.isModified("endDate") && this.endDate;
+  const recalculateEnd =
+    !this.endDate ||
+    this.isModified("startDate") ||
+    this.isModified("durationWeeks");
+  const end = new Date(
+    keepExplicitEnd || (!recalculateEnd && this.endDate) || start,
+  );
+  if (!keepExplicitEnd && recalculateEnd) {
+    end.setUTCDate(end.getUTCDate() + Number(this.durationWeeks || 1) * 7 - 1);
+  }
+  end.setUTCHours(0, 0, 0, 0);
+  if (end < start)
+    this.invalidate(
+      "endDate",
+      "La fecha de fin no puede ser anterior al inicio",
+    );
   this.endDate = end;
 
   let trainingOrder = 0;
