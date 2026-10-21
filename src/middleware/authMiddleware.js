@@ -62,43 +62,36 @@ const getTokenFromRequest = (req) => {
   return null;
 };
 
+const sessionError = (code, message = "No autenticado") =>
+  Object.assign(new Error(message), { statusCode: 401, code });
+
 export const protect = async (req, res, next) => {
   try {
     const token = getTokenFromRequest(req);
     if (!token) {
-      const err = new Error("No autenticado");
-      err.statusCode = 401;
-      return next(err);
+      return next(sessionError("AUTH_SESSION_MISSING"));
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (requiresSessionBoundToken() && !decoded.sid) {
-      const err = new Error("No autenticado");
-      err.statusCode = 401;
-      return next(err);
+      return next(sessionError("AUTH_SESSION_INVALID"));
     }
     // Initial screens issue several protected requests in parallel. Sharing the
     // same in-flight user lookup removes duplicate Atlas round trips without
     // caching permissions after the request burst has finished.
     const user = await loadAuthenticationUser(decoded.id, decoded.sid, res);
     if (!user || !user.isActive) {
-      const err = new Error("No autenticado");
-      err.statusCode = 401;
-      return next(err);
+      return next(sessionError("AUTH_ACCOUNT_UNAVAILABLE"));
     }
     if (user.isDemo && user.demoExpiresAt && user.demoExpiresAt <= new Date()) {
-      const err = new Error("La sesion demo ha vencido");
-      err.statusCode = 401;
-      return next(err);
+      return next(sessionError("AUTH_DEMO_EXPIRED", "La sesion demo ha vencido"));
     }
     if (decoded.sid) {
       const hasSession = (user.activeSessions || []).some(
         (session) => session.sessionId === decoded.sid,
       );
       if (!hasSession) {
-        const err = new Error("No autenticado");
-        err.statusCode = 401;
-        return next(err);
+        return next(sessionError("AUTH_SESSION_REVOKED"));
       }
     }
 
@@ -135,10 +128,19 @@ export const protect = async (req, res, next) => {
       }
     }
     next();
-  } catch (_err) {
-    const err = new Error("No autenticado");
-    err.statusCode = 401;
-    next(err);
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      return next(sessionError("AUTH_SESSION_EXPIRED"));
+    }
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.NotBeforeError) {
+      return next(sessionError("AUTH_SESSION_INVALID"));
+    }
+    // A database/network failure does not invalidate the user's credentials.
+    next(Object.assign(new Error("No pudimos verificar tu sesión. Intenta nuevamente."), {
+      statusCode: 503,
+      code: "AUTH_VERIFICATION_UNAVAILABLE",
+      cause: error,
+    }));
   }
 };
 

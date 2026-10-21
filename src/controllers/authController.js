@@ -353,6 +353,7 @@ const resetPassword = asyncHandler(async (req, res) => {
   user.activeSessions = [];
   await user.save();
 
+  invalidateAuthenticationUser(user._id);
   clearAuthCookie(res);
   res.json({ ok: true });
 });
@@ -976,6 +977,7 @@ const logout = asyncHandler(async (req, res) => {
         await User.findByIdAndUpdate(decoded.id, {
           $pull: { activeSessions: { sessionId: decoded.sid } },
         });
+        invalidateAuthenticationUser(decoded.id);
       }
     } catch {
       // La cookie igualmente se limpia aunque el token ya no sea valido.
