@@ -8,7 +8,7 @@
     "npm": "11.x"
   },
   "scripts": {
-    "dev": "node src/server.js",
+    "dev": "node --watch-path=./src src/server.js",
     "worker:metrics": "node src/workers/metricsWorker.js",
     "worker:metrics:once": "node src/workers/metricsWorker.js --once",
     "worker:metrics:batch": "node src/workers/metricsWorker.js --batch",

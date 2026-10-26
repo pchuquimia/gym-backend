@@ -15,6 +15,16 @@ las semanas que se añaden en una operación, no a la duración total. `endDate`
 puede caer a mitad de semana si hubo una pausa; los cambios de estado no deben
 recalcularlo a partir de la duración redondeada.
 
+## Desarrollo local
+
+Ejecuta `npm run dev` para reiniciar la API automáticamente al cambiar `src/`.
+Después de actualizar un backend que se inició sin vigilancia, reinícialo una
+vez. La implementación anterior de la extensión esperaba `durationWeeks` y
+`startDate`; si recibe solo `additionalWeeks`, puede devolver el mensaje
+«La duración debe ser de 1 a 52 semanas» incluso al solicitar dos semanas.
+No añadas campos antiguos para sortear ese error: aquella implementación creaba
+otra planificación. Actualiza el proceso para conservar el mismo plan.
+
 ## Reparación de continuaciones anteriores
 
 Desde la carpeta del backend:
