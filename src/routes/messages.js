@@ -6,6 +6,7 @@ import { protect } from "../middleware/authMiddleware.js";
 import { validate } from "../middleware/validate.js";
 import User from "../models/User.js";
 import CoachMessage from "../models/CoachMessage.js";
+import UserNotification from "../models/UserNotification.js";
 
 const router = Router();
 router.use(protect);
@@ -58,13 +59,11 @@ const authorizeConversation = async (req, res, next) => {
   try {
     const [peer] = await peersFor(req.user, req.params.peerId);
     if (!peer)
-      return res
-        .status(403)
-        .json({
-          error:
-            "Esta conversación requiere una vinculación activa entre coach y alumno",
-          code: "COACH_RELATIONSHIP_REQUIRED",
-        });
+      return res.status(403).json({
+        error:
+          "Esta conversación requiere una vinculación activa entre coach y alumno",
+        code: "COACH_RELATIONSHIP_REQUIRED",
+      });
     req.messagePeer = peer;
     req.messagePair =
       req.user.role === "Cliente"
@@ -216,6 +215,42 @@ router.post(
         return res
           .status(409)
           .json({ error: "Este envío ya corresponde a otro mensaje" });
+      if (req.user.role !== "Cliente") {
+        try {
+          await UserNotification.updateOne(
+            {
+              userId: message.recipientId,
+              type: "coach_message",
+              entityId: String(message._id),
+            },
+            {
+              $setOnInsert: {
+                title: "Nuevo mensaje de tu coach",
+                message: message.text.slice(0, 300),
+                peerId: message.senderId,
+                readAt: message.readAt,
+              },
+            },
+            { upsert: true, runValidators: true, setDefaultsOnInsert: true },
+          );
+        } catch (error) {
+          if (error.code !== 11000) throw error;
+        }
+        // Reading the thread can race with creating its notification.
+        const receipt = await CoachMessage.findById(
+          message._id,
+          "readAt",
+        ).lean();
+        if (receipt?.readAt)
+          await UserNotification.updateOne(
+            {
+              userId: message.recipientId,
+              type: "coach_message",
+              entityId: String(message._id),
+            },
+            { $set: { readAt: receipt.readAt } },
+          );
+      }
       res.status(201).json({ message });
     } catch (error) {
       next(error);
@@ -238,6 +273,16 @@ router.patch(
           ...req.messagePair,
           _id: { $in: req.body.messageIds },
           recipientId: req.user.id,
+          readAt: null,
+        },
+        { $set: { readAt: new Date() } },
+      );
+      await UserNotification.updateMany(
+        {
+          userId: req.user.id,
+          type: "coach_message",
+          peerId: req.params.peerId,
+          entityId: { $in: req.body.messageIds },
           readAt: null,
         },
         { $set: { readAt: new Date() } },

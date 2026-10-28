@@ -5,6 +5,8 @@ import {
   normalizeUsdaFood,
   searchFoodNutrition,
   clearFoodNutritionCache,
+  normalizeFoodPortions,
+  getFoodPortions,
 } from "../src/services/foodNutritionService.js";
 const fixture = {
   fdcId: 1234,
@@ -21,6 +23,41 @@ const previousEnv = process.env.NODE_ENV;
 beforeEach(() => {
   clearFoodNutritionCache();
   process.env.USDA_API_KEY = "test-key";
+});
+
+test("normalizes provider portion weights per unit without assuming egg size", () => {
+  expect(
+    normalizeFoodPortions({
+      foodPortions: [
+        { id: 1, amount: 2, gramWeight: 120, modifier: "large" },
+        { id: 2, amount: 0, gramWeight: 50, modifier: "medium" },
+        { id: 3, amount: 1, gramWeight: -20, modifier: "small" },
+      ],
+    }),
+  ).toEqual([{ id: "1", label: "grande", gramWeight: 60 }]);
+  expect(normalizeFoodPortions({})).toEqual([]);
+});
+
+test("caches and shares portion lookups and handles provider limits", async () => {
+  const fetchMock = jest
+    .spyOn(global, "fetch")
+    .mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        foodPortions: [{ id: 1, amount: 1, gramWeight: 50, modifier: "large" }],
+      }),
+    });
+  const results = await Promise.all([
+    getFoodPortions("1234"),
+    getFoodPortions("1234"),
+  ]);
+  expect(results[0][0]).toMatchObject({ gramWeight: 50 });
+  await getFoodPortions("1234");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  fetchMock.mockResolvedValue({ ok: false, status: 429 });
+  await expect(getFoodPortions("2345")).rejects.toMatchObject({
+    statusCode: 429,
+  });
 });
 afterEach(() => {
   if (previousKey === undefined) delete process.env.USDA_API_KEY;

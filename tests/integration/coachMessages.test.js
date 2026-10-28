@@ -6,6 +6,7 @@ import request from "supertest";
 import app from "../../src/app.js";
 import User from "../../src/models/User.js";
 import CoachMessage from "../../src/models/CoachMessage.js";
+import UserNotification from "../../src/models/UserNotification.js";
 import { resetAuthenticationUserCache } from "../../src/services/authenticationUserCache.js";
 import { deleteDemoWorkspace } from "../../src/services/demoWorkspaceService.js";
 import { deleteAccountData } from "../../src/services/accountDeletionService.js";
@@ -57,6 +58,8 @@ const thread = (user, peer, query = "") =>
     .set("Authorization", token(user));
 const inbox = (user) =>
   request(app).get("/api/messages").set("Authorization", token(user));
+const notifications = (user) =>
+  request(app).get("/api/notifications").set("Authorization", token(user));
 beforeEach(async () => {
   resetAuthenticationUserCache();
   for (const Model of Object.values(mongoose.models))
@@ -74,6 +77,17 @@ test("coach and athlete exchange persisted messages and see only their own inbox
     athlete.id,
   );
   const sent = await send(coach, athlete).expect(201);
+  const notice = (await notifications(athlete).expect(200)).body;
+  expect(notice.unread).toBe(1);
+  expect(notice.notifications[0]).toMatchObject({
+    type: "coach_message",
+    peerId: coach.id,
+    entityId: sent.body.message._id,
+    title: "Nuevo mensaje de tu coach",
+  });
+  expect(
+    (await notifications(outsider).expect(200)).body.notifications,
+  ).toEqual([]);
   await send(athlete, coach, "Gracias, entrenaré mañana").expect(201);
   const result = await thread(athlete, coach).expect(200);
   expect(result.body.messages.map((message) => message.text)).toEqual([
@@ -90,6 +104,7 @@ test("coach and athlete exchange persisted messages and see only their own inbox
     .send({ messageIds: [sent.body.message._id] })
     .expect(200);
   expect(read.body.updated).toBe(1);
+  expect((await notifications(athlete).expect(200)).body.unread).toBe(0);
   expect((await inbox(athlete).expect(200)).body.conversations[0].unread).toBe(
     0,
   );
@@ -125,6 +140,19 @@ test("retries and simultaneous sends do not duplicate a message", async () => {
   expect(results.map((result) => result.status)).toEqual([201, 201]);
   expect(results[0].body.message._id).toBe(results[1].body.message._id);
   expect(await CoachMessage.countDocuments({})).toBe(1);
+  expect(
+    await UserNotification.countDocuments({
+      userId: athlete.id,
+      type: "coach_message",
+    }),
+  ).toBe(1);
+  await request(app)
+    .patch(`/api/messages/${coach.id}/read`)
+    .set("Authorization", token(athlete))
+    .send({ messageIds: [results[0].body.message._id] })
+    .expect(200);
+  await send(coach, athlete, "Mensaje único", id).expect(201);
+  expect((await notifications(athlete).expect(200)).body.unread).toBe(0);
   await send(coach, athlete, "Otro contenido", id).expect(409);
 });
 
@@ -198,6 +226,10 @@ test("account deletion removes exchanged messages and keeps unrelated conversati
     .message;
   const result = await deleteAccountData(athlete.id);
   expect(result.deleted.messages).toBe(2);
+  expect(await UserNotification.countDocuments({ userId: athlete.id })).toBe(0);
+  expect(
+    await UserNotification.countDocuments({ userId: otherAthlete.id }),
+  ).toBe(1);
   expect(
     (await CoachMessage.find({}).lean()).map((message) => String(message._id)),
   ).toEqual([otherMessage._id]);
@@ -224,5 +256,8 @@ test("demo workspaces isolate conversations and cleanup deletes their messages",
   await send(coach, demoAthlete).expect(403);
   await deleteDemoWorkspace("messages-demo");
   expect(await CoachMessage.countDocuments({ coachId: demoCoach.id })).toBe(0);
+  expect(
+    await UserNotification.countDocuments({ userId: demoAthlete.id }),
+  ).toBe(0);
   expect(await User.findById(otherDemo.id)).not.toBeNull();
 });

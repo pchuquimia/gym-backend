@@ -1,5 +1,7 @@
 const cache = new Map();
 const pending = new Map();
+const portionCache = new Map();
+const portionPending = new Map();
 const CACHE_MS = 6 * 60 * 60 * 1000;
 const error = (message, statusCode = 400, code = "INVALID_FOOD_QUERY") =>
   Object.assign(new Error(message), { statusCode, code });
@@ -259,4 +261,101 @@ export const searchFoodNutrition = async (input) => {
 export const clearFoodNutritionCache = () => {
   cache.clear();
   pending.clear();
+  portionCache.clear();
+  portionPending.clear();
+};
+
+export const normalizeFoodPortions = (food) =>
+  (Array.isArray(food?.foodPortions) ? food.foodPortions : []).flatMap(
+    (portion, index) => {
+      if (!portion) return [];
+      const amount = Number(portion.amount);
+      const gramWeight = Number(portion.gramWeight) / amount;
+      const description = String(
+        portion.modifier ||
+          portion.portionDescription ||
+          portion.measureUnit?.name ||
+          "",
+      )
+        .replace(/^\d+(?:[.,]\d+)?\s+/, "")
+        .trim();
+      if (
+        !description ||
+        /^(undetermined|unknown)$/i.test(description) ||
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        !Number.isFinite(gramWeight) ||
+        gramWeight < 0.1 ||
+        gramWeight > 5000
+      )
+        return [];
+      const label = description
+        .replace(/\bextra large\b/gi, "extra grande")
+        .replace(/\blarge\b/gi, "grande")
+        .replace(/\bmedium\b/gi, "mediano")
+        .replace(/\bsmall\b/gi, "pequeño")
+        .replace(/\bjumbo\b/gi, "extra grande")
+        .slice(0, 80);
+      return [{ id: String(portion.id ?? index), label, gramWeight }];
+    },
+  );
+
+export const getFoodPortions = async (foodId) => {
+  if (!/^\d+$/.test(String(foodId))) throw error("Alimento inválido");
+  const cached = portionCache.get(String(foodId));
+  if (cached?.expiresAt > Date.now()) return cached.portions;
+  if (portionPending.has(String(foodId)))
+    return portionPending.get(String(foodId));
+  const key =
+    process.env.USDA_API_KEY ||
+    (process.env.NODE_ENV !== "production" ? "DEMO_KEY" : "");
+  if (!key)
+    throw error(
+      "El catálogo nutricional no está configurado",
+      503,
+      "FOOD_API_NOT_CONFIGURED",
+    );
+  const operation = (async () => {
+    let response;
+    try {
+      response = await fetch(
+        `https://api.nal.usda.gov/fdc/v1/food/${foodId}?api_key=${encodeURIComponent(key)}`,
+        { signal: AbortSignal.timeout(10_000) },
+      );
+    } catch {
+      throw error(
+        "No se pudieron cargar las medidas del alimento",
+        502,
+        "FOOD_API_UNAVAILABLE",
+      );
+    }
+    if (!response.ok)
+      throw error(
+        response.status === 429
+          ? "El catálogo alcanzó su límite de consultas. Inténtalo más tarde"
+          : "No se pudieron cargar las medidas del alimento",
+        response.status === 429 ? 429 : 502,
+        "FOOD_API_UNAVAILABLE",
+      );
+    let food;
+    try {
+      food = await response.json();
+    } catch {
+      throw error(
+        "Respuesta inválida del catálogo nutricional",
+        502,
+        "FOOD_API_UNAVAILABLE",
+      );
+    }
+    const portions = normalizeFoodPortions(food);
+    portionCache.set(String(foodId), {
+      portions,
+      expiresAt: Date.now() + CACHE_MS,
+    });
+    while (portionCache.size > 128)
+      portionCache.delete(portionCache.keys().next().value);
+    return portions;
+  })().finally(() => portionPending.delete(String(foodId)));
+  portionPending.set(String(foodId), operation);
+  return operation;
 };

@@ -9,6 +9,19 @@ El coach selecciona la preparación correcta (crudo/cocido). Cambiar la cantidad
 en g o kg recalcula desde los valores originales, sin acumular redondeos.
 La entrada manual sigue disponible. No se utiliza una base de datos de Fitia.
 
+El editor también permite elegir una medida del catálogo y escribir el número
+de unidades (por ejemplo, 5 huevos grandes). Las medidas se consultan al
+seleccionar un alimento y se guardan en caché durante seis horas. El peso por
+unidad proviene de `foodPortions` de USDA; no se presupone un peso para cada
+huevo. Si no hay medidas disponibles, se puede usar peso o introducir una
+cantidad manual con macros opcionales.
+
+`GET /api/nutrition/foods/:foodId/portions` devuelve las medidas disponibles para
+coaches y administradores. Una cantidad por unidades conserva su número,
+descripción, peso por unidad y peso total en `nutritionSource.portion`. El
+servidor comprueba la conversión y recalcula los nutrientes al guardar el plan;
+el diario conserva esa información en su snapshot.
+
 ## Acceso y endpoints
 
 - `GET /api/nutrition/day?dateKey=YYYY-MM-DD&timezone=America/La_Paz`: día del alumno autenticado.

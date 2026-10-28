@@ -15,6 +15,7 @@ import AthleteCheckIn from "../models/AthleteCheckIn.js";
 import NutritionPlan from "../models/NutritionPlan.js";
 import NutritionDay from "../models/NutritionDay.js";
 import CoachMessage from "../models/CoachMessage.js";
+import UserNotification from "../models/UserNotification.js";
 import CoachNotification from "../models/CoachNotification.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import {
@@ -699,6 +700,10 @@ export const deleteDemoWorkspace = async (workspaceId) => {
             { recipientId: { $in: ownerIds } },
           ],
         },
+        { session: dbSession },
+      );
+      await UserNotification.deleteMany(
+        { $or: [{ userId: { $in: ownerIds } }, { peerId: { $in: ownerIds } }] },
         { session: dbSession },
       );
       await CoachNotification.deleteMany(

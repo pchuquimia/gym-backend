@@ -7,6 +7,7 @@ import {
   searchFoodNutrition,
   scaleNutrients,
   parseFoodQuantity,
+  getFoodPortions,
 } from "../services/foodNutritionService.js";
 import User from "../models/User.js";
 import NutritionPlan from "../models/NutritionPlan.js";
@@ -34,7 +35,12 @@ const normalizeFood = (food) => {
   };
   if (!food.nutritionSource) return manual;
   const source = food.nutritionSource;
-  const grams = parseFoodQuantity(`${food.quantity} alimento`).grams;
+  const portion = source.portion;
+  const grams = portion
+    ? Math.round(portion.amount * portion.gramWeight * 1000) / 1000
+    : parseFoodQuantity(`${food.quantity} alimento`).grams;
+  if (portion && food.quantity !== `${portion.amount} × ${portion.label}`)
+    throw fail("La cantidad no coincide con la medida seleccionada");
   if (grams !== Number(source.grams))
     throw fail(
       "La cantidad no coincide con los macros calculados. Recalcula el alimento",
@@ -47,7 +53,7 @@ const normalizeFood = (food) => {
   );
   return {
     name: food.name,
-    quantity: `${grams} g`,
+    quantity: portion ? `${portion.amount} × ${portion.label}` : `${grams} g`,
     ...scaleNutrients(per100g, grams),
     nutritionSource: {
       provider: "usda",
@@ -55,6 +61,15 @@ const normalizeFood = (food) => {
       description: source.description,
       grams,
       per100g,
+      ...(portion
+        ? {
+            portion: {
+              amount: portion.amount,
+              label: portion.label,
+              gramWeight: portion.gramWeight,
+            },
+          }
+        : {}),
     },
   };
 };
@@ -162,6 +177,30 @@ router.get(
   },
 );
 
+router.get(
+  "/foods/:foodId/portions",
+  rateLimit({
+    windowMs: 60_000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === "test",
+  }),
+  [param("foodId").isInt({ min: 1 }), validate],
+  async (req, res, next) => {
+    try {
+      if (!["Admin", "Entrenador"].includes(req.user.role))
+        throw fail(
+          "Solo el coach puede consultar las medidas de un alimento",
+          403,
+        );
+      res.json({ portions: await getFoodPortions(req.params.foodId) });
+    } catch (error) {
+      next(error);
+    }
+  },
+);
+
 router.get("/day", async (req, res, next) => {
   try {
     const today = todayFor(req);
@@ -260,6 +299,23 @@ router.post(
           ),
       ),
     body("meals.*.foods.*.nutritionSource.provider").optional().equals("usda"),
+    body("meals.*.foods.*.nutritionSource.portion")
+      .optional()
+      .custom(
+        (portion) =>
+          portion &&
+          typeof portion.amount === "number" &&
+          Number.isFinite(portion.amount) &&
+          portion.amount >= 0.001 &&
+          portion.amount <= 50000 &&
+          typeof portion.gramWeight === "number" &&
+          Number.isFinite(portion.gramWeight) &&
+          portion.gramWeight >= 0.1 &&
+          portion.gramWeight <= 5000 &&
+          typeof portion.label === "string" &&
+          portion.label.trim().length > 0 &&
+          portion.label.length <= 80,
+      ),
     body("meals.*.foods.*.nutritionSource.foodId").optional().isInt({ min: 1 }),
     body("meals.*.foods.*.nutritionSource.description")
       .optional()

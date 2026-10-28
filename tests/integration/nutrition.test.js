@@ -279,3 +279,62 @@ test("food lookup is restricted to coaches and plan snapshots preserve scaled nu
   food.quantity = "150 g";
   await create(coach, body).expect(400);
 });
+
+test("unit quantities survive assignment and daily snapshots and reject inconsistent conversions", async () => {
+  const body = payload();
+  const food = {
+    name: "Huevos",
+    quantity: "5 × huevo grande",
+    calories: 1,
+    nutritionSource: {
+      provider: "usda",
+      foodId: "1234",
+      description: "Egg, whole, raw",
+      grams: 250,
+      per100g: { calories: 140, protein: 12, carbs: 1, fat: 10 },
+      portion: { amount: 5, label: "huevo grande", gramWeight: 50 },
+    },
+  };
+  body.meals[0].foods = [food];
+  const plan = (await create(coach, body).expect(201)).body.plan;
+  expect(plan.content.meals[0].foods[0]).toMatchObject({
+    quantity: "5 × huevo grande",
+    calories: 350,
+    protein: 30,
+    nutritionSource: { grams: 250, portion: food.nutritionSource.portion },
+  });
+  await complete(athlete, plan, body.meals[0].mealId).expect(200);
+  const snapshot = (await day(athlete).expect(200)).body.day.snapshot.meals[0]
+    .foods[0];
+  expect(snapshot.quantity).toBe("5 × huevo grande");
+  expect(snapshot.nutritionSource.portion.amount).toBe(5);
+  food.quantity = "10 × huevo grande";
+  await create(coach, body).expect(400);
+  food.quantity = "5 × huevo grande";
+  food.nutritionSource.grams = 100;
+  await create(coach, body).expect(400);
+  food.nutritionSource.grams = 250;
+  food.nutritionSource.portion.amount = -5;
+  await create(coach, body).expect(400);
+});
+
+test("only coaches can load available food measures", async () => {
+  clearFoodNutritionCache();
+  jest
+    .spyOn(global, "fetch")
+    .mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        foodPortions: [{ id: 1, amount: 1, gramWeight: 50, modifier: "large" }],
+      }),
+    });
+  const path = "/api/nutrition/foods/1234/portions";
+  await request(app).get(path).set("Authorization", auth(athlete)).expect(403);
+  const response = await request(app)
+    .get(path)
+    .set("Authorization", auth(coach))
+    .expect(200);
+  expect(response.body.portions).toEqual([
+    { id: "1", label: "grande", gramWeight: 50 },
+  ]);
+});

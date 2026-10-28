@@ -8,7 +8,7 @@
     "npm": "11.x"
   },
   "scripts": {
-    "dev": "NODE_ENV=development node --watch-path=./src src/server.js",
+    "dev": "cross-env NODE_ENV=development node --watch-path=./src src/server.js",
     "worker:metrics": "node src/workers/metricsWorker.js",
     "worker:metrics:once": "node src/workers/metricsWorker.js --once",
     "worker:metrics:batch": "node src/workers/metricsWorker.js --batch",
@@ -75,8 +75,15 @@
     "validator": "^13.15.35"
   },
   "devDependencies": {
+    "cross-env": "^10.1.0",
     "jest": "^30.4.2",
     "mongodb-memory-server": "^11.3.0",
     "supertest": "^7.2.2"
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.6.0": true,
+    "bcrypt@6.0.0": true,
+    "mongodb-memory-server@11.3.0": true,
+    "unrs-resolver@1.12.2": true
   }
 }

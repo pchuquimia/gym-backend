@@ -136,7 +136,11 @@ export const deleteAccountData = async (userId) => {
             ],
           },
         ],
-        ["userNotifications", UserNotification, { userId: ownerId }],
+        [
+          "userNotifications",
+          UserNotification,
+          { $or: [{ userId: ownerId }, { peerId: ownerId }] },
+        ],
         [
           "messages",
           CoachMessage,

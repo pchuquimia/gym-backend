@@ -15,7 +15,7 @@ API de RIRFIT. Gestiona autenticación, usuarios, coaches, atletas, ejercicios, 
 ## Requisitos
 
 - Node.js 22 recomendado.
-- npm 10 o posterior.
+- npm 11.x.
 - MongoDB local o MongoDB Atlas.
 - Cuenta de Cloudinary para imágenes persistentes.
 
@@ -56,6 +56,27 @@ API de RIRFIT. Gestiona autenticación, usuarios, coaches, atletas, ejercicios, 
    ```
 
    Respuesta esperada: `{ "ok": true }`.
+
+### Trabajar desde varios equipos
+
+Usa Node.js 22.x y npm 11.x en ambos equipos. Al cambiar de equipo, ejecuta
+estos comandos dentro de cada repositorio (frontend y backend):
+
+```text
+git pull --ff-only
+npm ci
+npm run dev
+```
+
+Antes de cambiar de equipo, guarda tus cambios con un commit y súbelos con
+`git push`. Comparte `package.json` y `package-lock.json` mediante Git;
+`npm ci` instala las versiones del lockfile en cada equipo.
+
+Cada equipo mantiene su propio `.env`, creado a partir de `.env.example`.
+No subas secretos ni copies `node_modules` entre equipos.
+
+El script de desarrollo del backend utiliza `cross-env` para definir
+`NODE_ENV=development` en Windows, macOS y Linux con el mismo comando.
 
 ## Variables opcionales
 

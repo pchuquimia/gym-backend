@@ -26,6 +26,27 @@ export const NutritionMealSchema = new mongoose.Schema(
                   foodId: { type: String, required: true },
                   description: { type: String, required: true, maxlength: 300 },
                   grams: { type: Number, required: true, min: 0.1, max: 5000 },
+                  portion: {
+                    type: new mongoose.Schema(
+                      {
+                        amount: {
+                          type: Number,
+                          required: true,
+                          min: 0.001,
+                          max: 50000,
+                        },
+                        label: { type: String, required: true, maxlength: 80 },
+                        gramWeight: {
+                          type: Number,
+                          required: true,
+                          min: 0.1,
+                          max: 5000,
+                        },
+                      },
+                      { _id: false },
+                    ),
+                    default: undefined,
+                  },
                   per100g: {
                     calories: nutrient(),
                     protein: nutrient(),

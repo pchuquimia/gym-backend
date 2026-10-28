@@ -7,14 +7,17 @@ router.use(protect);
 
 router.get("/", async (req, res, next) => {
   try {
-    const notifications = await UserNotification.find({ userId: req.user.id })
-      .sort({ createdAt: -1 })
-      .limit(30)
-      .lean();
+    const [notifications, unread] = await Promise.all([
+      UserNotification.find({ userId: req.user.id })
+        .sort({ createdAt: -1 })
+        .limit(30)
+        .lean(),
+      UserNotification.countDocuments({ userId: req.user.id, readAt: null }),
+    ]);
     res.set("Cache-Control", "no-store");
     res.json({
       notifications,
-      unread: notifications.filter((item) => !item.readAt).length,
+      unread,
     });
   } catch (error) {
     next(error);
