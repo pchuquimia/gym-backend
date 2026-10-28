@@ -460,6 +460,7 @@ router.post("/", async (req, res, next) => {
 
 router.post("/upload", receivePhoto, async (req, res, next) => {
   let stored;
+  let assetCommitted = false;
   try {
     const mimeType = await validateUploadedFile(req.file);
     const ownerId = await requestedOwnerId(req, { allowAssignedCoach: true });
@@ -496,17 +497,19 @@ router.post("/upload", receivePhoto, async (req, res, next) => {
         .trim()
         .slice(0, 120),
     });
+    assetCommitted = true;
     await bumpCacheVersion(`dashboard:${ownerId}`);
     return res.status(201).json(serializePhoto(photo));
   } catch (error) {
-    await removeLocalFile(req.file?.path);
-    if (stored) await queueAndProcessPhotoAssetCleanup(stored);
+    if (!assetCommitted) await removeLocalFile(req.file?.path);
+    if (stored && !assetCommitted) await queueAndProcessPhotoAssetCleanup(stored);
     next(error);
   }
 });
 
 router.post("/:id/replace", receivePhoto, async (req, res, next) => {
   let stored;
+  let assetCommitted = false;
   let dbSession;
   let previousAssetJobs = [];
   try {
@@ -529,15 +532,19 @@ router.post("/:id/replace", receivePhoto, async (req, res, next) => {
         { new: true, runValidators: true, session: dbSession },
       );
     });
+    assetCommitted = true;
     await processPhotoAssetCleanupJobs({
       ids: previousAssetJobs.map((job) => job._id),
     });
     return res.json(serializePhoto(photo));
   } catch (error) {
-    await removeLocalFile(req.file?.path);
-    if (stored) await queueAndProcessPhotoAssetCleanup(stored);
+    if (!assetCommitted) await removeLocalFile(req.file?.path);
+    if (stored && !assetCommitted) await queueAndProcessPhotoAssetCleanup(stored);
     next(error);
   } finally {
+    if (!assetCommitted || stored?.storage !== "private-local") {
+      await removeLocalFile(req.file?.path);
+    }
     await dbSession?.endSession();
   }
 });

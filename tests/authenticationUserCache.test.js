@@ -64,4 +64,52 @@ describe("authentication user cache", () => {
 
     expect(reads).toBe(3);
   });
+
+  test("descarta permisos de una lectura pendiente invalidada y vuelve a consultar", async () => {
+    let resolveStale;
+    let reads = 0;
+    const loader = () => {
+      reads += 1;
+      if (reads === 1)
+        return new Promise((resolve) => {
+          resolveStale = resolve;
+        });
+      return Promise.resolve({ isActive: false, role: "Cliente" });
+    };
+    const pending = loadCachedAuthenticationUser({
+      userId: "user-1",
+      sessionId: "session-1",
+      loader,
+    });
+    await Promise.resolve();
+    invalidateAuthenticationUser("user-1");
+    resolveStale({ isActive: true, role: "Admin" });
+    expect(await pending).toEqual({ isActive: false, role: "Cliente" });
+    expect(reads).toBe(2);
+    expect(
+      await loadCachedAuthenticationUser({
+        userId: "user-1",
+        sessionId: "session-1",
+        loader,
+      }),
+    ).toEqual({ isActive: false, role: "Cliente" });
+    expect(reads).toBe(2);
+  });
+
+  test("producción no conserva permisos entre ráfagas de solicitudes", async () => {
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+    try {
+      let active = true;
+      const loader = async () => ({ isActive: active });
+      const args = { userId: "user-1", sessionId: "session-1", loader };
+      expect((await loadCachedAuthenticationUser(args)).isActive).toBe(true);
+      active = false;
+      expect((await loadCachedAuthenticationUser(args)).isActive).toBe(false);
+      expect(getAuthenticationUserCacheStatus().entries).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous;
+    }
+  });
 });

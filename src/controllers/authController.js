@@ -401,7 +401,11 @@ const register = asyncHandler(async (req, res) => {
     password,
     role: "Cliente",
     trainingMode: "independent",
-    onboarding: { status: "pending", completedAt: null },
+    onboarding: {
+      accountType: "athlete",
+      status: "pending",
+      completedAt: null,
+    },
     emailPreferences: {
       productUpdates: emailMarketingConsent,
       consentedAt: emailMarketingConsent ? new Date() : null,
@@ -570,7 +574,11 @@ const facebookCallback = async (req, res) => {
           facebookSubject: identity.subject,
           role: "Cliente",
           trainingMode: "independent",
-          onboarding: { status: "pending", completedAt: null },
+          onboarding: {
+            accountType: "athlete",
+            status: "pending",
+            completedAt: null,
+          },
           emailPreferences: {
             productUpdates: marketingConsent,
             consentedAt: marketingConsent ? new Date() : null,
@@ -681,7 +689,11 @@ const completeGoogleLogin = async (req) => {
         googleSubject: identity.subject,
         role: "Cliente",
         trainingMode: "independent",
-        onboarding: { status: "pending", completedAt: null },
+        onboarding: {
+          accountType: "athlete",
+          status: "pending",
+          completedAt: null,
+        },
         emailPreferences: {
           productUpdates: emailMarketingConsent,
           consentedAt: emailMarketingConsent ? new Date() : null,
@@ -1349,7 +1361,16 @@ const completeOnboarding = asyncHandler(async (req, res) => {
 
 const selectOnboardingAccountType = asyncHandler(async (req, res) => {
   const accountType = req.body.accountType;
-  const nextRole = accountType === "coach" ? "Entrenador" : "Cliente";
+  if (accountType === "coach") {
+    return res
+      .status(403)
+      .json({
+        error:
+          "Durante la beta debes solicitar acceso como coach desde tu perfil",
+        code: "COACH_APPROVAL_REQUIRED",
+      });
+  }
+  const nextRole = "Cliente";
   const user = await User.findOne({
     _id: req.user.id,
     role: { $in: ["Cliente", "Entrenador"] },

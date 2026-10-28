@@ -12,7 +12,7 @@ export const notFound = (req, _res, next) => {
   next(err);
 };
 
-export const errorHandler = (err, _req, res, _next) => {
+export const errorHandler = (err, req, res, _next) => {
   const duplicate = normalizeDuplicateKey(err);
   const statusCode =
     duplicate?.statusCode || err.statusCode || err.status || 500;
@@ -32,6 +32,21 @@ export const errorHandler = (err, _req, res, _next) => {
 
   if (!isProduction) {
     console.error(err);
+  } else if (statusCode >= 500) {
+    // Error messages, query strings and request bodies may contain credentials
+    // or health data. Log only metadata and stack frames, never their values.
+    console.error({
+      event: "request_error",
+      requestId: res.locals.requestId,
+      statusCode,
+      method: req.method,
+      route: req.route?.path || "(unmatched)",
+      errorName: /^[A-Za-z]+Error$/.test(err.name || "") ? err.name : "Error",
+      stack: String(err.stack || "")
+        .split("\n")
+        .filter((line) => /^\s+at /.test(line))
+        .join("\n"),
+    });
   }
 
   res.status(statusCode).json(payload);

@@ -8,7 +8,7 @@
     "npm": "11.x"
   },
   "scripts": {
-    "dev": "node --watch-path=./src src/server.js",
+    "dev": "NODE_ENV=development node --watch-path=./src src/server.js",
     "worker:metrics": "node src/workers/metricsWorker.js",
     "worker:metrics:once": "node src/workers/metricsWorker.js --once",
     "worker:metrics:batch": "node src/workers/metricsWorker.js --batch",
@@ -19,6 +19,7 @@
     "db:quality:apply": "node scripts/repairDatabaseQuality.js --apply",
     "start": "node src/server.js",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand",
+    "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --config jest.integration.config.js --runInBand",
     "test:watch": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --watch",
     "test:postman": "node scripts/runApiContractTests.js",
     "email:check": "node scripts/checkEmailConfiguration.js",
@@ -56,7 +57,7 @@
   "dependencies": {
     "bcrypt": "^6.0.0",
     "cloudinary": "^2.10.0",
-    "compression": "^1.7.4",
+    "compression": "^1.8.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -69,12 +70,13 @@
     "mongoose": "^8.24.1",
     "morgan": "^1.11.0",
     "multer": "^1.4.5-lts.1",
-    "nodemailer": "^9.0.5",
+    "nodemailer": "^10.1.7",
     "redis": "^5.8.2",
     "validator": "^13.15.35"
   },
   "devDependencies": {
     "jest": "^30.4.2",
+    "mongodb-memory-server": "^11.3.0",
     "supertest": "^7.2.2"
   }
 }

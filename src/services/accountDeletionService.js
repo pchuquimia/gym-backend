@@ -5,6 +5,7 @@ import Preference from "../models/Preference.js";
 import Routine from "../models/Routine.js";
 import Session from "../models/Session.js";
 import Training from "../models/Training.js";
+import TrainingDraft from "../models/TrainingDraft.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import PlanTemplate from "../models/PlanTemplate.js";
 import WeightEntry from "../models/WeightEntry.js";
@@ -19,6 +20,9 @@ import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import CoachInvitation from "../models/CoachInvitation.js";
 import CoachNotification from "../models/CoachNotification.js";
+import NutritionPlan from "../models/NutritionPlan.js";
+import NutritionDay from "../models/NutritionDay.js";
+import CoachMessage from "../models/CoachMessage.js";
 import UserNotification from "../models/UserNotification.js";
 import {
   processPhotoAssetCleanupJobs,
@@ -75,131 +79,95 @@ export const deleteAccountData = async (userId) => {
         );
       }
 
-      const [
-        routines,
-        trainings,
-        sessions,
-        photos,
-        preferences,
-        exercises,
-        plans,
-        planTemplates,
-        weighIns,
-        hydrationEntries,
-        checkIns,
-        dailyMetrics,
-        snapshots,
-        metricJobs,
-        routineAuditLogs,
-        measurements,
-        workflowSettings,
-        assessments,
-        invitations,
-        notifications,
-        userNotifications,
-      ] = await Promise.all([
-        Routine.deleteMany({ ownerId }, { session: dbSession }),
-        Training.deleteMany({ ownerId }, { session: dbSession }),
-        Session.deleteMany({ ownerId }, { session: dbSession }),
-        Photo.deleteMany({ ownerId }, { session: dbSession }),
-        Preference.deleteMany({ userId: ownerId }, { session: dbSession }),
-        Exercise.deleteMany(
-          { ownerId, type: "custom" },
-          { session: dbSession },
-        ),
-        TrainingPlan.deleteMany({ athleteId: ownerId }, { session: dbSession }),
-        PlanTemplate.deleteMany({ ownerId }, { session: dbSession }),
-        WeightEntry.deleteMany({ ownerId }, { session: dbSession }),
-        HydrationEntry.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteCheckIn.deleteMany(
-          { athleteId: ownerId },
-          { session: dbSession },
-        ),
-        AthleteDailyMetric.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteIntelligenceSnapshot.deleteMany(
-          { ownerId },
-          { session: dbSession },
-        ),
-        MetricRefreshJob.deleteMany({ ownerId }, { session: dbSession }),
-        RoutineAuditLog.deleteMany({ ownerId }, { session: dbSession }),
-        AthleteMeasurement.deleteMany(
+      const deletionScopes = [
+        [
+          "nutritionPlans",
+          NutritionPlan,
           { $or: [{ athleteId: ownerId }, { coachId: ownerId }] },
-          { session: dbSession },
-        ),
-        CoachWorkflowSettings.deleteMany(
-          { coachId: ownerId },
-          { session: dbSession },
-        ),
-        AthleteAssessment.deleteMany(
+        ],
+        [
+          "nutritionDays",
+          NutritionDay,
           { $or: [{ athleteId: ownerId }, { coachId: ownerId }] },
-          { session: dbSession },
-        ),
-        CoachInvitation.deleteMany(
-          {
-            $or: [{ coachId: ownerId }, { acceptedById: ownerId }],
-          },
-          { session: dbSession },
-        ),
-        CoachNotification.deleteMany(
+        ],
+        ["routines", Routine, { ownerId }],
+        ["trainings", Training, { ownerId }],
+        [
+          "trainingDrafts",
+          TrainingDraft,
+          { $or: [{ ownerId }, { startedById: ownerId }] },
+        ],
+        ["sessions", Session, { ownerId }],
+        ["photos", Photo, { ownerId }],
+        ["preferences", Preference, { userId: ownerId }],
+        ["exercises", Exercise, { ownerId, type: "custom" }],
+        ["plans", TrainingPlan, { athleteId: ownerId }],
+        ["planTemplates", PlanTemplate, { ownerId }],
+        ["weighIns", WeightEntry, { ownerId }],
+        ["hydrationEntries", HydrationEntry, { ownerId }],
+        ["checkIns", AthleteCheckIn, { athleteId: ownerId }],
+        ["dailyMetrics", AthleteDailyMetric, { ownerId }],
+        ["snapshots", AthleteIntelligenceSnapshot, { ownerId }],
+        ["metricJobs", MetricRefreshJob, { ownerId }],
+        ["routineAuditLogs", RoutineAuditLog, { ownerId }],
+        [
+          "measurements",
+          AthleteMeasurement,
+          { $or: [{ athleteId: ownerId }, { coachId: ownerId }] },
+        ],
+        ["workflowSettings", CoachWorkflowSettings, { coachId: ownerId }],
+        [
+          "assessments",
+          AthleteAssessment,
+          { $or: [{ athleteId: ownerId }, { coachId: ownerId }] },
+        ],
+        [
+          "invitations",
+          CoachInvitation,
+          { $or: [{ coachId: ownerId }, { acceptedById: ownerId }] },
+        ],
+        [
+          "notifications",
+          CoachNotification,
           {
             $or: [
               { coachId: ownerId },
-              {
-                athleteId: ownerId,
-                type: { $ne: "athlete_account_deleted" },
-              },
+              { athleteId: ownerId, type: { $ne: "athlete_account_deleted" } },
             ],
           },
-          { session: dbSession },
-        ),
-        UserNotification.deleteMany(
-          { userId: ownerId },
-          { session: dbSession },
-        ),
-        User.updateMany(
-          { assignedTrainerId: ownerId },
-          {
-            $set: {
-              assignedTrainerId: null,
-              trainingMode: "independent",
-              coachIntake: {
-                coachId: null,
-                settingsVersion: null,
-                status: "pending",
-                requestedAt: null,
-                submittedAt: null,
-                answers: [],
-              },
+        ],
+        ["userNotifications", UserNotification, { userId: ownerId }],
+        [
+          "messages",
+          CoachMessage,
+          { $or: [{ senderId: ownerId }, { recipientId: ownerId }] },
+        ],
+      ];
+      // MongoDB does not support parallel operations on one transaction session.
+      for (const [name, Model, filter] of deletionScopes) {
+        const result = await Model.deleteMany(filter, { session: dbSession });
+        deleted[name] = result.deletedCount;
+      }
+      await User.updateMany(
+        { assignedTrainerId: ownerId },
+        {
+          $set: {
+            assignedTrainerId: null,
+            trainingMode: "independent",
+            coachIntake: {
+              coachId: null,
+              settingsVersion: null,
+              status: "pending",
+              requestedAt: null,
+              submittedAt: null,
+              answers: [],
             },
           },
-          { session: dbSession, runValidators: true },
-        ),
-      ]);
+        },
+        { session: dbSession, runValidators: true },
+      );
 
       await User.deleteOne({ _id: ownerId }, { session: dbSession });
-      Object.assign(deleted, {
-        routines: routines.deletedCount,
-        trainings: trainings.deletedCount,
-        sessions: sessions.deletedCount,
-        photos: photos.deletedCount,
-        preferences: preferences.deletedCount,
-        exercises: exercises.deletedCount,
-        plans: plans.deletedCount,
-        planTemplates: planTemplates.deletedCount,
-        weighIns: weighIns.deletedCount,
-        hydrationEntries: hydrationEntries.deletedCount,
-        checkIns: checkIns.deletedCount,
-        dailyMetrics: dailyMetrics.deletedCount,
-        snapshots: snapshots.deletedCount,
-        metricJobs: metricJobs.deletedCount,
-        routineAuditLogs: routineAuditLogs.deletedCount,
-        measurements: measurements.deletedCount,
-        workflowSettings: workflowSettings.deletedCount,
-        assessments: assessments.deletedCount,
-        invitations: invitations.deletedCount,
-        notifications: notifications.deletedCount,
-        userNotifications: userNotifications.deletedCount,
-      });
     });
   } finally {
     await dbSession.endSession();

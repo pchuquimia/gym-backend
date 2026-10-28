@@ -1320,6 +1320,7 @@ router.post(
   blockManagedAthleteWrites,
   upload.single("file"),
   async (req, res, next) => {
+    let keepLocalFile = false;
     try {
       const exercise = await Exercise.findById(req.params.id);
       if (!exercise)
@@ -1367,11 +1368,14 @@ router.post(
       }
       exercise.updatedBy = req.user.id;
       await exercise.save();
+      keepLocalFile = !uploaded;
 
       clearExerciseFacetCache();
       res.json(localizeExerciseDocument(exercise, getExerciseLanguage(req)));
     } catch (err) {
       next(err);
+    } finally {
+      if (!keepLocalFile) await removeLocalFile(req.file?.path);
     }
   },
 );

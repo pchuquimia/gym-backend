@@ -8,6 +8,7 @@ import {
   getPlanForRole,
   SUBSCRIPTION_PLANS,
 } from "../utils/subscription.js";
+import { createCoachCode } from "../utils/coachCode.js";
 import Routine from "../models/Routine.js";
 import TrainingPlan from "../models/TrainingPlan.js";
 import { transitionAthleteCoach } from "../utils/coachAssignment.js";
@@ -16,11 +17,68 @@ import { invalidateAuthenticationUser } from "../services/authenticationUserCach
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode coachIntake isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode coachIntake coachApplication isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
 router.use(protect);
+
+router.post(
+  "/coach-application",
+  authorizeRoles("Cliente"),
+  [
+    body("experience")
+      .isString()
+      .bail()
+      .trim()
+      .isLength({ min: 10, max: 1500 })
+      .withMessage("Describe tu experiencia (10 a 1500 caracteres)"),
+    body("intendedUse")
+      .isString()
+      .bail()
+      .trim()
+      .isLength({ min: 10, max: 1500 })
+      .withMessage("Describe cómo usarás Rirfit (10 a 1500 caracteres)"),
+    validate,
+  ],
+  async (req, res, next) => {
+    try {
+      const user = await User.findOneAndUpdate(
+        {
+          _id: req.user.id,
+          role: "Cliente",
+          isActive: true,
+          "coachApplication.status": { $nin: ["pending", "approved"] },
+        },
+        {
+          $set: {
+            coachApplication: {
+              status: "pending",
+              experience: req.body.experience,
+              intendedUse: req.body.intendedUse,
+              requestedAt: new Date(),
+              reviewedAt: null,
+              reviewedBy: null,
+              reason: "",
+            },
+          },
+        },
+        { new: true, runValidators: true },
+      );
+      if (!user)
+        return res
+          .status(409)
+          .json({
+            error: "Ya tienes una solicitud en revisión o acceso aprobado",
+          });
+      invalidateAuthenticationUser(req.user.id);
+      res.set("Cache-Control", "no-store");
+      res.status(201).json({ user: user.toSafeJSON() });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 router.get("/", authorizeRoles("Admin"), async (req, res, next) => {
   try {
@@ -77,6 +135,17 @@ router.patch(
       .isEmail()
       .normalizeEmail()
       .withMessage("Email inválido"),
+    body("coachApplicationDecision")
+      .optional()
+      .isIn(["approved", "rejected"])
+      .withMessage("Decisión inválida"),
+    body("reason")
+      .optional()
+      .isString()
+      .bail()
+      .trim()
+      .isLength({ max: 500 })
+      .withMessage("Motivo inválido"),
     body("role").optional().isIn(USER_ROLES).withMessage("Rol inválido"),
     body("isActive").optional().isBoolean().withMessage("Estado inválido"),
     body("assignedTrainerId")
@@ -116,9 +185,60 @@ router.patch(
       });
       const current = await User.findById(
         req.params.id,
-        "role assignedTrainerId trainingMode",
+        "role isActive assignedTrainerId trainingMode coachApplication subscription",
       ).lean();
       if (!current) return res.status(404).json({ error: "Not found" });
+      const decision = req.body.coachApplicationDecision;
+      if (decision) {
+        if (
+          current.role !== "Cliente" ||
+          current.coachApplication?.status !== "pending"
+        ) {
+          return res
+            .status(409)
+            .json({
+              error: "La solicitud ya fue revisada o no está pendiente",
+            });
+        }
+        if (
+          Object.keys(req.body).some(
+            (key) => !["coachApplicationDecision", "reason"].includes(key),
+          )
+        ) {
+          return res
+            .status(400)
+            .json({
+              error:
+                "Revisa la solicitud por separado de los datos de la cuenta",
+            });
+        }
+        if (decision === "rejected" && !req.body.reason?.trim()) {
+          return res
+            .status(400)
+            .json({ error: "Indica el motivo del rechazo" });
+        }
+        payload.coachApplication = {
+          ...current.coachApplication,
+          status: decision,
+          reviewedAt: new Date(),
+          reviewedBy: req.user.id,
+          reason: req.body.reason || "",
+        };
+        if (decision === "approved" && !current.isActive) {
+          return res
+            .status(409)
+            .json({ error: "Activa la cuenta antes de aprobar su solicitud" });
+        }
+        if (decision === "approved") {
+          payload.role = "Entrenador";
+          payload.coachCode = await createCoachCode();
+          payload.onboarding = {
+            accountType: "coach",
+            status: "complete",
+            completedAt: new Date(),
+          };
+        }
+      }
       const nextRole = payload.role || current.role;
       if (payload.role && payload.role !== current.role) {
         payload.subscription = {
@@ -172,11 +292,28 @@ router.patch(
               answers: [],
             };
       }
-      const user = await User.findByIdAndUpdate(req.params.id, payload, {
-        new: true,
-        runValidators: true,
-      }).select(ADMIN_USER_FIELDS);
-      if (!user) return res.status(404).json({ error: "Not found" });
+      const user = await User.findOneAndUpdate(
+        {
+          _id: req.params.id,
+          ...(decision
+            ? {
+                role: "Cliente",
+                "coachApplication.status": "pending",
+                "coachApplication.requestedAt":
+                  current.coachApplication.requestedAt,
+              }
+            : {}),
+        },
+        payload,
+        {
+          new: true,
+          runValidators: true,
+        },
+      ).select(ADMIN_USER_FIELDS);
+      if (!user)
+        return res
+          .status(409)
+          .json({ error: "La cuenta o solicitud cambió; actualiza la lista" });
       if (
         current.role === "Cliente" &&
         trainerChanged &&

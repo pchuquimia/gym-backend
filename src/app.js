@@ -17,6 +17,8 @@ import trainingDraftsRoutes from "./routes/trainingDrafts.js";
 import preferencesRoutes from "./routes/preferences.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
+import nutritionRoutes from "./routes/nutrition.js";
+import messagesRoutes from "./routes/messages.js";
 import coachRoutes from "./routes/coach.js";
 import plansRoutes from "./routes/plans.js";
 import planTemplatesRoutes from "./routes/planTemplates.js";
@@ -36,6 +38,9 @@ import { getCacheStatus } from "./services/cacheService.js";
 import { getDeploymentHealth } from "./utils/deploymentTopology.js";
 import { canExposeArchitectureDetails } from "./config/security.js";
 import Photo from "./models/Photo.js";
+import { isTrustedOrigin } from "./config/requestOrigins.js";
+import { csrfProtection, issueCsrfToken } from "./middleware/csrfProtection.js";
+import { requestId } from "./middleware/requestId.js";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -46,37 +51,14 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const parseOrigins = (value = "") =>
-  value
-    .split(",")
-    .map((origin) => origin.trim().replace(/\/$/, ""))
-    .filter(Boolean);
-
-const allowedOrigins = [
-  ...parseOrigins(process.env.CLIENT_URL),
-  ...parseOrigins(process.env.CLIENT_URLS),
-  ...parseOrigins(process.env.DEMO_CLIENT_URL),
-  "https://gym-frontend-t65c.onrender.com",
-  "https://gym-backend-1fod.onrender.com",
-  "http://localhost:5173",
-  "http://localhost:5175",
-  "http://localhost:4173",
-  "http://localhost:3000",
-];
-const localOriginPattern =
-  /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/;
 const isDev = process.env.NODE_ENV !== "production";
 const corsOptions = {
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
-    const normalizedOrigin = origin.replace(/\/$/, "");
-    if (allowedOrigins.includes(normalizedOrigin)) return cb(null, true);
-    if (isDev && localOriginPattern.test(normalizedOrigin))
-      return cb(null, true);
-    return cb(null, false);
+    return cb(null, isTrustedOrigin(origin));
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token"],
   exposedHeaders: [
     "Server-Timing",
     "X-Response-Time",
@@ -84,11 +66,13 @@ const corsOptions = {
     "X-Intelligence-Source",
     "ETag",
     "X-Catalog-Version",
+    "X-Request-Id",
   ],
   credentials: true,
   optionsSuccessStatus: 200,
 };
 
+app.use(requestId);
 app.use(
   helmet({
     crossOriginResourcePolicy: false,
@@ -112,11 +96,19 @@ app.use(
     threshold: 1024, // comprime respuestas mayores a 1KB
   }),
 );
+app.use(cookieParser());
+app.use(csrfProtection);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: "20kb" }));
-app.use(cookieParser());
 app.use(performanceTiming);
-app.use(morgan("dev"));
+morgan.token("safe-url", (req) => req.path);
+app.use(
+  morgan(
+    isDev
+      ? "dev"
+      : ":method :safe-url :status :response-time ms :res[content-length] :res[x-request-id]",
+  ),
+);
 app.use("/uploads/:filename", async (req, res, next) => {
   try {
     const filename = path.basename(String(req.params.filename || ""));
@@ -138,6 +130,7 @@ app.use("/uploads/:filename", async (req, res, next) => {
 app.use("/uploads", express.static(uploadsDir));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/auth/csrf", issueCsrfToken);
 app.get("/api/health/architecture", async (_req, res, next) => {
   if (!canExposeArchitectureDetails()) {
     return res.json({ ok: true });
@@ -155,6 +148,8 @@ app.get("/api/health/architecture", async (_req, res, next) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/coach", coachRoutes);
+app.use("/api/messages", messagesRoutes);
+app.use("/api/nutrition", nutritionRoutes);
 app.use("/api/plans", plansRoutes);
 app.use("/api/plan-templates", planTemplatesRoutes);
 app.use("/api/exercises", exercisesRoutes);

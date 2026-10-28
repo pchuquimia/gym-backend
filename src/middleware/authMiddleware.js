@@ -29,6 +29,7 @@ const CURRENT_USER_FIELDS = [
   "username",
   "onboarding",
   "coachIntake",
+  "coachApplication",
   "coachCode",
   "lastLoginAt",
   "profile",

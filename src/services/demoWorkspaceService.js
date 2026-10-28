@@ -12,6 +12,9 @@ import WeightEntry from "../models/WeightEntry.js";
 import HydrationEntry from "../models/HydrationEntry.js";
 import AthleteAssessment from "../models/AthleteAssessment.js";
 import AthleteCheckIn from "../models/AthleteCheckIn.js";
+import NutritionPlan from "../models/NutritionPlan.js";
+import NutritionDay from "../models/NutritionDay.js";
+import CoachMessage from "../models/CoachMessage.js";
 import CoachNotification from "../models/CoachNotification.js";
 import CoachWorkflowSettings from "../models/CoachWorkflowSettings.js";
 import {
@@ -252,7 +255,12 @@ const demoIntakeAnswers = (profile = {}) => [
   },
 ];
 
-const seedCoachAthleteScenario = async ({ athlete, coachId, scenario, seeded }) => {
+const seedCoachAthleteScenario = async ({
+  athlete,
+  coachId,
+  scenario,
+  seeded,
+}) => {
   const athleteId = athlete._id.toString();
   const today = new Date();
   const todayKey = dateKey(today);
@@ -313,7 +321,8 @@ const seedCoachAthleteScenario = async ({ athlete, coachId, scenario, seeded }) 
         progress: 4,
         goalReached: "partly",
         pain: "",
-        feedback: "El bloque fue sostenible y pude progresar en los ejercicios principales.",
+        feedback:
+          "El bloque fue sostenible y pude progresar en los ejercicios principales.",
         availabilityChanged: false,
       },
       submittedBy: athleteId,
@@ -670,6 +679,26 @@ export const deleteDemoWorkspace = async (workspaceId) => {
       );
       await AthleteAssessment.deleteMany(
         { athleteId: { $in: ownerIds } },
+        { session: dbSession },
+      );
+      for (const Model of [NutritionPlan, NutritionDay]) {
+        await Model.deleteMany(
+          {
+            $or: [
+              { athleteId: { $in: ownerIds } },
+              { coachId: { $in: ownerIds } },
+            ],
+          },
+          { session: dbSession },
+        );
+      }
+      await CoachMessage.deleteMany(
+        {
+          $or: [
+            { senderId: { $in: ownerIds } },
+            { recipientId: { $in: ownerIds } },
+          ],
+        },
         { session: dbSession },
       );
       await CoachNotification.deleteMany(

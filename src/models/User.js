@@ -119,6 +119,19 @@ const UserSchema = new mongoose.Schema(
       },
       completedAt: { type: Date, default: null },
     },
+    coachApplication: {
+      status: {
+        type: String,
+        enum: ["none", "pending", "approved", "rejected"],
+        default: "none",
+      },
+      experience: { type: String, trim: true, maxlength: 1500, default: "" },
+      intendedUse: { type: String, trim: true, maxlength: 1500, default: "" },
+      requestedAt: { type: Date, default: null },
+      reviewedAt: { type: Date, default: null },
+      reviewedBy: { type: String, default: null },
+      reason: { type: String, trim: true, maxlength: 500, default: "" },
+    },
     coachIntake: {
       coachId: { type: String, default: null },
       settingsVersion: { type: String, default: null },
@@ -297,6 +310,14 @@ export const toSafeUserJSON = (user) => {
       requestedAt: user.coachIntake?.requestedAt || null,
       submittedAt: user.coachIntake?.submittedAt || null,
       answers: user.coachIntake?.answers || [],
+    },
+    coachApplication: {
+      status: user.coachApplication?.status || "none",
+      experience: user.coachApplication?.experience || "",
+      intendedUse: user.coachApplication?.intendedUse || "",
+      requestedAt: user.coachApplication?.requestedAt || null,
+      reviewedAt: user.coachApplication?.reviewedAt || null,
+      reason: user.coachApplication?.reason || "",
     },
     assignedTrainerId: user.assignedTrainerId || null,
     coachCode: ["Admin", "Entrenador"].includes(user.role)

@@ -1,5 +1,47 @@
 # Operaciones de hardening de seguridad
 
+## Peticiones con cookies y revocación de permisos
+
+Las escrituras autenticadas mediante la cookie `jwt` requieren el encabezado
+`X-CSRF-Token`. El cliente obtiene `{ csrfToken }` mediante
+`GET /api/auth/csrf`, con credenciales incluidas, y lo envía en POST, PUT, PATCH
+y DELETE. El token está firmado y ligado a la cookie actual; hay que obtener
+uno nuevo después de cambiar de sesión. Axios lo gestiona automáticamente y
+reintenta una sola vez si el servidor rechaza un token anterior antes de
+ejecutar la operación.
+
+Los orígenes de escritura y de CORS se validan con la misma configuración:
+`CLIENT_URL`, `CLIENT_URLS` y `DEMO_CLIENT_URL`. Producción no permite orígenes
+locales salvo que estén configurados explícitamente. Los clientes que utilizan
+solo Bearer, sin cookie de sesión, no necesitan token CSRF. El callback de
+Google conserva su propia comprobación de estado OAuth.
+
+En producción, la carga de permisos solo agrupa consultas simultáneas; no
+conserva usuarios entre ráfagas de peticiones. Así una instancia no mantiene
+sesiones o roles revocados por otra instancia. La invalidación local también
+descarta y repite las lecturas en curso que quedaron obsoletas.
+
+Este cambio requiere desplegar frontend y backend de forma coordinada y
+recargar los clientes abiertos para que envíen el nuevo encabezado. No requiere
+rotar `JWT_SECRET` ni cambiar las cookies existentes.
+
+## Comprobaciones de persistencia aisladas
+
+`npm run test:integration` inicia un replica set temporal local mediante
+`mongodb-memory-server`, verifica el borrado de cuentas, rollback, relaciones
+de coach y los índices de borradores, y detiene la base al terminar. No carga
+`.env` ni utiliza `MONGO_URI`. La primera ejecución puede descargar el binario
+de MongoDB. La CI ejecuta estas comprobaciones además de las pruebas rápidas.
+
+Los borradores se eliminan tanto por `ownerId` como por `startedById`. Las
+operaciones que comparten una transacción se ejecutan secuencialmente. Las
+fotos privadas locales se guardan en `private-uploads/`, excluido de Git.
+
+Los errores internos de producción se registran con un `X-Request-Id` generado
+por el servidor, método, patrón de ruta y ubicaciones de la pila. No se
+registran cuerpos, cookies, encabezados, query strings ni el mensaje bruto del
+error, que podría contener datos sensibles.
+
 ## Hallazgo de la credencial heredada
 
 El Sprint 1 eliminó una credencial administrativa estática de
