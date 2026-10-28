@@ -323,6 +323,12 @@ npm start
 
 El proveedor de despliegue debe inyectar las variables de entorno; el archivo `.env` no forma parte del repositorio.
 
+### Descargas de Node en Heroku
+
+Si el build falla antes de instalar dependencias con `curl: (92) HTTP/2 ... INTERNAL_ERROR` o descargas parciales de Node, la configuración `CURL_HOME=./config/heroku-curl` carga el archivo versionado `.curlrc` y solicita HTTP/1.1. El buildpack oficial cambia al directorio de la aplicación antes de descargar Node. Esta mitigación conserva la URL oficial HTTPS y la verificación SHA-256 del buildpack; no usa `NODE_BINARY_URL` ni desactiva certificados.
+
+Para revertirla, elimina únicamente la variable `CURL_HOME` y vuelve a desplegar. Si la descarga sigue fallando, conserva el registro del build para soporte de Heroku: esta opción no corrige una interrupción general de red.
+
 La politica de validacion, migraciones reversibles, respaldos y recuperacion se
 documenta en [DATABASE_OPERATIONS.md](./DATABASE_OPERATIONS.md).
 
