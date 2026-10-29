@@ -356,3 +356,7 @@ documenta en [DATABASE_OPERATIONS.md](./DATABASE_OPERATIONS.md).
 ## Repositorio relacionado
 
 Frontend: [pchuquimia/gym-frontend](https://github.com/pchuquimia/gym-frontend)
+
+## Mantenimiento de dependencias
+
+Las actualizaciones se gestionan mediante propuestas de Dependabot y verificaciones de CI. Consulta [la política de actualización y reversión](docs/DEPENDENCIES.md).

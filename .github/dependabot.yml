@@ -1,0 +1,60 @@
+# Regular updates are reviewed weekly; security updates are event-driven.
+# Major releases do not match these groups and get separate pull requests.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/La_Paz"
+    open-pull-requests-limit: 5
+    versioning-strategy: "increase-if-necessary"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      http-compatible:
+        applies-to: "version-updates"
+        patterns: ["express", "express-*", "compression", "cookie-parser", "cors", "helmet", "morgan", "multer", "validator"]
+        update-types: ["minor", "patch"]
+      database-compatible:
+        applies-to: "version-updates"
+        patterns: ["mongoose", "redis"]
+        update-types: ["minor", "patch"]
+      auth-compatible:
+        applies-to: "version-updates"
+        patterns: ["bcrypt", "google-auth-library", "jsonwebtoken"]
+        update-types: ["minor", "patch"]
+      app-compatible:
+        applies-to: "version-updates"
+        dependency-type: "production"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      testing-compatible:
+        applies-to: "version-updates"
+        dependency-type: "development"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:30"
+      timezone: "America/La_Paz"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+    groups:
+      actions-compatible:
+        applies-to: "version-updates"
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
