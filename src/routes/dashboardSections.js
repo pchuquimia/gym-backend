@@ -176,6 +176,7 @@ const loadDashboardCore = async ({ req, res, ownerId, today }) => {
             todayWeight: todayWeighIn,
             todayPhotos,
             todayMeasurement,
+            includeScheduled: trackingPlan.status === "active",
             finalAssessment:
               finalAssessment &&
               String(finalAssessment.planId) === String(trackingPlan._id)

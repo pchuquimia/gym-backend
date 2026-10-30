@@ -1217,6 +1217,7 @@ const updateProfile = asyncHandler(async (req, res) => {
     "experienceLevel",
     "weeklyFrequency",
     "calories",
+    "hydrationTrackingEnabled",
     "units",
     "language",
     "privacy",
@@ -1250,6 +1251,7 @@ const updateProfile = asyncHandler(async (req, res) => {
   if (user?.assignedTrainerId) {
     await bumpCacheVersion(`coach-portfolio:${user.assignedTrainerId}`);
   }
+  await bumpCacheVersion(`dashboard:${req.user.id}`);
   invalidateAuthenticationUser(req.user.id);
   res.json({ profile: user.profile, security: user.security });
 });

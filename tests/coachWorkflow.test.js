@@ -7,6 +7,16 @@ import {
 } from "../src/utils/coachWorkflow.js";
 
 describe("coach workflow", () => {
+  test("el dashboard conserva la tarjeta semanal de peso aunque hoy no corresponda", () => {
+    const missions = buildTrackingMissions({
+      plan: { _id: "plan", status: "active", startDate: "2026-10-29", endDate: "2027-01-27", scheduleMode: "fixed", weeklySchedule: [] },
+      followUp: normalizeFollowUp({ checkIn: { enabled: false }, weight: { enabled: true, weekday: 1 }, photos: { enabled: false }, measurements: { enabled: false }, finalEvaluation: { enabled: false } }),
+      todayKey: "2026-10-30",
+      includeScheduled: true,
+    });
+    expect(missions).toEqual([expect.objectContaining({ type: "weight", dueToday: false, nextDueDate: "2026-11-02" })]);
+  });
+
   test("normaliza preguntas configurables y elimina tipos no permitidos", () => {
     expect(
       normalizeIntakeQuestions([

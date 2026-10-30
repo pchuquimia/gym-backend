@@ -450,6 +450,7 @@ export const buildTrackingMissions = ({
   todayPhotos = [],
   todayMeasurement,
   finalAssessment,
+  includeScheduled = false,
 }) => {
   if (!plan || !followUp) return [];
   const today = utcDate(todayKey);
@@ -457,6 +458,18 @@ export const buildTrackingMissions = ({
   if (!today || !start) return [];
   const missions = [];
   const dayIndex = isoWeekday(today);
+  const scheduleFor = (policy, weekday = null) => {
+    const dueToday = frequencyDue(today, start, policy, weekday);
+    if (!includeScheduled) return {};
+    const candidate = new Date(Math.max(today.getTime(), start.getTime()));
+    for (let offset = 0; offset <= 3660; offset += 1) {
+      if (frequencyDue(candidate, start, policy, weekday)) {
+        return { dueToday, nextDueDate: candidate.toISOString().slice(0, 10) };
+      }
+      candidate.setUTCDate(candidate.getUTCDate() + 1);
+    }
+    return { dueToday };
+  };
   const workoutToday =
     plan.scheduleMode !== "fixed" ||
     (plan.weeklySchedule || []).some(
@@ -480,7 +493,7 @@ export const buildTrackingMissions = ({
   }
   if (
     followUp.weight.enabled &&
-    frequencyDue(today, start, followUp.weight, followUp.weight.weekday)
+    (includeScheduled || frequencyDue(today, start, followUp.weight, followUp.weight.weekday))
   ) {
     missions.push({
       id: "weight",
@@ -491,9 +504,10 @@ export const buildTrackingMissions = ({
         : "Registrar peso actual",
       required: followUp.weight.required,
       completed: Boolean(todayWeight),
+      ...scheduleFor(followUp.weight, followUp.weight.weekday),
     });
   }
-  if (followUp.photos.enabled && frequencyDue(today, start, followUp.photos)) {
+  if (followUp.photos.enabled && (includeScheduled || frequencyDue(today, start, followUp.photos))) {
     const capturedViews = new Set(todayPhotos.map((photo) => photo.view));
     const pendingViews = followUp.photos.views.filter(
       (view) => !capturedViews.has(view),
@@ -508,20 +522,31 @@ export const buildTrackingMissions = ({
       required: followUp.photos.required,
       completed: pendingViews.length === 0,
       views: followUp.photos.views,
+      ...scheduleFor(followUp.photos),
     });
   }
   if (
     followUp.measurements.enabled &&
-    frequencyDue(today, start, followUp.measurements)
+    (includeScheduled || frequencyDue(today, start, followUp.measurements))
   ) {
+    const pendingFields = followUp.measurements.fields.filter((field) => {
+      const value = Number(todayMeasurement?.values?.[field]);
+      return !Number.isFinite(value) || value <= 0;
+    });
+    const completed = pendingFields.length === 0;
     missions.push({
       id: "measurements",
       type: "measurements",
       title: "Medidas corporales",
-      subtitle: todayMeasurement ? "Registradas hoy" : "Actualizar medidas",
+      subtitle: completed
+        ? "Registradas hoy"
+        : todayMeasurement
+          ? `${pendingFields.length} medida${pendingFields.length === 1 ? "" : "s"} pendiente${pendingFields.length === 1 ? "" : "s"}`
+          : "Actualizar medidas",
       required: followUp.measurements.required,
-      completed: Boolean(todayMeasurement),
+      completed,
       fields: followUp.measurements.fields,
+      ...scheduleFor(followUp.measurements),
     });
   }
   const endKey =

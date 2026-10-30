@@ -615,6 +615,15 @@ router.put("/workflow-settings", async (req, res, next) => {
         setDefaultsOnInsert: true,
       },
     ).lean();
+    const assignedAthletes = await User.find({
+      assignedTrainerId: String(req.user.id),
+      role: "Cliente",
+      isActive: true,
+    }).select("_id").lean();
+    await Promise.all([
+      bumpCacheVersion(`coach-portfolio:${req.user.id}`),
+      ...assignedAthletes.map((athlete) => bumpCacheVersion(`dashboard:${athlete._id}`)),
+    ]);
     res.set("Cache-Control", "no-store");
     return res.json(settings);
   } catch (error) {
@@ -1472,6 +1481,7 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
       checkIns,
       weights,
       photos,
+      followUpCounts,
     ] = await measureDatabase(
       res,
       () =>
@@ -1517,8 +1527,15 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
             .limit(18)
             .select("date view label contentStatus")
             .lean(),
+          Promise.all([
+            AthleteCheckIn.countDocuments({ athleteId: ownerId }),
+            WeightEntry.countDocuments({ ownerId }),
+            AthleteMeasurement.countDocuments({ athleteId: ownerId }),
+            Photo.countDocuments({ ownerId, type: { $ne: "profile" }, visibility: "coach" }),
+            AthleteAssessment.countDocuments({ athleteId: ownerId }),
+          ]).then(([checkIns, weights, measurements, photos, assessments]) => ({ checkIns, weights, measurements, photos, assessments })),
         ]),
-      { operations: 7 },
+      { operations: 12 },
     );
 
     const totalVolume = recentTrainings.reduce(
@@ -1535,6 +1552,7 @@ router.get("/athletes/:athleteId/overview", async (req, res, next) => {
         effectiveFollowUp: resolvePlanFollowUp(plan, coachWorkflow),
       })),
       followUpRecords: {
+        counts: followUpCounts,
         checkIns,
         weights,
         photos,

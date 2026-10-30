@@ -302,6 +302,10 @@ router.patch(
       .optional()
       .isFloat({ min: 0 })
       .withMessage("Calorías inválidas"),
+    body("hydrationTrackingEnabled")
+      .optional()
+      .custom((value) => typeof value === "boolean")
+      .withMessage("Preferencia de registro de agua inválida"),
     body("units")
       .optional()
       .isIn(["metric", "imperial"])
