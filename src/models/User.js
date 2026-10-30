@@ -8,6 +8,7 @@ import {
 } from "../utils/subscription.js";
 import { maxArrayLength } from "./schemaValidation.js";
 import { USERNAME_PATTERN } from "../utils/normalizeUsername.js";
+import { PROFILE_AVATAR_IDS } from "../constants/profileAvatars.js";
 
 export const USER_ROLES = ["Admin", "Entrenador", "Cliente"];
 export const TRAINING_MODES = ["independent", "coach_managed"];
@@ -185,6 +186,7 @@ const UserSchema = new mongoose.Schema(
     },
     profile: {
       birthDate: { type: String, default: "" },
+      gender: { type: String, enum: ["", "female", "male"], default: "" },
       weight: { type: Number, default: 82.5 },
       height: { type: Number, default: 181 },
       goal: {
@@ -214,6 +216,7 @@ const UserSchema = new mongoose.Schema(
         community: { type: Boolean, default: false },
       },
       avatarPhotoId: { type: String, default: "" },
+      avatarId: { type: String, enum: ["", ...PROFILE_AVATAR_IDS], default: "" },
     },
     security: {
       biometricEnabled: { type: Boolean, default: true },

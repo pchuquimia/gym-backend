@@ -22,6 +22,7 @@ import UserNotification from "../models/UserNotification.js";
 import {
   bumpCacheVersion,
   getCache,
+  getCacheVersion,
   setCache,
 } from "../services/cacheService.js";
 import { invalidateAuthenticationUser } from "../services/authenticationUserCache.js";
@@ -142,7 +143,7 @@ router.get("/invitations/:token", async (req, res, next) => {
         role: { $in: ["Admin", "Entrenador"] },
         isActive: true,
       },
-      "name role",
+      "name role profile.avatarId profile.gender",
     ).lean();
     if (!coach) {
       return res
@@ -152,7 +153,7 @@ router.get("/invitations/:token", async (req, res, next) => {
     res.set("Cache-Control", "private, no-store");
     return res.json({
       invitationId: String(invitation._id),
-      coach: { name: coach.name, role: coach.role },
+      coach: { name: coach.name, role: coach.role, avatarId: coach.profile?.avatarId || "", gender: coach.profile?.gender || "" },
       expiresAt: invitation.expiresAt,
     });
   } catch (error) {
@@ -186,7 +187,7 @@ router.get(
               role: { $in: ["Admin", "Entrenador"] },
               isActive: true,
             },
-            "name email role profile.avatarPhotoId",
+            "name email role profile.avatarPhotoId profile.avatarId profile.gender",
           ).lean()
         : null;
       res.set("Cache-Control", "private, no-store");
@@ -242,7 +243,7 @@ router.post(
           role: { $in: ["Admin", "Entrenador"] },
           isActive: true,
         },
-        "name email role profile.avatarPhotoId",
+        "name email role profile.avatarPhotoId profile.avatarId profile.gender",
       ).lean();
       if (!coach) {
         return res.status(404).json({ error: "No encontramos ese coach" });
@@ -356,7 +357,7 @@ router.post(
           role: { $in: ["Admin", "Entrenador"] },
           isActive: true,
         },
-        "name email role profile.avatarPhotoId",
+        "name email role profile.avatarPhotoId profile.avatarId profile.gender",
       ).lean();
       if (!coach) {
         return res
@@ -631,7 +632,7 @@ const athleteFilter = (coachId, athleteId) => ({
 const getAthlete = async (coachId, athleteId) =>
   User.findOne(
     athleteFilter(coachId, athleteId),
-    "name email role onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId",
+    "name email role onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId profile.avatarId profile.gender",
   ).lean();
 
 const requestToday = (value) => {
@@ -679,7 +680,8 @@ router.get(
     let ownedBuild = null;
     try {
       const todayKey = requestToday(req.query.today);
-      const portfolioCacheKey = `coach-portfolio:${req.user.id}:${todayKey}`;
+      const profileVersion = await getCacheVersion(`coach-portfolio:${req.user.id}`);
+      const portfolioCacheKey = `coach-portfolio:${req.user.id}:${todayKey}:${profileVersion}`;
       if (process.env.NODE_ENV !== "test") {
         while (true) {
           const cachedPortfolio = await getCache(portfolioCacheKey);
@@ -716,7 +718,7 @@ router.get(
             assignedTrainerId: req.user.id,
             isActive: true,
           },
-          "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+          "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId profile.avatarId profile.gender updatedAt",
         )
           .sort({ name: 1 })
           .lean(),
@@ -1285,7 +1287,7 @@ router.get("/plans", async (req, res, next) => {
         assignedTrainerId: req.user.id,
         isActive: true,
       },
-      "name email profile.avatarPhotoId",
+      "name email profile.avatarPhotoId profile.avatarId profile.gender",
     ).lean();
     const athleteIds = athletes.map((athlete) => String(athlete._id));
     if (!athleteIds.length) {
@@ -1316,6 +1318,8 @@ router.get("/plans", async (req, res, next) => {
                 name: athlete.name,
                 email: athlete.email,
                 avatarPhotoId: athlete.profile?.avatarPhotoId || null,
+                avatarId: athlete.profile?.avatarId || "",
+                gender: athlete.profile?.gender || "",
               }
             : null,
         };
@@ -1335,7 +1339,7 @@ router.get("/athletes", async (req, res, next) => {
           assignedTrainerId: req.user.id,
           isActive: true,
         },
-        "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId updatedAt",
+        "name email onboarding coachIntake profile.goal profile.experienceLevel profile.weeklyFrequency profile.weight profile.height profile.healthNotes profile.avatarPhotoId profile.avatarId profile.gender updatedAt",
       )
         .sort({ name: 1 })
         .lean(),

@@ -10,6 +10,7 @@ import UserNotification from "../../src/models/UserNotification.js";
 import { resetAuthenticationUserCache } from "../../src/services/authenticationUserCache.js";
 import { deleteDemoWorkspace } from "../../src/services/demoWorkspaceService.js";
 import { deleteAccountData } from "../../src/services/accountDeletionService.js";
+import { getProfileAvatarGender } from "../../src/constants/profileAvatars.js";
 
 let database;
 let coach;
@@ -70,6 +71,62 @@ beforeEach(async () => {
     trainingMode: "coach_managed",
   });
   outsider = await account({ role: "Entrenador" });
+});
+
+test("el avatar elegido persiste en el perfil y se comparte con el coach en mensajes", async () => {
+  const saved = await request(app).patch("/api/auth/account").set("Authorization", token(athlete)).send({ avatarId: "gym-04", avatarPhotoId: "" }).expect(200);
+  expect(saved.body.profile.avatarId).toBe("gym-04");
+  expect((await inbox(coach).expect(200)).body.conversations[0].peer.avatarId).toBe("gym-04");
+  const profile = await request(app).get("/api/auth/profile").set("Authorization", token(athlete)).expect(200);
+  expect(profile.body.profile.avatarId).toBe("gym-04");
+  await request(app).patch("/api/auth/profile").set("Authorization", token(athlete)).send({ avatarId: "gym-02" }).expect(200);
+  expect((await inbox(coach).expect(200)).body.conversations[0].peer.avatarId).toBe("gym-02");
+  await request(app).patch("/api/auth/account").set("Authorization", token(athlete)).send({ avatarId: "https://example.invalid/avatar.png" }).expect(400);
+  await request(app).patch("/api/auth/account").set("Authorization", token(athlete)).send({ avatarId: ["gym-01", "gym-02"] }).expect(400);
+  expect((await User.findById(athlete.id)).profile.avatarId).toBe("gym-02");
+});
+
+test("asigna un avatar correspondiente al género y admite las doce opciones nuevas", async () => {
+  for (const [gender, incompatible] of [["female", "gym-01"], ["male", "gym-02"]]) {
+    const saved = await request(app).patch("/api/auth/account").set("Authorization", token(athlete)).send({ gender, avatarId: incompatible }).expect(200);
+    expect(saved.body.profile.gender).toBe(gender);
+    expect(getProfileAvatarGender(saved.body.profile.avatarId)).toBe(gender);
+    const peer = (await inbox(coach).expect(200)).body.conversations[0].peer;
+    expect(peer.gender).toBe(gender);
+    expect(getProfileAvatarGender(peer.avatarId)).toBe(gender);
+  }
+  for (const [gender, avatarId] of [["male", "gym-12"], ["female", "gym-18"]]) {
+    const saved = await request(app).patch("/api/auth/profile").set("Authorization", token(athlete)).send({ gender, avatarId }).expect(200);
+    expect(saved.body.profile).toMatchObject({ gender, avatarId });
+  }
+  await request(app).patch("/api/auth/profile").set("Authorization", token(athlete)).send({ gender: "invalid" }).expect(400);
+});
+
+test("los cambios de avatar invalidan la cartera y actualizan alumnos y ficha del coach", async () => {
+  await User.updateOne({ _id: coach.id }, { $set: { "subscription.plan": "coach_pro", "subscription.status": "active" } });
+  const portfolio = async () => {
+    const previousEnv = process.env.NODE_ENV;
+    try {
+      // Exercise the same response cache used outside tests.
+      process.env.NODE_ENV = "development";
+      return await request(app).get("/api/coach/portfolio").set("Authorization", token(coach)).expect(200);
+    } finally {
+      process.env.NODE_ENV = previousEnv;
+    }
+  };
+  await portfolio();
+  expect((await portfolio()).headers["x-data-cache"]).toBe("PORTFOLIO-HIT");
+  for (const [endpoint, avatarId] of [["account", "gym-18"], ["profile", "gym-14"]]) {
+    await request(app).patch(`/api/auth/${endpoint}`).set("Authorization", token(athlete)).send({ avatarId, gender: "female" }).expect(200);
+    const refreshed = await portfolio();
+    expect(refreshed.headers["x-data-cache"]).toBe("PORTFOLIO-MISS");
+    expect(refreshed.body.athletes[0].profile).toMatchObject({ avatarId, gender: "female" });
+    const list = await request(app).get("/api/coach/athletes").set("Authorization", token(coach)).expect(200);
+    expect(list.body[0].profile).toMatchObject({ avatarId, gender: "female" });
+    const detail = await request(app).get(`/api/coach/athletes/${athlete.id}/overview`).set("Authorization", token(coach)).expect(200);
+    expect(detail.body.athlete.profile).toMatchObject({ avatarId, gender: "female" });
+    expect((await portfolio()).headers["x-data-cache"]).toBe("PORTFOLIO-HIT");
+  }
 });
 
 test("coach and athlete exchange persisted messages and see only their own inbox", async () => {

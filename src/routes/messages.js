@@ -14,7 +14,7 @@ router.use((_req, res, next) => {
   res.set("Cache-Control", "private, no-store");
   next();
 });
-const peerFields = "name role profile.avatarPhotoId assignedTrainerId";
+const peerFields = "name role profile.avatarPhotoId profile.avatarId profile.gender assignedTrainerId";
 const demoScope = (user) =>
   user.isDemo
     ? { isDemo: true, demoWorkspaceId: user.demoWorkspaceId }
@@ -114,6 +114,8 @@ router.get("/", async (req, res, next) => {
           name: peer.name,
           role: peer.role,
           avatarPhotoId: peer.profile?.avatarPhotoId || "",
+          avatarId: peer.profile?.avatarId || "",
+          gender: peer.profile?.gender || "",
         },
         lastMessage: latestByPeer.get(String(peer._id)) || null,
         unread: unreadByPeer.get(String(peer._id)) || 0,

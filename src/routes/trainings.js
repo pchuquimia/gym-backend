@@ -979,7 +979,13 @@ router.post("/", async (req, res, next) => {
           linkedPlanSlotIndex !== expectedCycleIndex);
       if (requiresAcknowledgement && !payload.scheduleOverride?.acknowledged) {
         return res.status(409).json({
-          error: "Confirma que deseas entrenar un dia distinto al planificado",
+          error: "Confirma que deseas guardar este entrenamiento en un día distinto al planificado.",
+          code: "TRAINING_SCHEDULE_CONFIRMATION_REQUIRED",
+          details: {
+            selectedDayIndex: Number(linkedPlanSlot.dayIndex),
+            scheduleMode: linkedPlan.scheduleMode,
+            actualDate: payload.date,
+          },
         });
       }
       payload.scheduleOverride = requiresAcknowledgement

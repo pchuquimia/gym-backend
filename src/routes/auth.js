@@ -36,6 +36,7 @@ import { protect } from "../middleware/authMiddleware.js";
 import { passwordRules, validate } from "../middleware/validate.js";
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
+import { PROFILE_AVATAR_IDS } from "../constants/profileAvatars.js";
 import {
   isValidUsername,
   normalizeUsername,
@@ -265,6 +266,8 @@ router.patch(
       .optional()
       .isString()
       .withMessage("Foto de perfil inválida"),
+    body("avatarId").optional().isString().bail().isIn(["", ...PROFILE_AVATAR_IDS]).withMessage("Avatar de perfil inválido"),
+    body("gender").optional().isString().bail().isIn(["", "female", "male"]).withMessage("Género inválido"),
     validate,
   ],
   updateAccount,
@@ -315,6 +318,8 @@ router.patch(
       .optional()
       .isString()
       .withMessage("Foto de perfil inválida"),
+    body("avatarId").optional().isString().bail().isIn(["", ...PROFILE_AVATAR_IDS]).withMessage("Avatar de perfil inválido"),
+    body("gender").optional().isString().bail().isIn(["", "female", "male"]).withMessage("Género inválido"),
     validate,
   ],
   updateProfile,

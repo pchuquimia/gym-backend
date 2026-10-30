@@ -27,6 +27,8 @@ import {
 import { isDevelopmentAdminRouteEnabled } from "../config/security.js";
 import { normalizeAuthEmail } from "../utils/normalizeAuthEmail.js";
 import { normalizeUsername } from "../utils/normalizeUsername.js";
+import { resolveProfileAvatarId } from "../constants/profileAvatars.js";
+import { bumpCacheVersion } from "../services/cacheService.js";
 import { ensureCoachCode } from "../utils/coachCode.js";
 import {
   defaultCoachWorkflow,
@@ -1154,7 +1156,7 @@ const updateAccount = asyncHandler(async (req, res) => {
       Date.now() + 24 * 60 * 60 * 1000,
     );
   }
-  const profileFields = ["birthDate", "weight", "height", "avatarPhotoId"];
+  const profileFields = ["birthDate", "weight", "height", "avatarPhotoId", "avatarId", "gender"];
   if (req.body.avatarPhotoId) {
     await ensureShareableAvatarPhoto(req.user.id, req.body.avatarPhotoId);
   }
@@ -1163,6 +1165,13 @@ const updateAccount = asyncHandler(async (req, res) => {
       payload[`profile.${field}`] = req.body[field];
     }
   });
+  if (Object.hasOwn(req.body, "gender") || Object.hasOwn(req.body, "avatarId")) {
+    payload["profile.avatarId"] = resolveProfileAvatarId({
+      avatarId: req.body.avatarId ?? currentUser.profile?.avatarId,
+      gender: req.body.gender ?? currentUser.profile?.gender,
+      name: payload.name || currentUser.name,
+    });
+  }
   const user = await User.findByIdAndUpdate(req.user.id, payload, {
     new: true,
     runValidators: true,
@@ -1187,6 +1196,9 @@ const updateAccount = asyncHandler(async (req, res) => {
       throw err;
     }
   }
+  if (user.assignedTrainerId) {
+    await bumpCacheVersion(`coach-portfolio:${user.assignedTrainerId}`);
+  }
   invalidateAuthenticationUser(req.user.id);
   res.json({
     user: sanitizeUser(user),
@@ -1210,6 +1222,8 @@ const updateProfile = asyncHandler(async (req, res) => {
     "privacy",
     "notifications",
     "avatarPhotoId",
+    "avatarId",
+    "gender",
   ];
   const payload = {};
   if (req.body.avatarPhotoId) {
@@ -1220,10 +1234,22 @@ const updateProfile = asyncHandler(async (req, res) => {
       payload[`profile.${key}`] = req.body[key];
     }
   });
+  if (Object.hasOwn(req.body, "gender") || Object.hasOwn(req.body, "avatarId")) {
+    const current = await User.findById(req.user.id).select("name profile.avatarId profile.gender").lean();
+    if (!current) return res.status(404).json({ error: "No encontrado" });
+    payload["profile.avatarId"] = resolveProfileAvatarId({
+      avatarId: req.body.avatarId ?? current.profile?.avatarId,
+      gender: req.body.gender ?? current.profile?.gender,
+      name: current.name,
+    });
+  }
   const user = await User.findByIdAndUpdate(req.user.id, payload, {
     new: true,
     runValidators: true,
-  }).select("profile security");
+  }).select("profile security assignedTrainerId");
+  if (user?.assignedTrainerId) {
+    await bumpCacheVersion(`coach-portfolio:${user.assignedTrainerId}`);
+  }
   invalidateAuthenticationUser(req.user.id);
   res.json({ profile: user.profile, security: user.security });
 });

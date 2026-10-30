@@ -17,7 +17,7 @@ import { invalidateAuthenticationUser } from "../services/authenticationUserCach
 
 const router = Router();
 const ADMIN_USER_FIELDS =
-  "name email role isActive assignedTrainerId trainingMode coachIntake coachApplication isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt";
+  "name email role isActive assignedTrainerId trainingMode coachIntake coachApplication isDemo demoExpiresAt profile.avatarPhotoId profile.avatarId profile.gender subscription createdAt updatedAt";
 const CLIENT_DIRECTORY_FIELDS =
   "name role isActive assignedTrainerId trainingMode";
 
@@ -395,7 +395,7 @@ router.patch(
           .json({ error: "Accion de suscripcion invalida" });
       }
       const user = await User.findById(req.params.id).select(
-        "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId subscription createdAt updatedAt",
+        "name email role isActive assignedTrainerId trainingMode isDemo demoExpiresAt profile.avatarPhotoId profile.avatarId profile.gender subscription createdAt updatedAt",
       );
       if (!user)
         return res.status(404).json({ error: "Usuario no encontrado" });
