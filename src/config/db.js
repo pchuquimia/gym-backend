@@ -1,7 +1,27 @@
 import mongoose from "mongoose";
+import dns from "node:dns";
 
 mongoose.set("runValidators", true);
 mongoose.set("strictQuery", true);
+
+export const configureMongoDns = () => {
+  const servers = [
+    ...new Set(
+      String(process.env.MONGO_DNS_SERVERS || "")
+        .split(",")
+        .map((server) => server.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (!servers.length) return;
+  try {
+    dns.setServers(servers);
+  } catch {
+    throw new Error(
+      "MONGO_DNS_SERVERS debe contener direcciones IP de servidores DNS separadas por comas",
+    );
+  }
+};
 
 export const getMongoConnectionOptions = () => {
   const configuredPoolSize = Number(process.env.MONGO_MAX_POOL_SIZE || 10);
@@ -35,6 +55,7 @@ export const getMongoConnectionOptions = () => {
 
 export async function connectDB(uri) {
   try {
+    configureMongoDns();
     await mongoose.connect(uri, getMongoConnectionOptions());
     console.log("MongoDB connected");
   } catch (err) {

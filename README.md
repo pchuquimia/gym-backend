@@ -80,6 +80,26 @@ El script de desarrollo del backend utiliza `cross-env` para definir
 
 ## Variables opcionales
 
+### Error DNS al conectar a MongoDB Atlas
+
+Si el arranque falla con `querySrv ECONNREFUSED`, el servidor DNS puede estar
+rechazando la consulta SRV que necesita una URI `mongodb+srv://`. En el `.env`
+local puedes elegir resolvers accesibles desde esa red:
+
+```env
+MONGO_DNS_SERVERS=1.1.1.1,8.8.8.8
+```
+
+Reinicia `npm run dev` despues de cambiar el `.env`. Esta opcion configura las
+consultas DNS de Node (`resolve*`) del proceso de la API y del worker de metricas;
+no cambia la configuracion DNS de Windows. Vacia o ausente conserva el DNS del
+sistema. Los scripts que llaman directamente a `mongoose.connect` no la aplican.
+
+El aviso sobre `BACKEND_REGION` y `MONGO_REGION` solo compara regiones de
+despliegue y no impide el arranque. Esas variables no corrigen un fallo DNS.
+
+### Referencia
+
 | Grupo           | Variables                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------- |
 | Cookies         | `COOKIE_EXPIRES`, `COOKIE_SECURE`, `COOKIE_SAMESITE`, `COOKIE_DOMAIN`                       |
